@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv/
+
+# Banco de dados local — contém hashes de senha, sessões e histórico de
+# clientes; nunca deve ser versionado. Cada ambiente cria o seu próprio
+# na primeira execução (ver frete_db.py / README.md).
+frete.db
+frete.db-journal
+frete.db-wal
+frete.db-shm
+
+.idea/
+.vscode/
