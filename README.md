@@ -114,16 +114,22 @@ Para cada uma das tabelas abaixo existem os quatro verbos:
 (criar), `PUT /admin/{recurso}/{id}` (editar) e
 `DELETE /admin/{recurso}/{id}` (excluir):
 
+- `/admin/filiais`
 - `/admin/veiculos`
 - `/admin/taxas-adicionais`
+- `/admin/taxas-regionais`
 - `/admin/coleta-cidades-fixas`
 - `/admin/faixas-coleta`
 - `/admin/categorias`
 - `/admin/transportes`
 - `/admin/slas`
+- `/admin/transportadoras-terceirizadas`
 
-Nomes duplicados (categoria, transporte ou SLA repetido) retornam
-`409 Conflict` com uma mensagem explicando o problema.
+Nomes duplicados (filial, veículo, categoria, transporte, SLA repetido,
+ou a mesma combinação de rota/cidade nas tabelas de coleta e taxa
+regional) retornam `409 Conflict` com uma mensagem explicando o
+problema. Todas essas rotas exigem login como administrador (ver
+[Autenticação](#autenticação) abaixo).
 
 ## Cálculo do frete por veículo
 
@@ -141,12 +147,27 @@ frete_ajustado = frete_base × multiplicador_categoria × multiplicador_transpor
 ```
 
 Em cima disso somam-se:
-- **Taxas Adicionais** — lista editável (GRIS, Ad Valorem, Pedágio, Taxa
-  de Localidade etc.), cada uma fixa em R$ ou % do valor da mercadoria.
-- **Taxa de coleta** — só quando há retirada no cliente (veja abaixo).
+- **Taxas Adicionais** — lista editável (GRIS, Ad Valorem, Taxa de
+  Localidade etc.), cada uma fixa em R$ ou % do valor da mercadoria.
+- **Taxas Regionais** — como as adicionais, mas só entram quando a
+  cidade de origem ou destino do frete bate com uma cidade cadastrada
+  (ex: taxa de zona franca em Manaus). Ver `/admin/taxas-regionais`.
+- **Taxa de coleta** — quando há retirada no cliente (frota própria,
+  veja abaixo) ou o valor combinado com a transportadora, quando a
+  coleta é terceirizada.
+- **Entrega terceirizada** — valor combinado com a transportadora,
+  quando a entrega final não é feita pela frota própria.
+- **Pedágio** — estimado (Google Maps) ou digitado manualmente.
+- **Manutenção e retorno vazio** — `tarifa_km_manutencao × distância`
+  (sobre a distância de ida) e `tarifa_km_retorno × distância_retorno`
+  (do destino até a filial mais próxima), ambos configuráveis por
+  veículo — custos operacionais, não entram nos multiplicadores de
+  categoria/transporte/SLA.
 
 ```
-frete_total = frete_ajustado + coleta + taxas_adicionais
+frete_total = frete_ajustado + coleta + entrega_terceirizada
+            + taxas_adicionais + taxas_regionais + pedagio
+            + manutencao + retorno_vazio
 ```
 
 > As tabelas antigas de "tipo de frete" (`faixas_peso`/`faixas_distancia`)
@@ -189,28 +210,60 @@ filial, cidade e veículo.
 Interface web.
 
 ### `POST /orcamento`
-Calcula o frete. Corpo da requisição:
+Calcula o frete. O veículo é escolhido automaticamente pelo peso e pelo
+volume dos paletes informados (não é mais um campo de entrada). Corpo
+da requisição:
 
 ```json
 {
   "peso": 8,
-  "comprimento": 40,
-  "largura": 30,
-  "altura": 25,
+  "paletes": [
+    {"comprimento": 40, "largura": 30, "altura": 25}
+  ],
   "distancia": 350,
   "distancia_coleta": 0,
   "cidade_coleta": "",
+  "cidade_origem": "",
+  "cidade_destino": "",
   "valor_mercadoria": 1200,
-  "veiculo": "VUC",
   "categoria": "Geral",
   "transporte": "Rodoviário",
-  "sla": "Padrão"
+  "sla": "Padrão",
+  "coleta_terceirizada": false,
+  "transportadora_coleta_nome": "",
+  "valor_coleta_terceirizada": 0,
+  "entrega_terceirizada": false,
+  "transportadora_entrega_nome": "",
+  "valor_entrega_terceirizada": 0,
+  "pedagio": 0,
+  "distancia_retorno": 0
 }
 ```
 
-`distancia_coleta` e `cidade_coleta` são opcionais (só usados quando há
-retirada no cliente — `cidade_coleta` é o endereço resolvido pela busca
-de distância, usado para checar se a cidade tem preço fixo de coleta).
+- `paletes`: lista de volumes (comprimento/largura/altura em cm) — o
+  peso cubado é somado a partir do volume total e comparado com o peso
+  real para decidir o veículo (`peso_considerado = max(peso, peso_cubado)`),
+  junto com a capacidade em m³ de cada veículo.
+- `distancia_coleta` e `cidade_coleta` são opcionais (só usados quando há
+  retirada no cliente com frota própria — `cidade_coleta` é o endereço
+  resolvido pela busca de distância, usado para checar se a rota tem
+  preço fixo de coleta).
+- `cidade_origem` e `cidade_destino` são usadas para checar **taxas
+  regionais** (ex: taxa de zona franca em Manaus) cadastradas em
+  `/admin/taxas-regionais` — entram no cálculo se baterem com a cidade
+  de origem ou de destino do frete.
+- `coleta_terceirizada`/`entrega_terceirizada`: quando a coleta ou a
+  entrega final é feita por uma transportadora contratada (ver
+  `/admin/transportadoras-terceirizadas`) em vez da frota própria — o
+  valor combinado (`valor_coleta_terceirizada`/`valor_entrega_terceirizada`)
+  substitui o cálculo por faixa/km desse trecho.
+- `pedagio`: valor estimado de pedágio da rota (preenchido automaticamente
+  pelo Google Maps quando `GOOGLE_MAPS_API_KEY` está configurada, editável
+  na tela).
+- `distancia_retorno`: distância (km) do retorno vazio do veículo, do
+  destino até a filial mais próxima — só quando a entrega é feita direto
+  ao cliente pela frota própria. Cobrada pela `tarifa_km_retorno` do
+  veículo, junto com `tarifa_km_manutencao` sobre a distância de ida.
 
 ### `POST /geo/distancia`
 Calcula a distância rodoviária entre dois endereços (usado internamente
@@ -236,7 +289,25 @@ Resposta:
 }
 ```
 
-### `GET /parametros/{categorias|transportes|slas|filiais|veiculos|taxas-adicionais|faixas-coleta|geral}`
+### `POST /geo/resolver-entrega`
+Mesma lógica de `/geo/resolver-retirada`, mas para o endereço de
+**entrega**: usada quando a entrega final é terceirizada — a rota
+principal (frota própria) vai só até a filial mais próxima achada aqui,
+e o trecho filial → cliente fica por conta da transportadora contratada.
+```json
+{"endereco_entrega": "Rua Augusta, 500, São Paulo, SP"}
+```
+
+### `POST /geo/resolver-retorno`
+Dado o endereço final da entrega, encontra a filial cadastrada mais
+próxima para onde o veículo (vazio) volta depois de entregar — usado
+para estimar `distancia_retorno` no orçamento (cobrada pela
+`tarifa_km_retorno` do veículo).
+```json
+{"endereco_destino": "Rua Augusta, 500, São Paulo, SP"}
+```
+
+### `GET /parametros/{categorias|transportes|slas|filiais|veiculos|taxas-adicionais|faixas-coleta|transportadoras-terceirizadas}`
 Listam os valores atuais de cada tabela — úteis para montar campos de
 seleção em qualquer sistema que consuma essa API.
 
@@ -269,19 +340,32 @@ um administrador ativo — tentar remover, desativar ou rebaixar o
 > exige login (qualquer papel). `/orcamento`, `/geo/*` e `/parametros/*`
 > continuam públicos — gerar um orçamento não exige login.
 
-## Sobre os serviços de mapa (Nominatim + OSRM)
+## Sobre os serviços de mapa (Nominatim + OSRM, ou Google Maps)
 
-O cálculo de distância usa serviços públicos e gratuitos do
+Por padrão o cálculo de distância usa serviços públicos e gratuitos do
 OpenStreetMap, sem necessidade de chave de API:
 - **Nominatim** — converte endereço em coordenadas (geocodificação)
 - **OSRM** — calcula a distância de rota rodoviária entre coordenadas
 
 Esses serviços têm limite de uso educado (poucas requisições por
 segundo), o que é suficiente para o volume de uma pessoa gerando
-orçamentos internamente. Se o volume crescer muito, considere hospedar
-sua própria instância ou migrar para um provedor pago (Google Maps,
-Mapbox etc.) — nesse caso, é só trocar a implementação em
-`geo_service.py`.
+orçamentos internamente.
+
+Se o volume crescer ou for preciso estimar pedágio, defina a variável
+de ambiente `GOOGLE_MAPS_API_KEY` — a API muda automaticamente para a
+Geocoding API + Routes API do Google Maps (mais tolerante a endereços
+incompletos e traz estimativa de pedágio, usada para preencher o campo
+`pedagio` do orçamento). `GET /api/status` mostra qual provedor está
+ativo no momento (`"geo_provider": "google"` ou `"osm"`).
+
+### Variáveis de ambiente
+
+| Variável | Padrão | Efeito |
+|---|---|---|
+| `GOOGLE_MAPS_API_KEY` | (vazio) | Se definida, usa Google Maps (Geocoding + Routes) em vez de Nominatim/OSRM. |
+| `GEO_COUNTRY_CODES` | `br` | Restringe a busca de endereço a este(s) país(es) (Nominatim: `countrycodes`; Google: `region`/`components`). |
+| `GEO_USER_AGENT` | `SistemaOrcamentoFrete/1.0 (uso interno da empresa)` | User-Agent enviado ao Nominatim (exigido pela política de uso deles). |
+| `FRETE_DB_PATH` | `frete.db` na pasta do projeto | Caminho do arquivo do banco SQLite — útil para apontar para outro arquivo/pasta. |
 
 ## Estrutura dos arquivos
 
