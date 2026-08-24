@@ -305,10 +305,23 @@ def carregar_parametros():
         parametros = novo_parametros
 
 
-def _cidade_da_retirada(endereco_resolvido: str) -> str | None:
-    """Extrai um provável nome de cidade a partir de um texto de endereço
-    (resolvido pelo geocodificador, formato separado por vírgulas) ou de
-    um nome de filial isolado (sem vírgula nenhuma, retorna ele mesmo).
+_UF_SIGLA_POR_NOME = {
+    "acre": "AC", "alagoas": "AL", "amapá": "AP", "amazonas": "AM", "bahia": "BA",
+    "ceará": "CE", "distrito federal": "DF", "espírito santo": "ES", "goiás": "GO",
+    "maranhão": "MA", "mato grosso": "MT", "mato grosso do sul": "MS",
+    "minas gerais": "MG", "pará": "PA", "paraíba": "PB", "paraná": "PR",
+    "pernambuco": "PE", "piauí": "PI", "rio de janeiro": "RJ",
+    "rio grande do norte": "RN", "rio grande do sul": "RS", "rondônia": "RO",
+    "roraima": "RR", "santa catarina": "SC", "são paulo": "SP", "sergipe": "SE",
+    "tocantins": "TO",
+}
+
+
+def _cidade_e_uf_da_retirada(endereco_resolvido: str) -> tuple[str | None, str]:
+    """Extrai um provável nome de cidade (e a UF, quando identificável) a
+    partir de um texto de endereço (resolvido pelo geocodificador, formato
+    separado por vírgulas) ou de um nome de filial isolado (sem vírgula
+    nenhuma, retorna ele mesmo sem UF).
 
     O Nominatim não tem um número fixo de segmentos entre a cidade e o
     país — endereços no Brasil costumam incluir "Região Geográfica
@@ -317,13 +330,14 @@ def _cidade_da_retirada(endereco_resolvido: str) -> str | None:
     segmentos reconhecíveis como país/CEP/UF/região, em vez de assumir
     uma posição fixa."""
     if not endereco_resolvido:
-        return None
+        return None, ""
     partes = [p.strip() for p in endereco_resolvido.split(",") if p.strip()]
     if len(partes) < 3:
-        return _sem_sufixo_uf(partes[0]) if partes else None
+        return (_sem_sufixo_uf(partes[0]) if partes else None), ""
 
     i = len(partes) - 1
     uf_consumida = False
+    uf_sigla = ""
     while i > 0:
         seg = partes[i].strip().lower()
         if seg in ("brasil", "brazil"):
@@ -335,17 +349,30 @@ def _cidade_da_retirada(endereco_resolvido: str) -> str | None:
             # Janeiro têm o mesmo nome do estado, e a segunda ocorrência
             # (mais à esquerda) é a cidade, não o estado de novo.
             uf_consumida = True
+            uf_sigla = _UF_SIGLA_POR_NOME.get(seg, "")
             i -= 1
         elif seg in _UFS_BR_SIGLAS and not uf_consumida:
             # Mesma ideia, mas pra quando a UF aparece como sigla em
             # segmento próprio (ex: "..., São Paulo, SP, Brasil").
             uf_consumida = True
+            uf_sigla = partes[i].strip().upper()
             i -= 1
         elif seg.startswith("região") or seg.startswith("regiao"):
             i -= 1
         else:
             break
-    return _sem_sufixo_uf(partes[i])
+    return _sem_sufixo_uf(partes[i]), uf_sigla
+
+
+def _cidade_da_retirada(endereco_resolvido: str) -> str | None:
+    return _cidade_e_uf_da_retirada(endereco_resolvido)[0]
+
+
+def cidade_e_uf(endereco_resolvido: str) -> tuple[str | None, str]:
+    """Versão pública de :func:`_cidade_e_uf_da_retirada`, usada fora do
+    cálculo de frete (ex: exportação de orçamento para planilha) para obter
+    cidade + UF a partir de um endereço resolvido ou nome de filial."""
+    return _cidade_e_uf_da_retirada(endereco_resolvido)
 
 
 def _taxas_regionais_aplicaveis(

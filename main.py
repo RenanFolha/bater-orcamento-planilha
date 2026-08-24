@@ -25,6 +25,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 import auth_service as auth
+import export_service as export
 import frete_db as db
 import frete_service as fs
 import geo_service as geo
@@ -402,6 +403,25 @@ def obter_historico(codigo: str, usuario: dict = Depends(exigir_login)):
 def excluir_historico(id_: int, usuario: dict = Depends(exigir_login)):
     db.excluir_orcamento_historico(id_)
     return {"status": "ok"}
+
+
+@app.get("/historico/{codigo}/planilha", tags=["Histórico"])
+def exportar_historico_planilha(codigo: str, usuario: dict = Depends(exigir_login)):
+    """Gera a planilha de orçamento (formato 'Modelo de Orçamento.xlsx')
+    preenchida com os dados desse orçamento do histórico."""
+    registro = db.buscar_orcamento_historico(codigo)
+    if not registro:
+        raise HTTPException(status_code=404, detail=f"Orçamento '{codigo}' não encontrado no histórico.")
+    registro["dados"] = json.loads(registro.pop("dados_json") or "{}")
+    try:
+        conteudo = export.gerar_planilha_orcamento(registro)
+    except export.ExportacaoError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return Response(
+        content=conteudo,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="Orcamento_{codigo}.xlsx"'},
+    )
 
 
 @app.post("/geo/distancia", tags=["Geolocalização"])

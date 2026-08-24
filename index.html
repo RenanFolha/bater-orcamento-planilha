@@ -856,7 +856,12 @@
           <p id="detalhe-subtitulo"></p>
         </div>
         <div class="card">
-          <div class="card-head"><h2><i class="ti ti-receipt" style="color:var(--accent);margin-right:6px;"></i>Resumo</h2></div>
+          <div class="card-head">
+            <h2><i class="ti ti-receipt" style="color:var(--accent);margin-right:6px;"></i>Resumo</h2>
+            <button type="button" id="btn-exportar-planilha" class="calc" style="padding:7px 14px;font-size:12px;">
+              <i class="ti ti-file-spreadsheet"></i> Exportar planilha
+            </button>
+          </div>
           <div class="card-body" id="detalhe-conteudo"></div>
         </div>
       </div>
@@ -2508,11 +2513,14 @@ document.getElementById('historico-busca').addEventListener('input', (ev) => {
   renderizarHistorico(filtrado);
 });
 
+let detalheHistoricoCodigo = null;
+
 async function abrirDetalheHistorico(codigo){
   try{
     const res = await fetch(`${API_BASE}/historico/${codigo}`);
     if(!res.ok) throw new Error(`Erro HTTP ${res.status}`);
     const registro = await res.json();
+    detalheHistoricoCodigo = registro.codigo;
     const calc = registro.dados?.resultado?.calculos_intermediarios || {};
     const entrada = registro.dados?.resultado?.entrada || {};
 
@@ -2542,6 +2550,35 @@ async function abrirDetalheHistorico(codigo){
 document.getElementById('btn-voltar-historico').addEventListener('click', () => {
   document.getElementById('view-historico-detalhe').style.display = 'none';
   document.getElementById('view-historico').style.display = 'block';
+});
+
+document.getElementById('btn-exportar-planilha').addEventListener('click', async (ev) => {
+  if(!detalheHistoricoCodigo) return;
+  const btn = ev.currentTarget;
+  const textoOriginal = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = 'Gerando...';
+  try{
+    const res = await fetch(`${API_BASE}/historico/${detalheHistoricoCodigo}/planilha`);
+    if(!res.ok){
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.detail || `Erro HTTP ${res.status}`);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Orcamento_${detalheHistoricoCodigo}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }catch(e){
+    alert(`Erro ao exportar planilha: ${e.message}`);
+  }finally{
+    btn.disabled = false;
+    btn.innerHTML = textoOriginal;
+  }
 });
 
 async function carregarTabelaPrecos(){
