@@ -333,12 +333,22 @@ CRUD de usuários (só administrador) — mesmo padrão dos outros recursos
 (a senha só é trocada se o campo `senha` vier preenchido) e
 `DELETE /admin/usuarios/{id}` exclui. Sempre precisa sobrar pelo menos
 um administrador ativo — tentar remover, desativar ou rebaixar o
-último retorna `422`.
+último retorna `422`. Senhas (criação, edição e troca de senha) exigem
+no mínimo 8 caracteres.
 
 > Todas as rotas `/admin/*` (Tabela de Preços, `/admin/reload` e
 > `/admin/usuarios`) exigem login como administrador. `/historico`
-> exige login (qualquer papel). `/orcamento`, `/geo/*` e `/parametros/*`
-> continuam públicos — gerar um orçamento não exige login.
+> exige login (qualquer papel) para listar/salvar/ver — mas só quem
+> salvou o orçamento (a conta logada, não o texto livre do campo
+> "Responsável") ou um administrador pode excluir um registro do
+> histórico (`DELETE /historico/{id}`, `403` caso contrário). `/orcamento`,
+> `/geo/*` e `/parametros/*` continuam públicos — gerar um orçamento não
+> exige login.
+>
+> O login tem limite de tentativas falhas (bloqueio temporário) tanto por
+> IP quanto por usuário — protege contra força bruta mesmo quando várias
+> pessoas dividem o mesmo IP (rede corporativa) ou quando o ataque tenta
+> vários usuários a partir de IPs diferentes.
 
 ## Sobre os serviços de mapa (Nominatim + OSRM, ou Google Maps)
 
@@ -366,19 +376,33 @@ ativo no momento (`"geo_provider": "google"` ou `"osm"`).
 | `GEO_COUNTRY_CODES` | `br` | Restringe a busca de endereço a este(s) país(es) (Nominatim: `countrycodes`; Google: `region`/`components`). |
 | `GEO_USER_AGENT` | `SistemaOrcamentoFrete/1.0 (uso interno da empresa)` | User-Agent enviado ao Nominatim (exigido pela política de uso deles). |
 | `FRETE_DB_PATH` | `frete.db` na pasta do projeto | Caminho do arquivo do banco SQLite — útil para apontar para outro arquivo/pasta. |
+| `CORS_ORIGINS` | `http://localhost:8000,http://127.0.0.1:8000` | Lista de origens (separadas por vírgula) autorizadas a chamar a API via CORS. Só importa se algo fora da própria UI (servida pelo FastAPI) consumir a API do navegador noutro host/porta. |
 
 ## Estrutura dos arquivos
 
 ```
 frete_project/
-├── main.py                    # Rotas da API (FastAPI)
+├── main.py                    # Monta o app FastAPI: CORS, lifespan, estáticos, inclui os routers
+├── schemas.py                 # Modelos Pydantic (corpo de requisição) de todas as rotas
+├── deps.py                    # Dependências de autenticação e helpers de CRUD admin
+├── routers/                   # Uma rota por domínio (inclusos em main.py)
+│   ├── auth.py                 # /auth/*
+│   ├── geo.py                  # /geo/*
+│   ├── orcamento.py             # /orcamento
+│   ├── historico.py            # /historico/*
+│   ├── parametros.py           # /parametros/* (leitura pública)
+│   ├── admin_precos.py         # /admin/* (Tabela de Preços) + /admin/reload
+│   └── admin_usuarios.py       # /admin/usuarios (CRUD de usuários)
 ├── frete_service.py           # Leitura do banco + lógica de cálculo do frete
 ├── geo_service.py             # Geocodificação, distância e filial mais próxima
 ├── auth_service.py            # Login, sessão e hash de senha
+├── export_service.py          # Exportação de orçamento do histórico para planilha
 ├── frete_db.py                # Schema do banco SQLite e dados de exemplo
 ├── frete.db                   # Banco de dados (criado automaticamente)
 ├── index.html                 # Interface web
+├── tests/                     # Testes (pytest) — cálculo de frete, auth, API, exportação
 ├── requirements.txt
+├── requirements-dev.txt
 ├── README.md
 ├── iniciar_api.bat
 └── assets/

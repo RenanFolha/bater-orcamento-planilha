@@ -173,7 +173,8 @@ CREATE TABLE IF NOT EXISTS orcamentos_historico (
     valor_mercadoria REAL DEFAULT 0,
     frete_total REAL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'Fechado',
-    dados_json TEXT NOT NULL DEFAULT '{}'
+    dados_json TEXT NOT NULL DEFAULT '{}',
+    criado_por TEXT NOT NULL DEFAULT ''
 );
 """
 
@@ -366,6 +367,14 @@ def _migrar_colunas(conn: sqlite3.Connection):
         conn.execute("ALTER TABLE veiculos ADD COLUMN tarifa_km_manutencao REAL NOT NULL DEFAULT 0")
     if not _coluna_existe(conn, "veiculos", "capacidade_m3"):
         conn.execute("ALTER TABLE veiculos ADD COLUMN capacidade_m3 REAL NOT NULL DEFAULT 0")
+    if not _coluna_existe(conn, "orcamentos_historico", "criado_por"):
+        # Registra qual conta de login efetivamente salvou o registro —
+        # distinto de "responsavel" (texto livre, quem o usuário diz ser o
+        # responsável pelo orçamento). Usado só para controlar quem pode
+        # excluir o registro (dono ou admin), sem mudar o campo visível
+        # "Responsável" que já existia. Bancos antigos ficam com '' (só
+        # admin consegue excluir esses registros legados).
+        conn.execute("ALTER TABLE orcamentos_historico ADD COLUMN criado_por TEXT NOT NULL DEFAULT ''")
 
 
 def _completar_carreta_fechada(conn: sqlite3.Connection):
@@ -883,6 +892,7 @@ def salvar_orcamento_historico(
     valor_mercadoria: float,
     frete_total: float,
     dados_json: str,
+    criado_por: str = "",
     status: str = "Fechado",
 ) -> dict:
     with get_connection() as conn:
@@ -891,10 +901,10 @@ def salvar_orcamento_historico(
         conn.execute(
             """INSERT INTO orcamentos_historico
                (codigo, criado_em, cliente, responsavel, origem_resumo, destino_resumo,
-                veiculo, distancia_km, valor_mercadoria, frete_total, status, dados_json)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                veiculo, distancia_km, valor_mercadoria, frete_total, status, dados_json, criado_por)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (codigo, criado_em, cliente, responsavel, origem_resumo, destino_resumo,
-             veiculo, distancia_km, valor_mercadoria, frete_total, status, dados_json),
+             veiculo, distancia_km, valor_mercadoria, frete_total, status, dados_json, criado_por),
         )
         return {"codigo": codigo, "criado_em": criado_em}
 
@@ -912,6 +922,14 @@ def buscar_orcamento_historico(codigo: str) -> dict | None:
     with get_connection() as conn:
         row = conn.execute(
             "SELECT * FROM orcamentos_historico WHERE codigo = ?", (codigo,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def buscar_orcamento_historico_por_id(id_: int) -> dict | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM orcamentos_historico WHERE id = ?", (id_,)
         ).fetchone()
         return dict(row) if row else None
 
