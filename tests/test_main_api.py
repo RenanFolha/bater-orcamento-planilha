@@ -1,0 +1,152 @@
+"""
+Testes de integração da API (main.py + routers/*) usando o TestClient do
+FastAPI, com um banco SQLite temporário e isolado por teste (fixture
+`banco_temporario` de conftest.py — nunca toca no frete.db real).
+
+Cobre principalmente autenticação/autorização, que é a parte mais fácil
+de quebrar silenciosamente numa mudança futura: login, bloqueio de
+tentativas, proteção do último admin e permissão de exclusão de
+histórico.
+"""
+
+import pytest
+from fastapi.testclient import TestClient
+
+import auth_service as auth
+import main
+
+
+@pytest.fixture
+def client(banco_temporario):
+    with TestClient(main.app) as c:
+        yield c
+
+
+def _login(client, username="admin", senha="admin123"):
+    r = client.post("/auth/login", json={"username": username, "senha": senha})
+    assert r.status_code == 200, r.text
+    return r
+
+
+def _orcamento_payload(**overrides):
+    payload = dict(
+        peso=50,
+        paletes=[{"comprimento": 40, "largura": 30, "altura": 25}],
+        distancia=100,
+        valor_mercadoria=1000,
+        categoria="Geral",
+        transporte="Rodoviário",
+        sla="Padrão",
+    )
+    payload.update(overrides)
+    return payload
+
+
+def test_health(client):
+    assert client.get("/health").status_code == 200
+
+
+def test_orcamento_e_publico_sem_login(client):
+    r = client.post("/orcamento", json=_orcamento_payload())
+    assert r.status_code == 200
+    assert r.json()["resultado"]["frete_total"] > 0
+
+
+def test_login_com_admin_padrao(client):
+    r = _login(client)
+    assert r.json()["role"] == "admin"
+
+
+def test_login_com_senha_errada(client):
+    r = client.post("/auth/login", json={"username": "admin", "senha": "senha-errada"})
+    assert r.status_code == 401
+
+
+def test_login_bloqueia_apos_tentativas_repetidas(client):
+    for _ in range(auth._LOGIN_MAX_TENTATIVAS):
+        client.post("/auth/login", json={"username": "admin", "senha": "errada"})
+    r = client.post("/auth/login", json={"username": "admin", "senha": "errada"})
+    assert r.status_code == 429
+
+
+def test_rotas_admin_exigem_login(client):
+    assert client.get("/admin/usuarios").status_code == 401
+
+
+def test_rotas_admin_exigem_papel_admin(client, monkeypatch):
+    # cria um usuário comum e loga com ele
+    _login(client)
+    client.post("/admin/usuarios", json={
+        "nome": "Comum", "username": "comum", "senha": "senha1234", "role": "usuario",
+    })
+    client.post("/auth/logout")
+    _login(client, username="comum", senha="senha1234")
+    r = client.get("/admin/usuarios")
+    assert r.status_code == 403
+
+
+def test_criar_usuario_com_senha_curta_e_rejeitado(client):
+    _login(client)
+    r = client.post("/admin/usuarios", json={
+        "nome": "X", "username": "usuariox", "senha": "1234567", "role": "usuario",
+    })
+    assert r.status_code == 422  # menor que SENHA_MIN_LENGTH (8)
+
+
+def test_nao_pode_demover_ultimo_admin_ativo(client):
+    _login(client)
+    r = client.put("/admin/usuarios/1", json={
+        "nome": "Administrador", "username": "admin", "role": "usuario", "ativo": True, "senha": "",
+    })
+    assert r.status_code == 422
+
+
+def test_nao_pode_excluir_o_proprio_usuario(client):
+    _login(client)
+    r = client.delete("/admin/usuarios/1")
+    assert r.status_code == 422
+
+
+def test_historico_exige_login(client):
+    assert client.get("/historico").status_code == 401
+    assert client.post("/historico", json={"cliente": "X", "responsavel": "Y"}).status_code == 401
+
+
+def test_historico_soh_pode_ser_excluido_pelo_dono_ou_admin(client):
+    # admin cria um segundo usuário comum e salva um orçamento logado como admin
+    _login(client)
+    client.post("/admin/usuarios", json={
+        "nome": "Comum", "username": "comum", "senha": "senha1234", "role": "usuario",
+    })
+    r = client.post("/historico", json={"cliente": "Cliente A", "responsavel": "Admin"})
+    assert r.status_code == 200
+    codigo = r.json()["codigo"]
+    hist_id = next(h["id"] for h in client.get("/historico").json() if h["codigo"] == codigo)
+
+    # o usuário comum não pode excluir o orçamento salvo pelo admin
+    client.post("/auth/logout")
+    _login(client, username="comum", senha="senha1234")
+    r = client.delete(f"/historico/{hist_id}")
+    assert r.status_code == 403
+
+    # mas o admin (dono do registro) pode
+    client.post("/auth/logout")
+    _login(client)
+    r = client.delete(f"/historico/{hist_id}")
+    assert r.status_code == 200
+
+
+def test_usuario_comum_pode_excluir_o_proprio_historico(client):
+    _login(client)
+    client.post("/admin/usuarios", json={
+        "nome": "Comum", "username": "comum", "senha": "senha1234", "role": "usuario",
+    })
+    client.post("/auth/logout")
+    _login(client, username="comum", senha="senha1234")
+    r = client.post("/historico", json={"cliente": "Cliente B", "responsavel": "Comum"})
+    assert r.status_code == 200
+    codigo = r.json()["codigo"]
+    hist_id = next(h["id"] for h in client.get("/historico").json() if h["codigo"] == codigo)
+
+    r = client.delete(f"/historico/{hist_id}")
+    assert r.status_code == 200

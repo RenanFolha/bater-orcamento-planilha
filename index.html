@@ -488,7 +488,7 @@
         </div>
         <div class="senha-form hidden" id="senha-form">
           <input type="password" id="ts-senha-atual" placeholder="Senha atual" autocomplete="current-password">
-          <input type="password" id="ts-senha-nova" placeholder="Nova senha (mín. 4)" autocomplete="new-password">
+          <input type="password" id="ts-senha-nova" placeholder="Nova senha (mín. 8)" autocomplete="new-password" minlength="8">
           <button type="button" id="btn-confirmar-senha">Confirmar</button>
           <div class="senha-status" id="senha-status"></div>
         </div>
@@ -2047,7 +2047,7 @@ async function carregarUsuarios(){
 
     const inputSenha = document.createElement('input');
     inputSenha.type = 'password'; inputSenha.placeholder = 'Deixe em branco p/ manter';
-    inputSenha.autocomplete = 'new-password';
+    inputSenha.autocomplete = 'new-password'; inputSenha.minLength = 8;
 
     [inputNome, inputUsername, selRole, selAtivo, inputSenha].forEach(el => {
       const td = document.createElement('td');
@@ -2116,8 +2116,8 @@ async function carregarUsuarios(){
   const selAtivoNovo = criarSelect([['1', 'Sim'], ['0', 'Não']], '1');
 
   const inputSenhaNovo = document.createElement('input');
-  inputSenhaNovo.type = 'password'; inputSenhaNovo.placeholder = 'Senha (mín. 4)';
-  inputSenhaNovo.autocomplete = 'new-password';
+  inputSenhaNovo.type = 'password'; inputSenhaNovo.placeholder = 'Senha (mín. 8)';
+  inputSenhaNovo.autocomplete = 'new-password'; inputSenhaNovo.minLength = 8;
 
   [inputNomeNovo, inputUsernameNovo, selRoleNovo, selAtivoNovo, inputSenhaNovo].forEach(el => {
     const td = document.createElement('td');
@@ -2460,6 +2460,15 @@ function renderizarHistorico(lista){
     const rota = esc([o.origem_resumo, o.destino_resumo].filter(Boolean).join(' → ') || '—');
     const iniciais = esc((o.responsavel || '?').trim().split(/\s+/).slice(0,2).map(p => p[0]).join('').toUpperCase());
     const cor = statusCor[o.status] || 'var(--text-dim)';
+    // Só quem salvou o registro (mesma conta logada) ou um admin pode
+    // excluir — o backend já recusa (403) quem não pode, isso aqui só
+    // evita mostrar um botão que vai dar erro pro usuário comum.
+    const podeExcluir = !!currentUser && (currentUser.role === 'admin' || o.criado_por === currentUser.username);
+    const botaoExcluir = podeExcluir
+      ? `<button type="button" class="historico-excluir" data-id="${esc(o.id)}" title="Excluir" style="background:none;border:none;color:var(--text-dim);cursor:pointer;padding:4px;">
+          <i class="ti ti-trash"></i>
+        </button>`
+      : '<span></span>';
     return `<div class="historico-row" data-codigo="${esc(o.codigo)}" style="display:grid;grid-template-columns:${colunas};align-items:center;padding:12px 20px;font-size:12.5px;color:var(--text);border-bottom:1px solid var(--border-soft);cursor:pointer;">
       <span style="color:var(--accent-strong);font-weight:600;">${esc(o.codigo)}</span>
       <span>${esc(o.cliente) || '—'}</span>
@@ -2473,9 +2482,7 @@ function renderizarHistorico(lista){
       <span style="display:inline-flex;align-items:center;gap:5px;font-size:11.5px;">
         <span style="width:7px;height:7px;border-radius:50%;background:${cor};display:inline-block;"></span>${esc(o.status)}
       </span>
-      <button type="button" class="historico-excluir" data-id="${esc(o.id)}" title="Excluir" style="background:none;border:none;color:var(--text-dim);cursor:pointer;padding:4px;">
-        <i class="ti ti-trash"></i>
-      </button>
+      ${botaoExcluir}
     </div>`;
   }).join('');
 
