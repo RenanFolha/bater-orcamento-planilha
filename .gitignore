@@ -1,5 +1,6 @@
 __pycache__/
 *.pyc
+*.pyo
 .venv/
 
 # Banco de dados local — contém hashes de senha, sessões e histórico de
