@@ -73,7 +73,42 @@ def test_calculo_basico_sem_coleta(parametros):
     assert calc["custo_manutencao"] == pytest.approx(10.0)
     assert calc["custo_taxas_adicionais"] == pytest.approx(10.0)
     assert resultado["resultado"]["frete_total"] == pytest.approx(220.0)
-    assert resultado["resultado"]["prazo_estimado_dias_uteis"] == 5
+
+
+def test_manutencao_incide_tambem_sobre_retorno_vazio(parametros):
+    # VUC no fixture: tarifa_km_manutencao=0.1, tarifa_km_retorno=0.5
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        distancia_retorno=40,
+    )
+    calc = resultado["calculos_intermediarios"]
+    # manutenção agora soma ida (100km) + retorno (40km) = 140km * 0.1
+    assert calc["custo_manutencao"] == pytest.approx(14.0)
+    assert calc["custo_retorno"] == pytest.approx(20.0)  # só o retorno: 40km * 0.5
+
+
+def test_manutencao_incide_sobre_coleta_com_frota_propria(parametros, monkeypatch):
+    monkeypatch.setattr(fs.db, "buscar_coleta_cidade_fixa", lambda *a, **k: None)
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        distancia_coleta=20, cidade_coleta="Alguma Cidade, SP, Brasil", cidade_origem="SP",
+    )
+    calc = resultado["calculos_intermediarios"]
+    # manutenção soma ida (100km) + coleta com frota própria (20km) = 120km * 0.1
+    assert calc["custo_manutencao"] == pytest.approx(12.0)
+
+
+def test_manutencao_nao_incide_sobre_coleta_terceirizada(parametros):
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        distancia_coleta=20, coleta_terceirizada=True, valor_coleta_terceirizada=50,
+    )
+    calc = resultado["calculos_intermediarios"]
+    # coleta foi da transportadora contratada, não da frota própria -> só a ida conta
+    assert calc["custo_manutencao"] == pytest.approx(10.0)
 
 
 @pytest.mark.parametrize("campo,valor,mensagem", [

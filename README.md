@@ -167,11 +167,13 @@ Em cima disso somam-se:
 - **Entrega terceirizada** — valor combinado com a transportadora,
   quando a entrega final não é feita pela frota própria.
 - **Pedágio** — estimado (Google Maps) ou digitado manualmente.
-- **Manutenção e retorno vazio** — `tarifa_km_manutencao × distância`
-  (sobre a distância de ida) e `tarifa_km_retorno × distância_retorno`
-  (do destino até a filial mais próxima), ambos configuráveis por
-  veículo — custos operacionais, não entram nos multiplicadores de
-  categoria/transporte/SLA.
+- **Manutenção e retorno vazio** — `tarifa_km_manutencao × (distância +
+  distância_coleta + distância_retorno)` (sobre toda distância que a
+  frota própria roda: ida com carga, coleta no cliente — quando não é
+  terceirizada — e volta vazia) e `tarifa_km_retorno × distância_retorno`
+  (só o retorno, do destino até a filial mais próxima), ambos
+  configuráveis por veículo — custos operacionais, não entram nos
+  multiplicadores de categoria/transporte/SLA.
 
 ```
 frete_total = frete_ajustado + coleta + entrega_terceirizada
@@ -263,7 +265,8 @@ da requisição:
 - `distancia_coleta` e `cidade_coleta` são opcionais (só usados quando há
   retirada no cliente com frota própria — `cidade_coleta` é o endereço
   resolvido pela busca de distância, usado para checar se a rota tem
-  preço fixo de coleta).
+  preço fixo de coleta). `tarifa_km_manutencao` também incide sobre
+  `distancia_coleta`, desde que a coleta não seja terceirizada.
 - `cidade_origem` e `cidade_destino` são usadas para checar **taxas
   regionais** (ex: taxa de zona franca em Manaus) cadastradas em
   `/admin/taxas-regionais` — entram no cálculo se baterem com a cidade
@@ -282,7 +285,9 @@ da requisição:
 - `distancia_retorno`: distância (km) do retorno vazio do veículo, do
   destino até a filial mais próxima — só quando a entrega é feita direto
   ao cliente pela frota própria. Cobrada pela `tarifa_km_retorno` do
-  veículo, junto com `tarifa_km_manutencao` sobre a distância de ida.
+  veículo; `tarifa_km_manutencao` também passa a incidir sobre ela (soma
+  com a distância de ida — o desgaste do veículo acontece nos dois
+  trechos).
 
 ### `POST /geo/distancia`
 Calcula a distância rodoviária entre dois endereços (usado internamente

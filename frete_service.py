@@ -526,12 +526,18 @@ def calcular_orcamento(
     frete_base = custo_km + custo_peso_excedente
     frete_ajustado = frete_base * cat.multiplicador * transp.multiplicador * s.multiplicador
 
-    # Custo de manutenção (R$/km do veículo, sobre a distância de ida com
-    # carga) e custo do retorno vazio (R$/km, sobre a distância entre o
-    # destino e a filial mais próxima) — custos operacionais do veículo,
-    # não do frete em si, então não entram nos multiplicadores de
+    # Custo de manutenção (R$/km do veículo, sobre toda distância que a
+    # frota própria realmente roda — ida com carga + coleta no cliente
+    # (quando não é terceirizada) + volta vazia — já que o desgaste do
+    # veículo acontece em qualquer trecho rodado por ele. Coleta
+    # terceirizada não conta: quem rodou aquele trecho foi a
+    # transportadora contratada, não o veículo da frota própria) e custo
+    # do retorno vazio (R$/km, só sobre a distância entre o destino e a
+    # filial mais próxima) — custos operacionais do veículo, não do frete
+    # em si, então não entram nos multiplicadores de
     # categoria/transporte/SLA.
-    custo_manutencao = v.tarifa_km_manutencao * distancia
+    distancia_coleta_propria = 0 if coleta_terceirizada else distancia_coleta
+    custo_manutencao = v.tarifa_km_manutencao * (distancia + distancia_coleta_propria + distancia_retorno)
     custo_retorno = v.tarifa_km_retorno * distancia_retorno
 
     # Taxas adicionais (fixas em R$ ou % do valor da mercadoria)

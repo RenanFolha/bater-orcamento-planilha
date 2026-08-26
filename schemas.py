@@ -111,7 +111,7 @@ class VeiculoIn(BaseModel):
     peso_incluso_kg: float = Field(0, ge=0)
     valor_kg_excedente: float = Field(0, ge=0)
     tarifa_km_retorno: float = Field(0, ge=0, description="R$/km do retorno vazio (destino → filial mais próxima)")
-    tarifa_km_manutencao: float = Field(0, ge=0, description="R$/km de manutenção, sobre a distância de ida")
+    tarifa_km_manutencao: float = Field(0, ge=0, description="R$/km de manutenção, sobre toda distância rodada pela frota própria (ida + coleta não terceirizada + retorno vazio, quando houver)")
     capacidade_m3: float = Field(
         0, ge=0,
         description="Capacidade útil de carga do veículo em m³ — a carga não pode ultrapassar o percentual "
