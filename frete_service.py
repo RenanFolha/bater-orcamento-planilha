@@ -130,6 +130,15 @@ class TaxaRegional:
     valor: float
 
 
+@dataclass
+class TaxaBalsa:
+    cidade_origem: str
+    cidade_destino: str
+    veiculo: str
+    tipo: str  # 'fixo' ou 'percentual'
+    valor: float
+
+
 class ParametrosFrete:
     """Mantém em memória os parâmetros lidos do banco."""
 
@@ -138,6 +147,7 @@ class ParametrosFrete:
         self.veiculos_por_peso: list[Veiculo] = []
         self.taxas_adicionais: list[TaxaAdicional] = []
         self.taxas_regionais: list[TaxaRegional] = []
+        self.taxas_balsa: list[TaxaBalsa] = []
         self.faixas_coleta: list[FaixaDistancia] = []
         self.categorias: dict[str, Categoria] = {}
         self.transportes: dict[str, Transporte] = {}
@@ -166,6 +176,10 @@ class ParametrosFrete:
             self.taxas_regionais = [
                 TaxaRegional(r["cidade"], r["nome"], r["tipo"], r["valor"])
                 for r in conn.execute("SELECT * FROM taxas_regionais")
+            ]
+            self.taxas_balsa = [
+                TaxaBalsa(r["cidade_origem"], r["cidade_destino"], r["veiculo"], r["tipo"], r["valor"])
+                for r in conn.execute("SELECT * FROM taxas_balsa")
             ]
             self.faixas_coleta = sorted(
                 (FaixaDistancia(r["de"], r["ate"], r["taxa_fixa"], r["tarifa_km"])
@@ -390,6 +404,32 @@ def _taxas_regionais_aplicaveis(
     return [t for t in p.taxas_regionais if t.cidade.strip().lower() in cidades_da_rota]
 
 
+def _taxa_balsa_aplicavel(
+    p: "ParametrosFrete", cidade_origem: str | None, cidade_destino: str | None, veiculo: str
+) -> TaxaBalsa | None:
+    """Retorna a taxa de balsa cadastrada pra essa rota + veículo, se
+    houver — direcional (cidade_origem -> cidade_destino nessa ordem
+    exata): ida e volta são cotações independentes, então uma taxa
+    cadastrada só pra A->B não se aplica automaticamente à rota B->A. O
+    valor também pode variar por veículo (balsa cobra por categoria do
+    veículo embarcado), então precisa bater o veículo escolhido também."""
+    if not cidade_origem or not cidade_destino:
+        return None
+    cid_o = _cidade_da_retirada(cidade_origem)
+    cid_d = _cidade_da_retirada(cidade_destino)
+    if not cid_o or not cid_d:
+        return None
+    cid_o, cid_d, veic = cid_o.strip().lower(), cid_d.strip().lower(), veiculo.strip().lower()
+    for t in p.taxas_balsa:
+        if (
+            t.cidade_origem.strip().lower() == cid_o
+            and t.cidade_destino.strip().lower() == cid_d
+            and t.veiculo.strip().lower() == veic
+        ):
+            return t
+    return None
+
+
 @dataclass
 class SelecaoVeiculo:
     veiculo: Veiculo
@@ -512,6 +552,24 @@ def calcular_orcamento(
             "valor_configurado": taxa.valor, "valor_aplicado": round(valor_taxa, 2),
         })
 
+    # Taxa de balsa — direcional (cidade_origem -> cidade_destino nessa
+    # ordem exata): só entra se essa travessia específica estiver
+    # cadastrada; ida e volta são cotações independentes, porque o preço
+    # da balsa pode ser diferente em cada sentido.
+    custo_balsa = 0.0
+    detalhe_balsa = None
+    taxa_balsa = _taxa_balsa_aplicavel(p, cidade_origem, cidade_destino, v.nome)
+    if taxa_balsa:
+        if taxa_balsa.tipo == "percentual":
+            custo_balsa = valor_mercadoria * (taxa_balsa.valor / 100)
+        else:
+            custo_balsa = taxa_balsa.valor
+        detalhe_balsa = {
+            "cidade_origem": taxa_balsa.cidade_origem, "cidade_destino": taxa_balsa.cidade_destino,
+            "veiculo": taxa_balsa.veiculo, "tipo": taxa_balsa.tipo,
+            "valor_configurado": taxa_balsa.valor, "valor_aplicado": round(custo_balsa, 2),
+        }
+
     custo_coleta = 0.0
     coleta_fixa_aplicada = False
     if coleta_terceirizada:
@@ -543,6 +601,7 @@ def calcular_orcamento(
         + custo_entrega_terceirizada
         + custo_taxas_adicionais
         + custo_taxas_regionais
+        + custo_balsa
         + pedagio
         + custo_manutencao
         + custo_retorno
@@ -598,6 +657,8 @@ def calcular_orcamento(
             "custo_taxas_adicionais": round(custo_taxas_adicionais, 2),
             "taxas_regionais": detalhe_taxas_regionais,
             "custo_taxas_regionais": round(custo_taxas_regionais, 2),
+            "taxa_balsa": detalhe_balsa,
+            "custo_balsa": round(custo_balsa, 2),
         },
         "resultado": {
             "frete_total": round(frete_total, 2),

@@ -78,6 +78,8 @@ Sem planilha — agora tudo fica no banco `frete.db`. Para editar:
 | `veiculos`               | Veículos, tarifa/km, peso incluso e valor/kg excedente    |
 | `taxas_adicionais`       | Taxas nomeadas (GRIS, Ad Valorem etc.), fixas ou %        |
 | `coleta_cidades_fixas`   | Preço fixo de coleta por rota (filial de origem → cidade(s) do cliente, uma ou várias separadas por vírgula) + veículo (sobrepõe a faixa por km)|
+| `taxas_regionais`        | Taxas cobradas quando a cidade de origem OU destino bate com uma cidade cadastrada (ex: zona franca de Manaus), fixas ou % |
+| `taxas_balsa`            | Custo de travessia de balsa por rota **direcional** (cidade de origem → cidade de destino) + veículo — ida e volta podem ter valores diferentes, cadastre uma linha pra cada sentido |
 | `faixas_coleta`          | Faixas de distância da taxa de coleta (retirada no cliente)|
 | `categorias`             | Categorias de produto e multiplicador                     |
 | `transportes`            | Métodos de transporte, multiplicador e fator de cubagem   |
@@ -118,6 +120,7 @@ Para cada uma das tabelas abaixo existem os quatro verbos:
 - `/admin/veiculos`
 - `/admin/taxas-adicionais`
 - `/admin/taxas-regionais`
+- `/admin/taxas-balsa`
 - `/admin/coleta-cidades-fixas`
 - `/admin/faixas-coleta`
 - `/admin/categorias`
@@ -152,6 +155,12 @@ Em cima disso somam-se:
 - **Taxas Regionais** — como as adicionais, mas só entram quando a
   cidade de origem ou destino do frete bate com uma cidade cadastrada
   (ex: taxa de zona franca em Manaus). Ver `/admin/taxas-regionais`.
+- **Taxa de Balsa** — custo de travessia quando a rota **cidade de
+  origem → cidade de destino** (nessa ordem exata) e o veículo baterem
+  com uma linha cadastrada em `/admin/taxas-balsa`, fixo em R$ ou % do
+  valor da mercadoria. É direcional: a volta (destino → origem) só
+  aplica se tiver a própria linha cadastrada — o preço da travessia pode
+  ser diferente em cada sentido.
 - **Taxa de coleta** — quando há retirada no cliente (frota própria,
   veja abaixo) ou o valor combinado com a transportadora, quando a
   coleta é terceirizada.
@@ -166,7 +175,7 @@ Em cima disso somam-se:
 
 ```
 frete_total = frete_ajustado + coleta + entrega_terceirizada
-            + taxas_adicionais + taxas_regionais + pedagio
+            + taxas_adicionais + taxas_regionais + taxa_balsa + pedagio
             + manutencao + retorno_vazio
 ```
 
@@ -258,7 +267,10 @@ da requisição:
 - `cidade_origem` e `cidade_destino` são usadas para checar **taxas
   regionais** (ex: taxa de zona franca em Manaus) cadastradas em
   `/admin/taxas-regionais` — entram no cálculo se baterem com a cidade
-  de origem ou de destino do frete.
+  de origem ou de destino do frete — e **taxa de balsa** cadastrada em
+  `/admin/taxas-balsa`, que exige a combinação exata cidade_origem →
+  cidade_destino + veículo (ver [Cálculo do frete por
+  veículo](#cálculo-do-frete-por-veículo)).
 - `coleta_terceirizada`/`entrega_terceirizada`: quando a coleta ou a
   entrega final é feita por uma transportadora contratada (ver
   `/admin/transportadoras-terceirizadas`) em vez da frota própria — o

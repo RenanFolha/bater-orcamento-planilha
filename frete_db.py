@@ -148,6 +148,22 @@ CREATE TABLE IF NOT EXISTS taxas_regionais (
     UNIQUE(cidade, nome)
 );
 
+CREATE TABLE IF NOT EXISTS taxas_balsa (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- Direcional de propósito (cidade_origem -> cidade_destino): o preço da
+    -- travessia pode ser diferente na ida e na volta, então cada linha só
+    -- vale naquela direção específica — cadastre 2 linhas se ida e volta
+    -- tiverem valores diferentes. O valor também pode mudar por veículo
+    -- (balsa cobra por categoria do veículo embarcado).
+    cidade_origem TEXT NOT NULL,
+    cidade_destino TEXT NOT NULL,
+    veiculo TEXT NOT NULL,
+    tipo TEXT NOT NULL DEFAULT 'fixo' CHECK (tipo IN ('fixo', 'percentual')),
+    valor REAL NOT NULL,
+    observacao TEXT DEFAULT '',
+    UNIQUE(cidade_origem, cidade_destino, veiculo)
+);
+
 CREATE TABLE IF NOT EXISTS usuarios (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     nome TEXT NOT NULL,
@@ -932,6 +948,67 @@ def atualizar_taxa_regional(id_, cidade, nome, tipo, valor, observacao=""):
 def excluir_taxa_regional(id_):
     with get_connection() as conn:
         conn.execute("DELETE FROM taxas_regionais WHERE id=?", (id_,))
+
+
+def listar_taxas_balsa_admin() -> list[dict]:
+    with get_connection() as conn:
+        return [
+            dict(r) for r in conn.execute(
+                "SELECT * FROM taxas_balsa ORDER BY cidade_origem, cidade_destino, veiculo"
+            )
+        ]
+
+
+def _taxa_balsa_duplicada(
+    conn: sqlite3.Connection, cidade_origem: str, cidade_destino: str, veiculo: str,
+    ignorar_id: int | None = None,
+) -> bool:
+    """A UNIQUE(cidade_origem, cidade_destino, veiculo) é case-sensitive no
+    SQLite, mas a aplicação no cálculo compara em minúsculas (ver
+    frete_service._taxa_balsa_aplicavel) — sem essa checagem, duas linhas
+    que só diferem em maiúsculas/minúsculas empatariam e a taxa aplicada
+    dependeria da ordem de retorno do SQLite."""
+    query = (
+        "SELECT 1 FROM taxas_balsa WHERE LOWER(cidade_origem) = LOWER(?) AND LOWER(cidade_destino) = LOWER(?) "
+        "AND LOWER(veiculo) = LOWER(?)"
+    )
+    params = [cidade_origem.strip(), cidade_destino.strip(), veiculo.strip()]
+    if ignorar_id is not None:
+        query += " AND id != ?"
+        params.append(ignorar_id)
+    return conn.execute(query, params).fetchone() is not None
+
+
+def inserir_taxa_balsa(cidade_origem, cidade_destino, veiculo, tipo, valor, observacao=""):
+    with get_connection() as conn:
+        if _taxa_balsa_duplicada(conn, cidade_origem, cidade_destino, veiculo):
+            raise sqlite3.IntegrityError(
+                f"já existe uma taxa de balsa de '{cidade_origem}' → '{cidade_destino}' pro veículo '{veiculo}'"
+            )
+        cur = conn.execute(
+            "INSERT INTO taxas_balsa (cidade_origem, cidade_destino, veiculo, tipo, valor, observacao) "
+            "VALUES (?,?,?,?,?,?)",
+            (cidade_origem, cidade_destino, veiculo, tipo, valor, observacao),
+        )
+        return cur.lastrowid
+
+
+def atualizar_taxa_balsa(id_, cidade_origem, cidade_destino, veiculo, tipo, valor, observacao=""):
+    with get_connection() as conn:
+        if _taxa_balsa_duplicada(conn, cidade_origem, cidade_destino, veiculo, ignorar_id=id_):
+            raise sqlite3.IntegrityError(
+                f"já existe uma taxa de balsa de '{cidade_origem}' → '{cidade_destino}' pro veículo '{veiculo}'"
+            )
+        conn.execute(
+            "UPDATE taxas_balsa SET cidade_origem=?, cidade_destino=?, veiculo=?, tipo=?, valor=?, observacao=? "
+            "WHERE id=?",
+            (cidade_origem, cidade_destino, veiculo, tipo, valor, observacao, id_),
+        )
+
+
+def excluir_taxa_balsa(id_):
+    with get_connection() as conn:
+        conn.execute("DELETE FROM taxas_balsa WHERE id=?", (id_,))
 
 
 def _proximo_codigo_orcamento(conn: sqlite3.Connection) -> str:

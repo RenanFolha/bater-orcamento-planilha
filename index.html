@@ -779,6 +779,7 @@
               <div class="line" id="linha-manutencao" style="display:none;"><span>Manutenção do veículo</span><span id="d-manutencao">-</span></div>
               <div class="line" id="linha-retorno" style="display:none;"><span>Retorno vazio</span><span id="d-retorno">-</span></div>
               <div class="line" id="linha-taxas-regionais" style="display:none;"><span>Taxas regionais</span><span id="d-taxas-regionais">-</span></div>
+              <div class="line" id="linha-taxa-balsa" style="display:none;"><span>Balsa</span><span id="d-taxa-balsa">-</span></div>
               <div class="line" id="linha-taxas" style="display:none;"><span>Taxas adicionais</span><span id="d-taxas">-</span></div>
               <div class="line total-line"><span>Frete total</span><span id="d-total">-</span></div>
             </div>
@@ -814,6 +815,7 @@
         <div class="card precos-card" id="precos-taxas-adicionais"></div>
         <div class="card precos-card" id="precos-coleta-cidades-fixas"></div>
         <div class="card precos-card" id="precos-taxas-regionais"></div>
+        <div class="card precos-card" id="precos-taxas-balsa"></div>
         <div class="card precos-card" id="precos-transportadoras-terceirizadas"></div>
         <div class="card precos-card" id="precos-faixas-coleta"></div>
         <div class="card precos-card" id="precos-categorias"></div>
@@ -1715,6 +1717,15 @@ form.addEventListener('submit', async (ev) => {
       linhaTaxasRegionais.style.display = 'flex';
     }else{
       linhaTaxasRegionais.style.display = 'none';
+    }
+
+    const linhaTaxaBalsa = document.getElementById('linha-taxa-balsa');
+    if(calc.custo_balsa > 0 && calc.taxa_balsa){
+      document.getElementById('d-taxa-balsa').textContent = fmtBRL(calc.custo_balsa);
+      linhaTaxaBalsa.title = `${calc.taxa_balsa.cidade_origem} → ${calc.taxa_balsa.cidade_destino} (${calc.taxa_balsa.veiculo})`;
+      linhaTaxaBalsa.style.display = 'flex';
+    }else{
+      linhaTaxaBalsa.style.display = 'none';
     }
 
     const linhaTaxas = document.getElementById('linha-taxas');
@@ -2663,6 +2674,19 @@ async function carregarTabelaPrecos(){
     colunas: [
       {campo: 'cidade', label: 'Cidade', tipo: 'text'},
       {campo: 'nome', label: 'Nome da taxa', tipo: 'text'},
+      {campo: 'tipo', label: 'Tipo', tipo: 'select', opcoes: ['fixo', 'percentual']},
+      {campo: 'valor', label: 'Valor (R$ ou %)', tipo: 'number', step: '0.01'},
+      {campo: 'observacao', label: 'Observação', tipo: 'text'},
+    ],
+  });
+
+  await criarEditorTabela({
+    containerId: 'precos-taxas-balsa', endpoint: 'taxas-balsa',
+    titulo: 'Taxas de Balsa (travessia origem → destino, direcional — ida e volta podem ter valores diferentes)',
+    colunas: [
+      {campo: 'cidade_origem', label: 'Cidade de origem', tipo: 'text'},
+      {campo: 'cidade_destino', label: 'Cidade de destino', tipo: 'text'},
+      {campo: 'veiculo', label: 'Veículo', tipo: 'select', opcoes: veiculosParaColeta.map(v => v.nome)},
       {campo: 'tipo', label: 'Tipo', tipo: 'select', opcoes: ['fixo', 'percentual']},
       {campo: 'valor', label: 'Valor (R$ ou %)', tipo: 'number', step: '0.01'},
       {campo: 'observacao', label: 'Observação', tipo: 'text'},

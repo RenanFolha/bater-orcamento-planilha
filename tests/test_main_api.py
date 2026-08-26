@@ -152,6 +152,43 @@ def test_usuario_comum_pode_excluir_o_proprio_historico(client):
     assert r.status_code == 200
 
 
+def test_admin_taxas_balsa_crud(client):
+    _login(client)
+    veiculo = client.get("/parametros/veiculos").json()[0]["nome"]
+
+    r = client.post("/admin/taxas-balsa", json={
+        "cidade_origem": "Belém", "cidade_destino": "Macapá", "veiculo": veiculo,
+        "tipo": "fixo", "valor": 120.0,
+    })
+    assert r.status_code == 200, r.text
+    taxa_id = r.json()["id"]
+
+    r = client.get("/admin/taxas-balsa")
+    assert r.status_code == 200
+    assert any(t["id"] == taxa_id for t in r.json())
+
+    # mesma rota+veiculo de novo -> conflito
+    r = client.post("/admin/taxas-balsa", json={
+        "cidade_origem": "Belém", "cidade_destino": "Macapá", "veiculo": veiculo,
+        "tipo": "fixo", "valor": 130.0,
+    })
+    assert r.status_code == 409
+
+    r = client.put(f"/admin/taxas-balsa/{taxa_id}", json={
+        "cidade_origem": "Belém", "cidade_destino": "Macapá", "veiculo": veiculo,
+        "tipo": "fixo", "valor": 150.0,
+    })
+    assert r.status_code == 200
+
+    r = client.delete(f"/admin/taxas-balsa/{taxa_id}")
+    assert r.status_code == 200
+
+
+def test_admin_taxas_balsa_exige_admin(client):
+    r = client.get("/admin/taxas-balsa")
+    assert r.status_code == 401
+
+
 def test_geo_distancia_descobre_veiculo_a_partir_de_peso_e_paletes(client, monkeypatch):
     """peso/paletes/transporte em /geo/distancia não entram no cálculo de
     frete -- servem só pra descobrir qual veículo seria escolhido, pra

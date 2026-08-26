@@ -16,6 +16,7 @@ from schemas import (
     FilialIn,
     SlaIn,
     TaxaAdicionalIn,
+    TaxaBalsaIn,
     TaxaRegionalIn,
     TransportadoraTerceirizadaIn,
     TransporteIn,
@@ -161,6 +162,34 @@ def admin_atualizar_taxa_regional(id_: int, payload: TaxaRegionalIn, usuario: di
 @router.delete("/taxas-regionais/{id_}")
 def admin_excluir_taxa_regional(id_: int, usuario: dict = Depends(exigir_admin)):
     return admin_excluir(db.excluir_taxa_regional, id_)
+
+
+@router.get("/taxas-balsa")
+def admin_listar_taxas_balsa(usuario: dict = Depends(exigir_admin)):
+    return db.listar_taxas_balsa_admin()
+
+
+@router.post("/taxas-balsa")
+def admin_criar_taxa_balsa(payload: TaxaBalsaIn, usuario: dict = Depends(exigir_admin)):
+    return admin_criar(
+        db.inserir_taxa_balsa, payload,
+        f"Já existe uma taxa de balsa de '{payload.cidade_origem}' → '{payload.cidade_destino}' "
+        f"pro veículo '{payload.veiculo}'.",
+    )
+
+
+@router.put("/taxas-balsa/{id_}")
+def admin_atualizar_taxa_balsa(id_: int, payload: TaxaBalsaIn, usuario: dict = Depends(exigir_admin)):
+    return admin_atualizar(
+        db.atualizar_taxa_balsa, id_, payload,
+        f"Já existe uma taxa de balsa de '{payload.cidade_origem}' → '{payload.cidade_destino}' "
+        f"pro veículo '{payload.veiculo}'.",
+    )
+
+
+@router.delete("/taxas-balsa/{id_}")
+def admin_excluir_taxa_balsa(id_: int, usuario: dict = Depends(exigir_admin)):
+    return admin_excluir(db.excluir_taxa_balsa, id_)
 
 
 @router.get("/transportadoras-terceirizadas")

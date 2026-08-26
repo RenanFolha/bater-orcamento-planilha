@@ -37,6 +37,9 @@ def _parametros_teste():
     ]
     p.taxas_adicionais = [fs.TaxaAdicional(nome="GRIS", tipo="percentual", valor=1.0)]
     p.taxas_regionais = [fs.TaxaRegional(cidade="Manaus", nome="Zona Franca", tipo="fixo", valor=50.0)]
+    p.taxas_balsa = [
+        fs.TaxaBalsa(cidade_origem="Belém", cidade_destino="Macapá", veiculo="VUC", tipo="fixo", valor=120.0),
+    ]
     return p
 
 
@@ -172,6 +175,40 @@ def test_taxa_regional_nao_aplicada_para_outra_cidade(parametros):
         cidade_origem="Curitiba, PR, Brasil",
     )
     assert resultado["calculos_intermediarios"]["custo_taxas_regionais"] == pytest.approx(0.0)
+
+
+def test_taxa_balsa_aplicada_na_direcao_e_veiculo_certos(parametros):
+    # peso=50 escolhe o veículo "VUC" no fixture de teste (única faixa que cobre 50kg)
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        cidade_origem="Belém, Pará, Brasil", cidade_destino="Macapá, Amapá, Brasil",
+    )
+    calc = resultado["calculos_intermediarios"]
+    assert calc["custo_balsa"] == pytest.approx(120.0)
+    assert calc["taxa_balsa"]["veiculo"] == "VUC"
+
+
+def test_taxa_balsa_nao_aplicada_na_direcao_invertida(parametros):
+    # a mesma travessia, mas cotada no sentido contrário -- taxa é
+    # direcional, não deve aplicar sem uma linha cadastrada pra essa volta
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        cidade_origem="Macapá, Amapá, Brasil", cidade_destino="Belém, Pará, Brasil",
+    )
+    assert resultado["calculos_intermediarios"]["custo_balsa"] == pytest.approx(0.0)
+
+
+def test_taxa_balsa_nao_aplicada_para_outro_veiculo(parametros):
+    # mesma rota, mas o peso agora escolhe o "Truck" (faixa >=1000kg no
+    # fixture) -- a taxa de balsa só foi cadastrada pro VUC
+    resultado = fs.calcular_orcamento(
+        peso=1500, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        cidade_origem="Belém, Pará, Brasil", cidade_destino="Macapá, Amapá, Brasil",
+    )
+    assert resultado["calculos_intermediarios"]["custo_balsa"] == pytest.approx(0.0)
 
 
 def test_categoria_invalida_gera_erro_com_opcoes(parametros):
