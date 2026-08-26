@@ -113,6 +113,12 @@ class Veiculo:
     tarifa_km_retorno: float = 0
     tarifa_km_manutencao: float = 0
     capacidade_m3: float = 0
+    # % da capacidade_m3 que pode realmente ser ocupada (o resto fica de
+    # margem — carga não empilha 100% perfeita, precisa espaço pra
+    # amarração etc.). Editável por veículo porque cada um tem uma
+    # realidade de carregamento diferente (ex: Carreta aproveita mais %
+    # que uma Van). Antes era um valor fixo de 80% pra todos.
+    percentual_capacidade_util: float = 80
 
 
 @dataclass
@@ -165,6 +171,7 @@ class ParametrosFrete:
                 r["nome"].strip().lower(): Veiculo(
                     r["nome"], r["de"], r["ate"], r["tarifa_km"], r["peso_incluso_kg"], r["valor_kg_excedente"],
                     r["tarifa_km_retorno"], r["tarifa_km_manutencao"], r["capacidade_m3"],
+                    r["percentual_capacidade_util"],
                 )
                 for r in conn.execute("SELECT * FROM veiculos")
             }
@@ -244,16 +251,21 @@ class ParametrosFrete:
 
     def buscar_veiculo_por_peso_e_volume(self, peso_considerado: float, volume_total_m3: float) -> Veiculo:
         """Primeiro escolhe o veículo pela faixa de peso (como sempre foi).
-        Se a carga não couber em 80% da capacidade útil (m³) desse veículo,
-        sobe para o próximo veículo maior (por peso) que tenha espaço —
-        um veículo sem capacidade_m3 cadastrada (0) é tratado como sem
+        Se a carga não couber na capacidade útil (m³) desse veículo —
+        capacidade_m3 × percentual_capacidade_util, esse último editável
+        por veículo na Tabela de Preços (era fixo em 80% antes) — sobe
+        para o próximo veículo maior (por peso) que tenha espaço. Um
+        veículo sem capacidade_m3 cadastrada (0) é tratado como sem
         limite de volume, pra não quebrar quem ainda não configurou isso."""
         escolhido = self.buscar_veiculo_por_peso(peso_considerado)
         if volume_total_m3 <= 0:
             return escolhido
 
+        def capacidade_disponivel(v: Veiculo) -> float:
+            return v.capacidade_m3 * (v.percentual_capacidade_util / 100)
+
         def cabe(v: Veiculo) -> bool:
-            return v.capacidade_m3 <= 0 or volume_total_m3 <= v.capacidade_m3 * 0.8
+            return v.capacidade_m3 <= 0 or volume_total_m3 <= capacidade_disponivel(v)
 
         if cabe(escolhido):
             return escolhido
@@ -267,7 +279,7 @@ class ParametrosFrete:
                 return v
 
         raise FreteInputError(
-            f"Volume da carga ({volume_total_m3:.3f} m³) ultrapassa 80% da capacidade útil de todos os "
+            f"Volume da carga ({volume_total_m3:.3f} m³) ultrapassa a capacidade útil configurada de todos os "
             f"veículos disponíveis a partir de '{escolhido.nome}'. Cadastre um veículo maior na Tabela de "
             f"Preços ou revise as dimensões dos paletes informados."
         )
@@ -625,9 +637,13 @@ def calcular_orcamento(
             "peso_considerado_kg": round(peso_considerado, 3),
             "volume_total_m3": round(volume_total_m3, 4),
             "capacidade_util_m3_veiculo": v.capacidade_m3,
-            "capacidade_disponivel_m3_veiculo": round(v.capacidade_m3 * 0.8, 4) if v.capacidade_m3 > 0 else None,
+            "percentual_capacidade_util_veiculo": v.percentual_capacidade_util,
+            "capacidade_disponivel_m3_veiculo": (
+                round(v.capacidade_m3 * (v.percentual_capacidade_util / 100), 4) if v.capacidade_m3 > 0 else None
+            ),
             "capacidade_ocupada_pct": (
-                round(volume_total_m3 / (v.capacidade_m3 * 0.8) * 100, 1) if v.capacidade_m3 > 0 else None
+                round(volume_total_m3 / (v.capacidade_m3 * (v.percentual_capacidade_util / 100)) * 100, 1)
+                if v.capacidade_m3 > 0 else None
             ),
             "tarifa_km_veiculo": v.tarifa_km,
             "custo_km": round(custo_km, 2),

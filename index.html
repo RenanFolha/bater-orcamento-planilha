@@ -1646,7 +1646,8 @@ form.addEventListener('submit', async (ev) => {
     if(calc.capacidade_util_m3_veiculo > 0){
       linhaVolume.style.display = '';
       document.getElementById('d-volume').textContent =
-        `${calc.volume_total_m3} m³ de ${calc.capacidade_disponivel_m3_veiculo} m³ disponíveis (${calc.capacidade_ocupada_pct}% dos 80% permitidos)`;
+        `${calc.volume_total_m3} m³ de ${calc.capacidade_disponivel_m3_veiculo} m³ disponíveis ` +
+        `(${calc.capacidade_ocupada_pct}% dos ${calc.percentual_capacidade_util_veiculo}% permitidos)`;
     }else{
       linhaVolume.style.display = 'none';
     }
@@ -2632,7 +2633,8 @@ async function carregarTabelaPrecos(){
       {campo: 'valor_kg_excedente', label: 'Valor/kg excedente (R$)', tipo: 'moeda'},
       {campo: 'tarifa_km_retorno', label: 'Retorno vazio (R$/km)', tipo: 'moeda'},
       {campo: 'tarifa_km_manutencao', label: 'Manutenção (R$/km)', tipo: 'moeda'},
-      {campo: 'capacidade_m3', label: 'Capacidade útil (m³) — carga não passa de 80% disso', tipo: 'number', step: '0.01'},
+      {campo: 'capacidade_m3', label: 'Capacidade útil (m³)', tipo: 'number', step: '0.01'},
+      {campo: 'percentual_capacidade_util', label: '% da capacidade que pode ocupar', tipo: 'number', step: '1'},
       {campo: 'observacao', label: 'Observação', tipo: 'text'},
     ],
   });

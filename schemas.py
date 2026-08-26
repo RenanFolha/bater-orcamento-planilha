@@ -114,8 +114,13 @@ class VeiculoIn(BaseModel):
     tarifa_km_manutencao: float = Field(0, ge=0, description="R$/km de manutenção, sobre a distância de ida")
     capacidade_m3: float = Field(
         0, ge=0,
-        description="Capacidade útil de carga do veículo em m³ — a carga não pode ultrapassar 80% desse "
-                     "valor (0 = sem limite de volume configurado)",
+        description="Capacidade útil de carga do veículo em m³ — a carga não pode ultrapassar o percentual "
+                     "configurado (percentual_capacidade_util) desse valor (0 = sem limite de volume configurado)",
+    )
+    percentual_capacidade_util: float = Field(
+        80, gt=0, le=100,
+        description="% de capacidade_m3 que pode realmente ser ocupada (o resto fica de margem — carga não "
+                     "empilha 100% perfeita, precisa espaço pra amarração etc.)",
     )
     observacao: str = ""
 

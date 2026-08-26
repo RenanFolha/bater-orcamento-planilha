@@ -120,9 +120,26 @@ def test_upgrade_de_veiculo_por_volume(parametros):
     assert resultado["calculos_intermediarios"]["volume_total_m3"] == pytest.approx(9.0)
 
 
+def test_percentual_capacidade_util_e_editavel_por_veiculo(parametros):
+    # VUC tem capacidade_m3=10; com o percentual padrão (80%) o volume de
+    # 6 m³ caberia (usável = 8 m³) e não subiria pro Truck. Reduzindo o
+    # percentual do VUC pra 50% (usável = 5 m³), o mesmo volume deve
+    # forçar a troca -- prova que o percentual configurado por veículo é
+    # o que vale, não mais um 80% fixo no código.
+    parametros.veiculos["vuc"].percentual_capacidade_util = 50
+    paletes = _paletes(comprimento=200, largura=200, altura=150)  # 6 m³
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=paletes, distancia=10, valor_mercadoria=100,
+        categoria="Geral", transporte="TesteVolume", sla="Padrão",
+    )
+    assert resultado["entrada"]["veiculo"] == "Truck"
+    calc = resultado["calculos_intermediarios"]
+    assert calc["percentual_capacidade_util_veiculo"] == 80  # Truck ficou no padrão
+
+
 def test_volume_excede_todos_os_veiculos_disponiveis(parametros):
     paletes = _paletes(comprimento=1000, largura=1000, altura=1000)  # 1000 m³
-    with pytest.raises(fs.FreteInputError, match="ultrapassa 80%"):
+    with pytest.raises(fs.FreteInputError, match="ultrapassa a capacidade útil configurada"):
         fs.calcular_orcamento(
             peso=50, paletes=paletes, distancia=10, valor_mercadoria=100,
             categoria="Geral", transporte="TesteVolume", sla="Padrão",

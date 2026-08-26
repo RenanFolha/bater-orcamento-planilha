@@ -102,6 +102,11 @@ CREATE TABLE IF NOT EXISTS veiculos (
     tarifa_km_retorno REAL NOT NULL DEFAULT 0,
     tarifa_km_manutencao REAL NOT NULL DEFAULT 0,
     capacidade_m3 REAL NOT NULL DEFAULT 0,
+    -- % de capacidade_m3 que pode ser ocupada de verdade (o resto é
+    -- margem — carga não empilha 100%, precisa espaço pra amarração
+    -- etc.). Editável por veículo; era um valor fixo de 80% no código
+    -- antes de existir essa coluna.
+    percentual_capacidade_util REAL NOT NULL DEFAULT 80,
     observacao TEXT DEFAULT ''
 );
 
@@ -421,6 +426,8 @@ def _migrar_colunas(conn: sqlite3.Connection):
         conn.execute("ALTER TABLE veiculos ADD COLUMN tarifa_km_manutencao REAL NOT NULL DEFAULT 0")
     if not _coluna_existe(conn, "veiculos", "capacidade_m3"):
         conn.execute("ALTER TABLE veiculos ADD COLUMN capacidade_m3 REAL NOT NULL DEFAULT 0")
+    if not _coluna_existe(conn, "veiculos", "percentual_capacidade_util"):
+        conn.execute("ALTER TABLE veiculos ADD COLUMN percentual_capacidade_util REAL NOT NULL DEFAULT 80")
     if not _coluna_existe(conn, "orcamentos_historico", "criado_por"):
         # Registra qual conta de login efetivamente salvou o registro —
         # distinto de "responsavel" (texto livre, quem o usuário diz ser o
@@ -714,25 +721,29 @@ def listar_veiculos_admin() -> list[dict]:
 
 
 def inserir_veiculo(nome, de, ate, tarifa_km, peso_incluso_kg, valor_kg_excedente,
-                     tarifa_km_retorno=0, tarifa_km_manutencao=0, capacidade_m3=0, observacao=""):
+                     tarifa_km_retorno=0, tarifa_km_manutencao=0, capacidade_m3=0,
+                     percentual_capacidade_util=80, observacao=""):
     with get_connection() as conn:
         cur = conn.execute(
             "INSERT INTO veiculos (nome, de, ate, tarifa_km, peso_incluso_kg, valor_kg_excedente, "
-            "tarifa_km_retorno, tarifa_km_manutencao, capacidade_m3, observacao) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "tarifa_km_retorno, tarifa_km_manutencao, capacidade_m3, percentual_capacidade_util, observacao) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (nome, de, ate, tarifa_km, peso_incluso_kg, valor_kg_excedente,
-             tarifa_km_retorno, tarifa_km_manutencao, capacidade_m3, observacao),
+             tarifa_km_retorno, tarifa_km_manutencao, capacidade_m3, percentual_capacidade_util, observacao),
         )
         return cur.lastrowid
 
 
 def atualizar_veiculo(id_, nome, de, ate, tarifa_km, peso_incluso_kg, valor_kg_excedente,
-                       tarifa_km_retorno=0, tarifa_km_manutencao=0, capacidade_m3=0, observacao=""):
+                       tarifa_km_retorno=0, tarifa_km_manutencao=0, capacidade_m3=0,
+                       percentual_capacidade_util=80, observacao=""):
     with get_connection() as conn:
         conn.execute(
             "UPDATE veiculos SET nome=?, de=?, ate=?, tarifa_km=?, peso_incluso_kg=?, valor_kg_excedente=?, "
-            "tarifa_km_retorno=?, tarifa_km_manutencao=?, capacidade_m3=?, observacao=? WHERE id=?",
+            "tarifa_km_retorno=?, tarifa_km_manutencao=?, capacidade_m3=?, percentual_capacidade_util=?, "
+            "observacao=? WHERE id=?",
             (nome, de, ate, tarifa_km, peso_incluso_kg, valor_kg_excedente,
-             tarifa_km_retorno, tarifa_km_manutencao, capacidade_m3, observacao, id_),
+             tarifa_km_retorno, tarifa_km_manutencao, capacidade_m3, percentual_capacidade_util, observacao, id_),
         )
 
 
