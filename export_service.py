@@ -87,7 +87,11 @@ def gerar_planilha_orcamento(registro: dict) -> bytes:
     ws.cell(row=_LINHA_DADOS, column=5, value=cidade_destino or registro.get("destino_resumo") or "")  # E
     ws.cell(row=_LINHA_DADOS, column=6, value=uf_destino)  # F
     ws.cell(row=_LINHA_DADOS, column=7, value=registro.get("valor_mercadoria") or 0)  # G
-    ws.cell(row=_LINHA_DADOS, column=8, value=len(payload.get("paletes") or []))  # H: QTDE
+    # soma a quantidade de cada linha de palete (uma linha pode
+    # representar vários paletes idênticos, não só um), não a contagem
+    # de linhas do formulário
+    qtde_paletes = sum((p.get("quantidade") or 1) for p in (payload.get("paletes") or []))
+    ws.cell(row=_LINHA_DADOS, column=8, value=qtde_paletes)  # H: QTDE
     ws.cell(row=_LINHA_DADOS, column=9, value=entrada.get("peso_kg") or 0)  # I: PESO
     ws.cell(row=_LINHA_DADOS, column=10, value=calc.get("volume_total_m3") or 0)  # J: M³
     ws.cell(row=_LINHA_DADOS, column=11, value=calc.get("peso_considerado_kg") or 0)  # K: PESO CALCULO

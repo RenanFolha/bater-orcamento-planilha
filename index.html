@@ -297,7 +297,8 @@
   .field input:focus, .field select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(28,198,240,0.22);}
   .row2{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0 16px;}
   .row2-enderecos{grid-template-columns:1fr 1fr;}
-  .row2-palete{grid-template-columns:1fr 1fr 1fr auto;align-items:center;}
+  .row2-palete-principal{grid-template-columns:1fr 1fr 1fr 70px;}
+  .row2-palete{grid-template-columns:1fr 1fr 1fr 70px auto;align-items:center;}
   .row2-palete .field:last-of-type{border-bottom:none;}
   .row2-palete .btn-remove-palete{align-self:center;}
   .field-block{align-items:flex-start;padding-top:12px;}
@@ -556,7 +557,7 @@
                 </div>
               </div>
 
-              <div class="row2">
+              <div class="row2 row2-palete-principal">
                 <div class="field">
                   <div class="idx">03</div>
                   <div>
@@ -576,6 +577,13 @@
                   <div>
                     <label for="altura">Altura (cm)</label>
                     <input type="number" id="altura" class="palete-altura" min="0.1" step="0.1" value="25" required>
+                  </div>
+                </div>
+                <div class="field">
+                  <div class="idx">×</div>
+                  <div>
+                    <label for="quantidade">Qtde</label>
+                    <input type="number" id="quantidade" class="palete-quantidade" min="1" step="1" value="1" title="Quantidade de paletes idênticos com essas mesmas dimensões" required>
                   </div>
                 </div>
               </div>
@@ -818,6 +826,7 @@
 
         <div class="card precos-card" id="precos-filiais"></div>
         <div class="card precos-card" id="precos-veiculos"></div>
+        <div class="card precos-card" id="precos-faixas-km-veiculo"></div>
         <div class="card precos-card" id="precos-taxas-adicionais"></div>
         <div class="card precos-card" id="precos-coleta-cidades-fixas"></div>
         <div class="card precos-card" id="precos-taxas-regionais"></div>
@@ -1008,6 +1017,7 @@ const MEMORIA_CALCULO_CAMPOS = [
 
   {header: 'Frete base'},
   {chave: 'tarifa_km_veiculo', rotulo: 'Tarifa por km do veículo', tipo: 'brl'},
+  {chave: 'faixa_km_aplicada', rotulo: 'Veio de faixa por km (não da tarifa fixa)?', tipo: 'bool'},
   {chave: 'custo_km', rotulo: 'Custo por km × distância', tipo: 'brl'},
   {chave: 'peso_incluso_veiculo_kg', rotulo: 'Peso incluso no veículo', tipo: 'kg'},
   {chave: 'peso_excedente_kg', rotulo: 'Peso excedente', tipo: 'kg'},
@@ -1033,6 +1043,7 @@ const MEMORIA_CALCULO_CAMPOS = [
   {header: 'Pedágio, manutenção e retorno vazio'},
   {chave: 'pedagio', rotulo: 'Pedágio', tipo: 'brl'},
   {chave: 'tarifa_km_manutencao', rotulo: 'Tarifa de manutenção por km', tipo: 'brl'},
+  {chave: 'distancia_manutencao_km', rotulo: 'Distância considerada na manutenção (ida + coleta própria + retorno)', tipo: 'km'},
   {chave: 'custo_manutencao', rotulo: 'Custo de manutenção', tipo: 'brl'},
   {chave: 'tarifa_km_retorno', rotulo: 'Tarifa de retorno vazio por km', tipo: 'brl'},
   {chave: 'distancia_retorno_km', rotulo: 'Distância de retorno vazio', tipo: 'km'},
@@ -1192,10 +1203,12 @@ function coletarPaletes(){
   const comprimentos = document.querySelectorAll('.palete-comprimento');
   const larguras = document.querySelectorAll('.palete-largura');
   const alturas = document.querySelectorAll('.palete-altura');
+  const quantidades = document.querySelectorAll('.palete-quantidade');
   return Array.from(comprimentos).map((el, i) => ({
     comprimento: parseFloat(el.value) || 0,
     largura: parseFloat(larguras[i].value) || 0,
     altura: parseFloat(alturas[i].value) || 0,
+    quantidade: parseInt(quantidades[i].value, 10) || 1,
   }));
 }
 
@@ -1225,6 +1238,13 @@ function criarLinhaPalete(){
         <input type="number" class="palete-altura" min="0.1" step="0.1" value="25" required>
       </div>
     </div>
+    <div class="field">
+      <div class="idx">×</div>
+      <div>
+        <label>Qtde</label>
+        <input type="number" class="palete-quantidade" min="1" step="1" value="1" title="Quantidade de paletes idênticos com essas mesmas dimensões" required>
+      </div>
+    </div>
     <button type="button" class="btn-icone excluir btn-remove-palete" title="Remover este palete">&times;</button>
   `;
   wrap.appendChild(row);
@@ -1249,15 +1269,16 @@ function atualizarCubagem(){
     return;
   }
 
-  const volumeCm3Total = paletes.reduce((soma, p) => soma + (p.comprimento * p.largura * p.altura), 0);
+  const volumeCm3Total = paletes.reduce((soma, p) => soma + (p.comprimento * p.largura * p.altura * p.quantidade), 0);
   const volumeM3Total = volumeCm3Total / 1000000;
   const pesoCubado = volumeCm3Total / transp.fator_cubagem;
   const pesoConsiderado = Math.max(peso, pesoCubado);
   const qualPesa = pesoCubado > peso ? 'cubado' : 'real';
+  const totalPaletes = paletes.reduce((soma, p) => soma + p.quantidade, 0);
 
   cubagemInfo.className = 'cep-info ok';
   cubagemInfo.textContent =
-    `Volume total: ${volumeM3Total.toFixed(3)} m³ (${paletes.length} palete${paletes.length > 1 ? 's' : ''}) — ` +
+    `Volume total: ${volumeM3Total.toFixed(3)} m³ (${totalPaletes} palete${totalPaletes > 1 ? 's' : ''}) — ` +
     `Cubagem: ${pesoCubado.toFixed(2)} kg (fator ${transp.fator_cubagem} do transporte "${transp.nome}") — ` +
     `peso considerado no cálculo: ${pesoConsiderado.toFixed(2)} kg (peso ${qualPesa}).`;
 }
@@ -1522,7 +1543,7 @@ configurarToggle('seg-destino-modo', (valor) => {
   resetarRetornoVazio();
 });
 
-['peso', 'comprimento', 'largura', 'altura'].forEach(id => {
+['peso', 'comprimento', 'largura', 'altura', 'quantidade'].forEach(id => {
   document.getElementById(id).addEventListener('input', atualizarCubagem);
 });
 document.getElementById('transporte').addEventListener('change', atualizarCubagem);
@@ -2771,7 +2792,7 @@ async function carregarTabelaPrecos(){
       {campo: 'peso_incluso_kg', label: 'Peso incluso (kg)', tipo: 'number', step: '1'},
       {campo: 'valor_kg_excedente', label: 'Valor/kg excedente (R$)', tipo: 'moeda'},
       {campo: 'tarifa_km_retorno', label: 'Retorno vazio (R$/km)', tipo: 'moeda'},
-      {campo: 'tarifa_km_manutencao', label: 'Manutenção (R$/km, ida + retorno vazio)', tipo: 'moeda'},
+      {campo: 'tarifa_km_manutencao', label: 'Manutenção (R$/km, ida + coleta própria + retorno vazio)', tipo: 'moeda'},
       {campo: 'capacidade_m3', label: 'Capacidade útil (m³)', tipo: 'number', step: '0.01'},
       {campo: 'percentual_capacidade_util', label: '% da capacidade que pode ocupar', tipo: 'number', step: '1'},
       {campo: 'observacao', label: 'Observação', tipo: 'text'},
@@ -2792,6 +2813,18 @@ async function carregarTabelaPrecos(){
     fetch(`${API_BASE}/admin/filiais`).then(r => r.json()).catch(() => []),
     fetch(`${API_BASE}/admin/veiculos`).then(r => r.json()).catch(() => []),
   ]);
+
+  await criarEditorTabela({
+    containerId: 'precos-faixas-km-veiculo', endpoint: 'faixas-km-veiculo',
+    titulo: 'Faixas de KM por Veículo (R$/km escalonado por distância — substitui a tarifa fixa do veículo quando cadastrada)',
+    colunas: [
+      {campo: 'veiculo', label: 'Veículo', tipo: 'select', opcoes: veiculosParaColeta.map(v => v.nome)},
+      {campo: 'de', label: 'De (km)', tipo: 'number', step: '1'},
+      {campo: 'ate', label: 'Até (km)', tipo: 'number', step: '1'},
+      {campo: 'tarifa_km', label: 'Tarifa/km (R$)', tipo: 'moeda'},
+      {campo: 'observacao', label: 'Observação', tipo: 'text'},
+    ],
+  });
 
   await criarEditorTabela({
     containerId: 'precos-coleta-cidades-fixas', endpoint: 'coleta-cidades-fixas',

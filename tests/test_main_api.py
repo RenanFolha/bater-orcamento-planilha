@@ -184,6 +184,51 @@ def test_admin_taxas_balsa_crud(client):
     assert r.status_code == 200
 
 
+def test_admin_faixas_km_veiculo_crud_e_aplicada_no_orcamento(client):
+    _login(client)
+
+    payload_orcamento = {
+        "peso": 50, "paletes": [{"comprimento": 40, "largura": 30, "altura": 25}],
+        "distancia": 100, "valor_mercadoria": 1000,
+        "categoria": (client.get("/parametros/categorias").json())[0]["nome"],
+        "transporte": (client.get("/parametros/transportes").json())[0]["nome"],
+        "sla": (client.get("/parametros/slas").json())[0]["nome"],
+    }
+    # descobre qual veículo o peso/paletes de teste escolhem antes de
+    # cadastrar a faixa (a escolha automática não segue a ordem de
+    # /parametros/veiculos)
+    r = client.post("/orcamento", json=payload_orcamento)
+    assert r.status_code == 200, r.text
+    veiculo_escolhido = r.json()["entrada"]["veiculo"]
+    assert r.json()["calculos_intermediarios"]["faixa_km_aplicada"] is False
+
+    r = client.post("/admin/faixas-km-veiculo", json={
+        "veiculo": veiculo_escolhido, "de": 0, "ate": 999999, "tarifa_km": 0.01,
+    })
+    assert r.status_code == 200, r.text
+    faixa_id = r.json()["id"]
+
+    r = client.get("/admin/faixas-km-veiculo")
+    assert r.status_code == 200
+    assert any(f["id"] == faixa_id for f in r.json())
+
+    # a faixa recém-cadastrada (tarifa quase zero) já deve valer no
+    # próximo /orcamento, sem precisar de /admin/reload manual
+    r = client.post("/orcamento", json=payload_orcamento)
+    assert r.status_code == 200, r.text
+    calc = r.json()["calculos_intermediarios"]
+    assert calc["faixa_km_aplicada"] is True
+    assert calc["tarifa_km_veiculo"] == 0.01
+
+    r = client.put(f"/admin/faixas-km-veiculo/{faixa_id}", json={
+        "veiculo": veiculo_escolhido, "de": 0, "ate": 999999, "tarifa_km": 0.02,
+    })
+    assert r.status_code == 200
+
+    r = client.delete(f"/admin/faixas-km-veiculo/{faixa_id}")
+    assert r.status_code == 200
+
+
 def test_admin_taxas_balsa_exige_admin(client):
     r = client.get("/admin/taxas-balsa")
     assert r.status_code == 401

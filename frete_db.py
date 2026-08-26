@@ -110,6 +110,19 @@ CREATE TABLE IF NOT EXISTS veiculos (
     observacao TEXT DEFAULT ''
 );
 
+CREATE TABLE IF NOT EXISTS faixas_km_veiculo (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- Quando o veículo tem faixas cadastradas aqui, o R$/km escalonado
+    -- por distância substitui o tarifa_km fixo do veículo (ver
+    -- frete_service._tarifa_km_efetiva) — veículo sem nenhuma faixa
+    -- continua usando o tarifa_km fixo normalmente.
+    veiculo TEXT NOT NULL,
+    de REAL NOT NULL,
+    ate REAL NOT NULL,
+    tarifa_km REAL NOT NULL,
+    observacao TEXT DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS taxas_adicionais (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     nome TEXT NOT NULL UNIQUE,
@@ -713,6 +726,37 @@ def excluir_sla(id_):
 def contar_slas() -> int:
     with get_connection() as conn:
         return conn.execute("SELECT COUNT(*) FROM slas").fetchone()[0]
+
+
+def listar_faixas_km_veiculo_admin() -> list[dict]:
+    with get_connection() as conn:
+        return [
+            dict(r) for r in conn.execute(
+                "SELECT * FROM faixas_km_veiculo ORDER BY veiculo, de"
+            )
+        ]
+
+
+def inserir_faixa_km_veiculo(veiculo, de, ate, tarifa_km, observacao=""):
+    with get_connection() as conn:
+        cur = conn.execute(
+            "INSERT INTO faixas_km_veiculo (veiculo, de, ate, tarifa_km, observacao) VALUES (?,?,?,?,?)",
+            (veiculo, de, ate, tarifa_km, observacao),
+        )
+        return cur.lastrowid
+
+
+def atualizar_faixa_km_veiculo(id_, veiculo, de, ate, tarifa_km, observacao=""):
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE faixas_km_veiculo SET veiculo=?, de=?, ate=?, tarifa_km=?, observacao=? WHERE id=?",
+            (veiculo, de, ate, tarifa_km, observacao, id_),
+        )
+
+
+def excluir_faixa_km_veiculo(id_):
+    with get_connection() as conn:
+        conn.execute("DELETE FROM faixas_km_veiculo WHERE id=?", (id_,))
 
 
 def listar_veiculos_admin() -> list[dict]:

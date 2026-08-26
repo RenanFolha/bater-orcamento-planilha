@@ -13,6 +13,7 @@ from schemas import (
     CategoriaIn,
     ColetaCidadeFixaIn,
     FaixaColetaIn,
+    FaixaKmVeiculoIn,
     FilialIn,
     SlaIn,
     TaxaAdicionalIn,
@@ -82,6 +83,26 @@ def admin_excluir_veiculo(id_: int, usuario: dict = Depends(exigir_admin)):
         db.excluir_veiculo, id_, db.contar_veiculos,
         "Não é possível excluir o último veículo cadastrado — o sistema precisa de pelo menos um.",
     )
+
+
+@router.get("/faixas-km-veiculo")
+def admin_listar_faixas_km_veiculo(usuario: dict = Depends(exigir_admin)):
+    return db.listar_faixas_km_veiculo_admin()
+
+
+@router.post("/faixas-km-veiculo")
+def admin_criar_faixa_km_veiculo(payload: FaixaKmVeiculoIn, usuario: dict = Depends(exigir_admin)):
+    return admin_criar(db.inserir_faixa_km_veiculo, payload, "")
+
+
+@router.put("/faixas-km-veiculo/{id_}")
+def admin_atualizar_faixa_km_veiculo(id_: int, payload: FaixaKmVeiculoIn, usuario: dict = Depends(exigir_admin)):
+    return admin_atualizar(db.atualizar_faixa_km_veiculo, id_, payload, "")
+
+
+@router.delete("/faixas-km-veiculo/{id_}")
+def admin_excluir_faixa_km_veiculo(id_: int, usuario: dict = Depends(exigir_admin)):
+    return admin_excluir(db.excluir_faixa_km_veiculo, id_)
 
 
 @router.get("/taxas-adicionais")

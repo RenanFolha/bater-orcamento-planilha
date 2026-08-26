@@ -11,6 +11,7 @@ class PaleteIn(BaseModel):
     comprimento: float = Field(..., gt=0, description="Comprimento do palete em cm", examples=[40])
     largura: float = Field(..., gt=0, description="Largura do palete em cm", examples=[30])
     altura: float = Field(..., gt=0, description="Altura do palete em cm", examples=[25])
+    quantidade: int = Field(1, ge=1, description="Quantidade de paletes idênticos com essas mesmas dimensões — evita repetir a mesma linha várias vezes", examples=[1])
 
 
 class OrcamentoRequest(BaseModel):
@@ -75,6 +76,14 @@ class FaixaColetaIn(BaseModel):
     ate: float = Field(..., gt=0)
     taxa_fixa: float = Field(..., ge=0)
     tarifa_km: float = Field(0, ge=0)
+    observacao: str = ""
+
+
+class FaixaKmVeiculoIn(BaseModel):
+    veiculo: str = Field(..., min_length=1, description="Veículo ao qual essa faixa se aplica (ver /parametros/veiculos)")
+    de: float = Field(..., ge=0, description="Distância mínima (km) pra essa faixa valer")
+    ate: float = Field(..., gt=0, description="Distância máxima (km) da faixa")
+    tarifa_km: float = Field(..., ge=0, description="R$/km cobrado nessa faixa — substitui o tarifa_km fixo do veículo quando a distância do frete cair nela")
     observacao: str = ""
 
 

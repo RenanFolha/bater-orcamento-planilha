@@ -122,6 +122,14 @@ class Veiculo:
 
 
 @dataclass
+class FaixaKmVeiculo:
+    veiculo: str
+    de: float
+    ate: float
+    tarifa_km: float
+
+
+@dataclass
 class TaxaAdicional:
     nome: str
     tipo: str  # 'fixo' ou 'percentual'
@@ -151,6 +159,7 @@ class ParametrosFrete:
     def __init__(self):
         self.veiculos: dict[str, Veiculo] = {}
         self.veiculos_por_peso: list[Veiculo] = []
+        self.faixas_km_veiculo: dict[str, list[FaixaKmVeiculo]] = {}
         self.taxas_adicionais: list[TaxaAdicional] = []
         self.taxas_regionais: list[TaxaRegional] = []
         self.taxas_balsa: list[TaxaBalsa] = []
@@ -176,6 +185,12 @@ class ParametrosFrete:
                 for r in conn.execute("SELECT * FROM veiculos")
             }
             self.veiculos_por_peso = sorted(self.veiculos.values(), key=lambda v: v.de)
+            self.faixas_km_veiculo = {}
+            for r in conn.execute("SELECT * FROM faixas_km_veiculo ORDER BY de"):
+                chave = r["veiculo"].strip().lower()
+                self.faixas_km_veiculo.setdefault(chave, []).append(
+                    FaixaKmVeiculo(r["veiculo"], r["de"], r["ate"], r["tarifa_km"])
+                )
             self.taxas_adicionais = [
                 TaxaAdicional(r["nome"], r["tipo"], r["valor"])
                 for r in conn.execute("SELECT * FROM taxas_adicionais")
@@ -289,6 +304,24 @@ class ParametrosFrete:
         if not candidatas:
             raise FreteInputError(f"Distância de coleta {distancia}km abaixo da menor faixa configurada.")
         return candidatas[-1]
+
+    def tarifa_km_efetiva(self, veiculo: Veiculo, distancia: float) -> tuple[float, bool]:
+        """R$/km a usar no frete principal: se o veículo tiver faixas de km
+        cadastradas (Tabela de Preços → "Faixas de KM por Veículo"), usa a
+        tarifa escalonada pela distância em vez do tarifa_km fixo do
+        veículo. Devolve (tarifa, veio_de_faixa) — o segundo valor é só
+        pra deixar isso visível na memória de cálculo do orçamento.
+        Veículo sem nenhuma faixa cadastrada continua com o tarifa_km fixo
+        de sempre."""
+        faixas = self.faixas_km_veiculo.get(veiculo.nome.strip().lower())
+        if not faixas:
+            return veiculo.tarifa_km, False
+        candidatas = [f for f in faixas if f.de <= distancia]
+        if not candidatas:
+            # distância abaixo da menor faixa cadastrada -- cai pro
+            # tarifa_km fixo em vez de travar o orçamento com erro
+            return veiculo.tarifa_km, False
+        return candidatas[-1].tarifa_km, True
 
     def buscar_categoria(self, nome: str) -> Categoria:
         cat = self.categorias.get(nome.strip().lower())
@@ -457,7 +490,12 @@ def escolher_veiculo(peso: float, paletes: list[dict], transp: Transporte) -> Se
     seria escolhido, antes mesmo de calcular o orçamento (usada pra achar
     uma rota já cotada no histórico com o mesmo veículo, ver
     geo_service._buscar_rota_no_historico)."""
-    volume_total_cm3 = sum(pal["comprimento"] * pal["largura"] * pal["altura"] for pal in paletes)
+    # quantidade (padrão 1) deixa cadastrar "3 paletes iguais" numa linha
+    # só, em vez de repetir a mesma linha 3 vezes — cada um conta seu
+    # volume individual multiplicado pela quantidade.
+    volume_total_cm3 = sum(
+        pal["comprimento"] * pal["largura"] * pal["altura"] * pal.get("quantidade", 1) for pal in paletes
+    )
     volume_total_m3 = volume_total_cm3 / 1_000_000
     peso_cubado = volume_total_cm3 / transp.fator_cubagem
     peso_considerado = max(peso, peso_cubado)
@@ -493,6 +531,8 @@ def calcular_orcamento(
     for palete in paletes:
         if palete["comprimento"] <= 0 or palete["largura"] <= 0 or palete["altura"] <= 0:
             raise FreteInputError("Comprimento, largura e altura de cada palete devem ser maiores que zero.")
+        if palete.get("quantidade", 1) < 1:
+            raise FreteInputError("A quantidade de cada palete deve ser pelo menos 1.")
     if distancia <= 0:
         raise FreteInputError("Distância deve ser maior que zero.")
     if distancia_coleta < 0:
@@ -519,7 +559,8 @@ def calcular_orcamento(
     peso_cubado = selecao.peso_cubado
     peso_considerado = selecao.peso_considerado
 
-    custo_km = v.tarifa_km * distancia
+    tarifa_km_usada, faixa_km_aplicada = p.tarifa_km_efetiva(v, distancia)
+    custo_km = tarifa_km_usada * distancia
     peso_excedente = max(peso_considerado - v.peso_incluso_kg, 0)
     custo_peso_excedente = peso_excedente * v.valor_kg_excedente
 
@@ -651,7 +692,8 @@ def calcular_orcamento(
                 round(volume_total_m3 / (v.capacidade_m3 * (v.percentual_capacidade_util / 100)) * 100, 1)
                 if v.capacidade_m3 > 0 else None
             ),
-            "tarifa_km_veiculo": v.tarifa_km,
+            "tarifa_km_veiculo": tarifa_km_usada,
+            "faixa_km_aplicada": faixa_km_aplicada,
             "custo_km": round(custo_km, 2),
             "peso_incluso_veiculo_kg": v.peso_incluso_kg,
             "peso_excedente_kg": round(peso_excedente, 3),
@@ -670,6 +712,7 @@ def calcular_orcamento(
             "entrega_terceirizada": entrega_terceirizada,
             "transportadora_entrega_nome": transportadora_entrega_nome if entrega_terceirizada else None,
             "pedagio": round(pedagio, 2),
+            "distancia_manutencao_km": round(distancia + distancia_coleta_propria + distancia_retorno),
             "custo_manutencao": round(custo_manutencao, 2),
             "tarifa_km_manutencao": v.tarifa_km_manutencao,
             "custo_retorno": round(custo_retorno, 2),

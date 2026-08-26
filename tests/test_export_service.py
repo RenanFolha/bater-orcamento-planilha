@@ -47,6 +47,19 @@ def test_gerar_planilha_orcamento_retorna_xlsx_valido():
     assert ws.cell(row=6, column=2).value == "ORC-0001"  # B6: ID COTAÇÃO
     assert ws.cell(row=6, column=7).value == 1000.0  # G6: valor da mercadoria
     assert ws.cell(row=6, column=12).value == 543.21  # L6: frete final
+    assert ws.cell(row=6, column=8).value == 1  # H6: QTDE (1 linha, quantidade padrão 1)
+
+
+def test_qtde_soma_a_quantidade_de_cada_linha_de_palete():
+    registro = _registro_teste()
+    registro["dados"]["payload"]["paletes"] = [
+        {"comprimento": 40, "largura": 30, "altura": 25, "quantidade": 3},
+        {"comprimento": 50, "largura": 40, "altura": 30, "quantidade": 2},
+    ]
+    conteudo = export.gerar_planilha_orcamento(registro)
+    wb = openpyxl.load_workbook(BytesIO(conteudo))
+    ws = wb[wb.sheetnames[0]]
+    assert ws.cell(row=6, column=8).value == 5  # H6: QTDE = 3 + 2, não 2 linhas
 
 
 def test_gerar_planilha_sem_modelo_gera_erro(monkeypatch, tmp_path):

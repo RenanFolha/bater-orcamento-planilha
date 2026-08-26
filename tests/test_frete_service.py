@@ -73,6 +73,51 @@ def test_calculo_basico_sem_coleta(parametros):
     assert calc["custo_manutencao"] == pytest.approx(10.0)
     assert calc["custo_taxas_adicionais"] == pytest.approx(10.0)
     assert resultado["resultado"]["frete_total"] == pytest.approx(220.0)
+    assert calc["faixa_km_aplicada"] is False
+    assert calc["tarifa_km_veiculo"] == pytest.approx(2.0)  # tarifa_km fixa do VUC, sem faixa cadastrada
+
+
+def test_faixa_km_veiculo_substitui_tarifa_fixa(parametros):
+    parametros.faixas_km_veiculo["vuc"] = [
+        fs.FaixaKmVeiculo(veiculo="VUC", de=0, ate=100, tarifa_km=5.0),
+        fs.FaixaKmVeiculo(veiculo="VUC", de=100, ate=999999, tarifa_km=3.0),
+    ]
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=150, valor_mercadoria=100,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+    )
+    calc = resultado["calculos_intermediarios"]
+    assert calc["faixa_km_aplicada"] is True
+    assert calc["tarifa_km_veiculo"] == pytest.approx(3.0)  # faixa 100-999999, não o tarifa_km fixo (2.0)
+    assert calc["custo_km"] == pytest.approx(450.0)  # 150km * 3.0
+
+
+def test_faixa_km_veiculo_cai_pra_tarifa_fixa_abaixo_da_menor_faixa(parametros):
+    parametros.faixas_km_veiculo["vuc"] = [
+        fs.FaixaKmVeiculo(veiculo="VUC", de=200, ate=999999, tarifa_km=3.0),
+    ]
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=50, valor_mercadoria=100,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+    )
+    calc = resultado["calculos_intermediarios"]
+    assert calc["faixa_km_aplicada"] is False
+    assert calc["tarifa_km_veiculo"] == pytest.approx(2.0)  # abaixo da menor faixa -> volta pro fixo do VUC
+
+
+def test_faixa_km_veiculo_nao_afeta_outro_veiculo(parametros):
+    # faixa só cadastrada pro VUC -- Truck continua com tarifa_km fixa
+    parametros.faixas_km_veiculo["vuc"] = [
+        fs.FaixaKmVeiculo(veiculo="VUC", de=0, ate=999999, tarifa_km=99.0),
+    ]
+    resultado = fs.calcular_orcamento(
+        peso=1500, paletes=_paletes(), distancia=50, valor_mercadoria=100,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+    )
+    assert resultado["entrada"]["veiculo"] == "Truck"
+    calc = resultado["calculos_intermediarios"]
+    assert calc["faixa_km_aplicada"] is False
+    assert calc["tarifa_km_veiculo"] == pytest.approx(3.0)  # tarifa_km fixa do Truck
 
 
 def test_manutencao_incide_tambem_sobre_retorno_vazio(parametros):
@@ -85,6 +130,7 @@ def test_manutencao_incide_tambem_sobre_retorno_vazio(parametros):
     calc = resultado["calculos_intermediarios"]
     # manutenção agora soma ida (100km) + retorno (40km) = 140km * 0.1
     assert calc["custo_manutencao"] == pytest.approx(14.0)
+    assert calc["distancia_manutencao_km"] == 140
     assert calc["custo_retorno"] == pytest.approx(20.0)  # só o retorno: 40km * 0.5
 
 
@@ -98,6 +144,7 @@ def test_manutencao_incide_sobre_coleta_com_frota_propria(parametros, monkeypatc
     calc = resultado["calculos_intermediarios"]
     # manutenção soma ida (100km) + coleta com frota própria (20km) = 120km * 0.1
     assert calc["custo_manutencao"] == pytest.approx(12.0)
+    assert calc["distancia_manutencao_km"] == 120
 
 
 def test_manutencao_nao_incide_sobre_coleta_terceirizada(parametros):
@@ -130,6 +177,45 @@ def test_paletes_vazios_rejeitados(parametros):
     with pytest.raises(fs.FreteInputError):
         fs.calcular_orcamento(
             peso=50, paletes=[], distancia=100, valor_mercadoria=1000,
+            categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        )
+
+
+def test_quantidade_do_palete_multiplica_o_volume(parametros):
+    # 1 palete de 40x30x25 (0.03 m³) com quantidade=3 deve dar o mesmo
+    # volume que 3 linhas iguais separadas -- evita ter que repetir a
+    # linha manualmente quando os paletes são idênticos.
+    paletes_x3 = [{"comprimento": 40, "largura": 30, "altura": 25, "quantidade": 3}]
+    paletes_repetidos = _paletes() + _paletes() + _paletes()
+
+    resultado_x3 = fs.calcular_orcamento(
+        peso=50, paletes=paletes_x3, distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="TesteVolume", sla="Padrão",
+    )
+    resultado_repetido = fs.calcular_orcamento(
+        peso=50, paletes=paletes_repetidos, distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="TesteVolume", sla="Padrão",
+    )
+    assert resultado_x3["calculos_intermediarios"]["volume_total_m3"] == pytest.approx(0.09)
+    assert (
+        resultado_x3["calculos_intermediarios"]["volume_total_m3"]
+        == resultado_repetido["calculos_intermediarios"]["volume_total_m3"]
+    )
+
+
+def test_quantidade_padrao_e_1_quando_nao_informada(parametros):
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+    )
+    assert resultado["calculos_intermediarios"]["volume_total_m3"] == pytest.approx(0.03)
+
+
+def test_quantidade_menor_que_1_e_rejeitada(parametros):
+    paletes = [{"comprimento": 40, "largura": 30, "altura": 25, "quantidade": 0}]
+    with pytest.raises(fs.FreteInputError, match="quantidade"):
+        fs.calcular_orcamento(
+            peso=50, paletes=paletes, distancia=100, valor_mercadoria=1000,
             categoria="Geral", transporte="Rodoviário", sla="Padrão",
         )
 
