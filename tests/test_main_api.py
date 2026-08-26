@@ -150,3 +150,45 @@ def test_usuario_comum_pode_excluir_o_proprio_historico(client):
 
     r = client.delete(f"/historico/{hist_id}")
     assert r.status_code == 200
+
+
+def test_geo_distancia_descobre_veiculo_a_partir_de_peso_e_paletes(client, monkeypatch):
+    """peso/paletes/transporte em /geo/distancia não entram no cálculo de
+    frete -- servem só pra descobrir qual veículo seria escolhido, pra
+    permitir reaproveitar uma rota já cotada no histórico com esse mesmo
+    veículo (ver geo_service._buscar_rota_no_historico)."""
+    import routers.geo as geo_router
+
+    capturado = {}
+
+    async def _calcular_distancia_fake(origem, destino, veiculo=None):
+        capturado["veiculo"] = veiculo
+        return {"distancia_km": 10, "duracao_min": 10, "pedagio_valor": None, "pedagio_moeda": None,
+                "origem_resolvido": origem, "destino_resolvido": destino}
+
+    monkeypatch.setattr(geo_router.geo, "calcular_distancia", _calcular_distancia_fake)
+
+    r = client.post("/geo/distancia", json={
+        "origem": "Campinas, SP", "destino": "São Paulo, SP",
+        "peso": 50, "paletes": [{"comprimento": 40, "largura": 30, "altura": 25}],
+        "transporte": "Rodoviário",
+    })
+    assert r.status_code == 200
+    assert capturado["veiculo"] == "Caminhonete"  # peso baixo -> menor veículo da faixa padrão
+
+
+def test_geo_distancia_sem_peso_nao_descobre_veiculo(client, monkeypatch):
+    import routers.geo as geo_router
+
+    capturado = {}
+
+    async def _calcular_distancia_fake(origem, destino, veiculo=None):
+        capturado["veiculo"] = veiculo
+        return {"distancia_km": 10, "duracao_min": 10, "pedagio_valor": None, "pedagio_moeda": None,
+                "origem_resolvido": origem, "destino_resolvido": destino}
+
+    monkeypatch.setattr(geo_router.geo, "calcular_distancia", _calcular_distancia_fake)
+
+    r = client.post("/geo/distancia", json={"origem": "Campinas, SP", "destino": "São Paulo, SP"})
+    assert r.status_code == 200
+    assert capturado["veiculo"] is None

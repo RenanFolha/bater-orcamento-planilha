@@ -13,9 +13,24 @@ router = APIRouter(prefix="/geo", tags=["Geolocalização"])
 async def distancia_por_endereco(payload: DistanciaRequest):
     """Geocodifica os dois endereços (ou endereços de filiais) e calcula a
     distância rodoviária entre eles (em km). Usado para o trecho principal
-    do frete (origem efetiva → destino)."""
+    do frete (origem efetiva → destino).
+
+    peso/paletes/transporte são opcionais: quando informados, descobrem o
+    veículo que o orçamento vai escolher (mesma lógica de
+    calcular_orcamento) só pra permitir reaproveitar a distância de uma
+    rota+veículo já cotada e salva no histórico, sem precisar geocodificar
+    de novo — não fazem parte do cálculo de frete em si."""
+    veiculo_nome = None
+    if payload.peso > 0 and payload.paletes and payload.transporte:
+        try:
+            transp = fs.parametros.buscar_transporte(payload.transporte)
+            selecao = fs.escolher_veiculo(payload.peso, [p.model_dump() for p in payload.paletes], transp)
+            veiculo_nome = selecao.veiculo.nome
+        except (fs.FreteInputError, fs.FreteConfigError):
+            veiculo_nome = None  # não dá pra descobrir o veículo -> só não reaproveita do histórico
+
     try:
-        return await geo.calcular_distancia(payload.origem, payload.destino)
+        return await geo.calcular_distancia(payload.origem, payload.destino, veiculo=veiculo_nome)
     except geo.GeoError as e:
         raise HTTPException(status_code=422, detail=str(e))
 

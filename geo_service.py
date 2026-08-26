@@ -23,6 +23,7 @@ from collections import OrderedDict
 import httpx
 
 import frete_db as db
+import frete_service as fs
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 OSRM_URL_TEMPLATE = "https://router.project-osrm.org/route/v1/driving/{lon1},{lat1};{lon2},{lat2}"
@@ -384,12 +385,76 @@ async def coordenadas_filial(client: httpx.AsyncClient, filial) -> tuple[float, 
     return lat, lon
 
 
-async def calcular_distancia(origem: str, destino: str) -> dict:
-    """Distância rodoviária entre dois endereços em texto livre."""
+# Velocidade média assumida só pra estimar a duração quando a distância vem
+# reaproveitada do histórico (ver _buscar_rota_no_historico) — nesse caso
+# não existe rota real calculada, então não tem duração de verdade
+# disponível; é só uma estimativa grosseira pra não deixar o campo "0 min"
+# no formulário. A distância em si (o que importa pro preço) é exata,
+# vem de uma cotação anterior de verdade.
+_VELOCIDADE_MEDIA_KMH = 60
+
+
+def _buscar_rota_no_historico(origem: str, destino: str, veiculo: str | None) -> dict | None:
+    """Se essa mesma rota (por cidade de origem/destino, nas duas direções —
+    o negócio já trata ida e volta com a mesma distância, ver tabela de
+    frete) E o mesmo veículo já foram cotados juntos e salvos no histórico
+    antes, devolve a distância daquele registro (o mais recente) em vez de
+    precisar chamar o serviço de geolocalização de novo. Evita gastar
+    geocodificação/rota externa (rate limit do Nominatim/OSRM, ou custo do
+    Google Maps) numa rota já conhecida.
+
+    Sem o veículo não dá pra reaproveitar (retorna None sempre): pedágio
+    varia por categoria de veículo, e é isso que vai ser cacheado junto com
+    a distância mais adiante — então rota+veículo diferentes contam como
+    "não é a mesma cotação", mesmo que a rota geográfica seja idêntica."""
+    if not veiculo or not veiculo.strip():
+        return None
+    veiculo_alvo = veiculo.strip().lower()
+
+    cidade_o, _ = fs.cidade_e_uf(origem)
+    cidade_d, _ = fs.cidade_e_uf(destino)
+    if not cidade_o or not cidade_d:
+        return None
+    cidade_o, cidade_d = cidade_o.strip().lower(), cidade_d.strip().lower()
+
+    for rota in db.listar_rotas_historico():
+        if (rota["veiculo"] or "").strip().lower() != veiculo_alvo:
+            continue
+        cidade_ro, _ = fs.cidade_e_uf(rota["origem_resumo"] or "")
+        cidade_rd, _ = fs.cidade_e_uf(rota["destino_resumo"] or "")
+        if not cidade_ro or not cidade_rd:
+            continue
+        cidade_ro, cidade_rd = cidade_ro.strip().lower(), cidade_rd.strip().lower()
+        mesma_rota = (cidade_ro, cidade_rd) == (cidade_o, cidade_d)
+        rota_invertida = (cidade_ro, cidade_rd) == (cidade_d, cidade_o)
+        if mesma_rota or rota_invertida:
+            return rota
+    return None
+
+
+async def calcular_distancia(origem: str, destino: str, veiculo: str | None = None) -> dict:
+    """Distância rodoviária entre dois endereços em texto livre. Antes de
+    chamar o serviço de geolocalização, verifica se essa rota + veículo já
+    foi cotada e salva no histórico — se achar, reaproveita a distância de
+    lá (silenciosamente, sem indicar isso na resposta) em vez de
+    geocodificar de novo. Sem o veículo (chamador não informou), sempre
+    geocodifica de verdade."""
     if not origem or not origem.strip():
         raise GeoError("Endereço de origem não informado.")
     if not destino or not destino.strip():
         raise GeoError("Endereço de destino não informado.")
+
+    reaproveitada = _buscar_rota_no_historico(origem, destino, veiculo)
+    if reaproveitada is not None:
+        distancia_km = reaproveitada["distancia_km"]
+        return {
+            "distancia_km": distancia_km,
+            "duracao_min": round(distancia_km / _VELOCIDADE_MEDIA_KMH * 60),
+            "pedagio_valor": None,
+            "pedagio_moeda": None,
+            "origem_resolvido": reaproveitada["origem_resumo"],
+            "destino_resolvido": reaproveitada["destino_resumo"],
+        }
 
     async with httpx.AsyncClient() as client:
         lat1, lon1, nome1 = await _geocode(client, origem)

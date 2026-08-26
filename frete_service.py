@@ -390,6 +390,29 @@ def _taxas_regionais_aplicaveis(
     return [t for t in p.taxas_regionais if t.cidade.strip().lower() in cidades_da_rota]
 
 
+@dataclass
+class SelecaoVeiculo:
+    veiculo: Veiculo
+    volume_total_m3: float
+    peso_cubado: float
+    peso_considerado: float
+
+
+def escolher_veiculo(peso: float, paletes: list[dict], transp: Transporte) -> SelecaoVeiculo:
+    """Mesma lógica de escolha de veículo usada em calcular_orcamento
+    (peso real x peso cubado, dentro da capacidade em m³) — extraída pra
+    função própria porque geo_service também precisa saber qual veículo
+    seria escolhido, antes mesmo de calcular o orçamento (usada pra achar
+    uma rota já cotada no histórico com o mesmo veículo, ver
+    geo_service._buscar_rota_no_historico)."""
+    volume_total_cm3 = sum(pal["comprimento"] * pal["largura"] * pal["altura"] for pal in paletes)
+    volume_total_m3 = volume_total_cm3 / 1_000_000
+    peso_cubado = volume_total_cm3 / transp.fator_cubagem
+    peso_considerado = max(peso, peso_cubado)
+    veiculo = parametros.buscar_veiculo_por_peso_e_volume(peso_considerado, volume_total_m3)
+    return SelecaoVeiculo(veiculo, volume_total_m3, peso_cubado, peso_considerado)
+
+
 def calcular_orcamento(
     peso: float,
     paletes: list[dict],
@@ -438,12 +461,11 @@ def calcular_orcamento(
     cat = p.buscar_categoria(categoria)
     s = p.buscar_sla(sla)
 
-    volume_total_cm3 = sum(pal["comprimento"] * pal["largura"] * pal["altura"] for pal in paletes)
-    volume_total_m3 = volume_total_cm3 / 1_000_000
-    peso_cubado = volume_total_cm3 / transp.fator_cubagem
-    peso_considerado = max(peso, peso_cubado)
-
-    v = p.buscar_veiculo_por_peso_e_volume(peso_considerado, volume_total_m3)
+    selecao = escolher_veiculo(peso, paletes, transp)
+    v = selecao.veiculo
+    volume_total_m3 = selecao.volume_total_m3
+    peso_cubado = selecao.peso_cubado
+    peso_considerado = selecao.peso_considerado
 
     custo_km = v.tarifa_km * distancia
     peso_excedente = max(peso_considerado - v.peso_incluso_kg, 0)

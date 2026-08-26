@@ -116,11 +116,17 @@ CREATE TABLE IF NOT EXISTS taxas_adicionais (
 CREATE TABLE IF NOT EXISTS coleta_cidades_fixas (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     filial_origem TEXT NOT NULL,
+    -- Uma ou mais cidades separadas por vírgula (ex: "Osasco, Barueri,
+    -- Cotia") — uma linha só cobre várias cidades do cliente, em vez de
+    -- precisar de uma linha por cidade. Sem UNIQUE aqui de propósito: a
+    -- checagem de cidade duplicada (mesma cidade em duas linhas do mesmo
+    -- filial_origem+veiculo) é feita em Python (ver
+    -- _cidades_coleta_conflitantes), porque a lista embutida no texto não
+    -- dá pra validar com um UNIQUE simples do SQLite.
     cidade_destino TEXT NOT NULL,
     veiculo TEXT NOT NULL,
     valor_fixo REAL NOT NULL,
-    observacao TEXT DEFAULT '',
-    UNIQUE(filial_origem, cidade_destino, veiculo)
+    observacao TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS transportadoras_terceirizadas (
@@ -329,6 +335,37 @@ def _coluna_existe(conn: sqlite3.Connection, tabela: str, coluna: str) -> bool:
     return coluna in colunas
 
 
+def _migrar_coleta_cidades_fixas_lista(conn: sqlite3.Connection):
+    """coleta_cidades_fixas passou a aceitar uma LISTA de cidades separadas
+    por vírgula em `cidade_destino` (uma linha cobre várias cidades do
+    cliente), em vez de uma linha por cidade. Isso exige remover a antiga
+    UNIQUE(filial_origem, cidade_destino, veiculo) — o SQLite não tem ALTER
+    TABLE DROP CONSTRAINT, então recriamos a tabela preservando todas as
+    linhas e ids existentes (cada cidade já cadastrada vira uma "lista de
+    1" automaticamente, sem perda de dado)."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='coleta_cidades_fixas'"
+    ).fetchone()
+    if not row or "UNIQUE(filial_origem, cidade_destino, veiculo)" not in (row["sql"] or ""):
+        return  # já migrado
+    conn.execute("ALTER TABLE coleta_cidades_fixas RENAME TO coleta_cidades_fixas_old")
+    conn.execute("""
+        CREATE TABLE coleta_cidades_fixas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            filial_origem TEXT NOT NULL,
+            cidade_destino TEXT NOT NULL,
+            veiculo TEXT NOT NULL,
+            valor_fixo REAL NOT NULL,
+            observacao TEXT DEFAULT ''
+        )
+    """)
+    conn.execute("""
+        INSERT INTO coleta_cidades_fixas (id, filial_origem, cidade_destino, veiculo, valor_fixo, observacao)
+        SELECT id, filial_origem, cidade_destino, veiculo, valor_fixo, observacao FROM coleta_cidades_fixas_old
+    """)
+    conn.execute("DROP TABLE coleta_cidades_fixas_old")
+
+
 def _migrar_colunas(conn: sqlite3.Connection):
     """Para bancos criados antes de existir a coluna tipo_frete:
     adiciona a coluna sem apagar nada do que já estava lá. Também remove
@@ -353,10 +390,11 @@ def _migrar_colunas(conn: sqlite3.Connection):
                 cidade_destino TEXT NOT NULL,
                 veiculo TEXT NOT NULL,
                 valor_fixo REAL NOT NULL,
-                observacao TEXT DEFAULT '',
-                UNIQUE(filial_origem, cidade_destino, veiculo)
+                observacao TEXT DEFAULT ''
             )
         """)
+    else:
+        _migrar_coleta_cidades_fixas_lista(conn)
     if not _coluna_existe(conn, "veiculos", "de"):
         conn.execute("ALTER TABLE veiculos ADD COLUMN de REAL NOT NULL DEFAULT 0")
     if not _coluna_existe(conn, "veiculos", "ate"):
@@ -726,50 +764,76 @@ def listar_coleta_cidades_fixas_admin() -> list[dict]:
         )]
 
 
-def _coleta_cidade_fixa_duplicada(
-    conn: sqlite3.Connection, filial_origem: str, cidade_destino: str, veiculo: str,
+def _dividir_cidades(texto: str) -> list[str]:
+    """cidade_destino guarda uma ou mais cidades separadas por vírgula —
+    ex: "Osasco, Barueri, Cotia" — essa função devolve a lista já sem
+    espaços/entradas vazias. Uma cidade cadastrada sozinha (sem vírgula)
+    vira naturalmente uma lista de 1."""
+    return [c.strip() for c in (texto or "").split(",") if c.strip()]
+
+
+def _cidades_coleta_conflitantes(
+    conn: sqlite3.Connection, filial_origem: str, veiculo: str, cidades: list[str],
     ignorar_id: int | None = None,
-) -> bool:
-    """A UNIQUE(filial_origem, cidade_destino, veiculo) é case-sensitive no
-    SQLite, mas a busca (buscar_coleta_cidade_fixa) é case-insensitive —
-    sem essa checagem, duas linhas que só diferem em maiúsculas/minúsculas
-    empatariam na busca e o preço aplicado dependeria da ordem de retorno
-    do SQLite."""
+) -> list[str]:
+    """Cidades da lista que já aparecem em OUTRA linha do mesmo
+    filial_origem+veiculo (comparação case-insensitive) — sem essa
+    checagem, duas linhas cobrindo a mesma cidade tornariam ambíguo qual
+    preço vale (buscar_coleta_cidade_fixa pegaria sempre a de id menor,
+    silenciosamente)."""
     query = (
-        "SELECT 1 FROM coleta_cidades_fixas "
-        "WHERE LOWER(filial_origem) = LOWER(?) AND LOWER(cidade_destino) = LOWER(?) AND LOWER(veiculo) = LOWER(?)"
+        "SELECT id, cidade_destino FROM coleta_cidades_fixas "
+        "WHERE LOWER(filial_origem) = LOWER(?) AND LOWER(veiculo) = LOWER(?)"
     )
-    params = [filial_origem.strip(), cidade_destino.strip(), veiculo.strip()]
+    params = [filial_origem.strip(), veiculo.strip()]
     if ignorar_id is not None:
         query += " AND id != ?"
         params.append(ignorar_id)
-    return conn.execute(query, params).fetchone() is not None
+    alvo_lower = {c.lower() for c in cidades}
+    # guarda a grafia já cadastrada na outra linha (não a do payload atual)
+    # pra mensagem de erro apontar exatamente o que está no banco
+    conflitos: dict[str, str] = {}
+    for row in conn.execute(query, params):
+        for cidade in _dividir_cidades(row["cidade_destino"]):
+            if cidade.lower() in alvo_lower:
+                conflitos[cidade.lower()] = cidade
+    return sorted(conflitos.values())
 
 
 def inserir_coleta_cidade_fixa(filial_origem, cidade_destino, veiculo, valor_fixo, observacao=""):
+    cidades = _dividir_cidades(cidade_destino)
+    if not cidades:
+        raise sqlite3.IntegrityError("informe ao menos uma cidade do cliente")
     with get_connection() as conn:
-        if _coleta_cidade_fixa_duplicada(conn, filial_origem, cidade_destino, veiculo):
+        conflitos = _cidades_coleta_conflitantes(conn, filial_origem, veiculo, cidades)
+        if conflitos:
             raise sqlite3.IntegrityError(
-                f"já existe um preço fixo de coleta de '{filial_origem}' → '{cidade_destino}' no veículo '{veiculo}'"
+                f"cidade(s) {', '.join(conflitos)} já têm preço fixo de coleta cadastrado para "
+                f"a filial '{filial_origem}' + veículo '{veiculo}' em outra linha"
             )
         cur = conn.execute(
             "INSERT INTO coleta_cidades_fixas (filial_origem, cidade_destino, veiculo, valor_fixo, observacao) "
             "VALUES (?,?,?,?,?)",
-            (filial_origem, cidade_destino, veiculo, valor_fixo, observacao),
+            (filial_origem, ", ".join(cidades), veiculo, valor_fixo, observacao),
         )
         return cur.lastrowid
 
 
 def atualizar_coleta_cidade_fixa(id_, filial_origem, cidade_destino, veiculo, valor_fixo, observacao=""):
+    cidades = _dividir_cidades(cidade_destino)
+    if not cidades:
+        raise sqlite3.IntegrityError("informe ao menos uma cidade do cliente")
     with get_connection() as conn:
-        if _coleta_cidade_fixa_duplicada(conn, filial_origem, cidade_destino, veiculo, ignorar_id=id_):
+        conflitos = _cidades_coleta_conflitantes(conn, filial_origem, veiculo, cidades, ignorar_id=id_)
+        if conflitos:
             raise sqlite3.IntegrityError(
-                f"já existe um preço fixo de coleta de '{filial_origem}' → '{cidade_destino}' no veículo '{veiculo}'"
+                f"cidade(s) {', '.join(conflitos)} já têm preço fixo de coleta cadastrado para "
+                f"a filial '{filial_origem}' + veículo '{veiculo}' em outra linha"
             )
         conn.execute(
             "UPDATE coleta_cidades_fixas SET filial_origem=?, cidade_destino=?, veiculo=?, valor_fixo=?, observacao=? "
             "WHERE id=?",
-            (filial_origem, cidade_destino, veiculo, valor_fixo, observacao, id_),
+            (filial_origem, ", ".join(cidades), veiculo, valor_fixo, observacao, id_),
         )
 
 
@@ -780,15 +844,19 @@ def excluir_coleta_cidade_fixa(id_):
 
 def buscar_coleta_cidade_fixa(filial_origem: str, cidade_destino: str, veiculo: str) -> dict | None:
     """Busca (case-insensitive) se a rota filial_origem -> cidade_destino,
-    para o veículo informado, tem preço de coleta fixo cadastrado."""
+    para o veículo informado, tem preço de coleta fixo cadastrado — a
+    cidade pode estar em qualquer posição da lista guardada na linha."""
+    alvo = cidade_destino.strip().lower()
     with get_connection() as conn:
-        row = conn.execute(
+        rows = conn.execute(
             "SELECT * FROM coleta_cidades_fixas "
-            "WHERE LOWER(filial_origem) = LOWER(?) AND LOWER(cidade_destino) = LOWER(?) AND LOWER(veiculo) = LOWER(?) "
-            "ORDER BY id LIMIT 1",
-            (filial_origem.strip(), cidade_destino.strip(), veiculo.strip()),
-        ).fetchone()
-        return dict(row) if row else None
+            "WHERE LOWER(filial_origem) = LOWER(?) AND LOWER(veiculo) = LOWER(?) ORDER BY id",
+            (filial_origem.strip(), veiculo.strip()),
+        ).fetchall()
+    for row in rows:
+        if alvo in {c.lower() for c in _dividir_cidades(row["cidade_destino"])}:
+            return dict(row)
+    return None
 
 
 def listar_transportadoras_terceirizadas_admin() -> list[dict]:
@@ -914,6 +982,24 @@ def listar_orcamentos_historico() -> list[dict]:
         return [
             dict(r) for r in conn.execute(
                 "SELECT * FROM orcamentos_historico ORDER BY id DESC"
+            )
+        ]
+
+
+def listar_rotas_historico() -> list[dict]:
+    """Versão enxuta do histórico (sem dados_json) só com o que dá pra
+    reaproveitar a distância de uma rota já cotada antes — ver
+    geo_service._buscar_rota_no_historico, que evita chamar o serviço de
+    geolocalização de novo quando a mesma rota (por cidade) E o mesmo
+    veículo já foram cotados juntos antes (o pedágio pode variar por
+    categoria de veículo, então precisa ser o mesmo veículo pra reaproveitar).
+    Mais recentes primeiro, pra reaproveitar o dado mais atualizado quando
+    a mesma rota+veículo tiver mais de uma cotação salva."""
+    with get_connection() as conn:
+        return [
+            dict(r) for r in conn.execute(
+                "SELECT origem_resumo, destino_resumo, veiculo, distancia_km "
+                "FROM orcamentos_historico ORDER BY id DESC"
             )
         ]
 

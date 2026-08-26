@@ -77,7 +77,7 @@ Sem planilha — agora tudo fica no banco `frete.db`. Para editar:
 |--------------------------|-----------------------------------------------------------|
 | `veiculos`               | Veículos, tarifa/km, peso incluso e valor/kg excedente    |
 | `taxas_adicionais`       | Taxas nomeadas (GRIS, Ad Valorem etc.), fixas ou %        |
-| `coleta_cidades_fixas`   | Preço fixo de coleta por rota (filial de origem → cidade do cliente) + veículo (sobrepõe a faixa por km)|
+| `coleta_cidades_fixas`   | Preço fixo de coleta por rota (filial de origem → cidade(s) do cliente, uma ou várias separadas por vírgula) + veículo (sobrepõe a faixa por km)|
 | `faixas_coleta`          | Faixas de distância da taxa de coleta (retirada no cliente)|
 | `categorias`             | Categorias de produto e multiplicador                     |
 | `transportes`            | Métodos de transporte, multiplicador e fator de cubagem   |
@@ -203,6 +203,13 @@ origem é sempre a filial mais próxima do cliente (a mesma que o botão
 escolhido pelo cálculo do frete principal (pelo peso/cubagem da carga)
 — então o preço fixo só entra quando bater a combinação exata de
 filial, cidade e veículo.
+
+Uma linha de "Coleta com Preço Fixo por Cidade" pode cobrir **mais de
+uma cidade** ao mesmo tempo: no campo de cidade, separe os nomes por
+vírgula (ex: `Osasco, Barueri, Cotia`) — todas usam o mesmo valor fixo,
+sem precisar de uma linha por cidade. Cada cidade só pode aparecer numa
+linha por filial+veículo (cadastrar a mesma cidade em duas linhas
+diferentes dá erro de conflito, pra não ficar ambíguo qual preço vale).
 
 ## Endpoints
 

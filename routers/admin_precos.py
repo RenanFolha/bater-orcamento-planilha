@@ -2,6 +2,8 @@
 coleta com preço fixo, categorias, transportes, SLAs, transportadoras
 terceirizadas) e o /admin/reload. Todas as rotas exigem login de admin."""
 
+import sqlite3
+
 from fastapi import APIRouter, Depends, HTTPException
 
 import frete_db as db
@@ -108,20 +110,26 @@ def admin_listar_coleta_cidades_fixas(usuario: dict = Depends(exigir_admin)):
 
 @router.post("/coleta-cidades-fixas")
 def admin_criar_coleta_cidade_fixa(payload: ColetaCidadeFixaIn, usuario: dict = Depends(exigir_admin)):
-    return admin_criar(
-        db.inserir_coleta_cidade_fixa, payload,
-        f"Já existe um preço fixo de coleta de '{payload.filial_origem}' → "
-        f"'{payload.cidade_destino}' no veículo '{payload.veiculo}'.",
-    )
+    # Não usa o helper admin_criar genérico aqui: a validação de conflito
+    # (cidade repetida entre linhas do mesmo filial+veículo) já monta uma
+    # mensagem específica em frete_db.py — o helper genérico descartaria
+    # esse texto em favor de uma mensagem fixa.
+    try:
+        novo_id = db.inserir_coleta_cidade_fixa(**payload.model_dump())
+    except sqlite3.IntegrityError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    fs.carregar_parametros()
+    return {"id": novo_id}
 
 
 @router.put("/coleta-cidades-fixas/{id_}")
 def admin_atualizar_coleta_cidade_fixa(id_: int, payload: ColetaCidadeFixaIn, usuario: dict = Depends(exigir_admin)):
-    return admin_atualizar(
-        db.atualizar_coleta_cidade_fixa, id_, payload,
-        f"Já existe um preço fixo de coleta de '{payload.filial_origem}' → "
-        f"'{payload.cidade_destino}' no veículo '{payload.veiculo}'.",
-    )
+    try:
+        db.atualizar_coleta_cidade_fixa(id_, **payload.model_dump())
+    except sqlite3.IntegrityError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    fs.carregar_parametros()
+    return {"status": "ok"}
 
 
 @router.delete("/coleta-cidades-fixas/{id_}")

@@ -1515,7 +1515,16 @@ btnGeo.addEventListener('click', async () => {
     const res2 = await fetch(`${API_BASE}/geo/distancia`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({origem: origemEfetivaEndereco, destino: destinoEfetivoEndereco}),
+      body: JSON.stringify({
+        origem: origemEfetivaEndereco, destino: destinoEfetivoEndereco,
+        // peso/paletes/transporte aqui não entram no cálculo do frete —
+        // só permitem ao backend descobrir o veículo e reaproveitar a
+        // distância de uma rota+veículo já cotada no histórico, sem
+        // gastar geocodificação de novo.
+        peso: parseFloat(document.getElementById('peso').value) || 0,
+        paletes: coletarPaletes(),
+        transporte: document.getElementById('transporte').value || '',
+      }),
     });
     const data2 = await res2.json();
     if(!res2.ok){
@@ -2634,11 +2643,13 @@ async function carregarTabelaPrecos(){
 
   await criarEditorTabela({
     containerId: 'precos-coleta-cidades-fixas', endpoint: 'coleta-cidades-fixas',
-    titulo: 'Coleta com Preço Fixo por Cidade (rota filial de origem → cidade do cliente + veículo)',
-    campoMultiplo: 'cidade_destino',
+    titulo: 'Coleta com Preço Fixo por Cidade (rota filial de origem → cidade(s) do cliente + veículo)',
+    // Sem campoMultiplo aqui de propósito: nessa tabela vírgula NÃO cria
+    // uma linha por cidade (como em Taxas Regionais) — uma linha só cobre
+    // várias cidades ao mesmo tempo, todas com o mesmo preço fixo.
     colunas: [
       {campo: 'filial_origem', label: 'Filial de origem (de onde o veículo sai)', tipo: 'select', opcoes: filiaisParaColeta.map(f => f.nome)},
-      {campo: 'cidade_destino', label: 'Cidade do cliente (coleta)', tipo: 'text'},
+      {campo: 'cidade_destino', label: 'Cidade(s) do cliente — separe por vírgula', tipo: 'text'},
       {campo: 'veiculo', label: 'Veículo', tipo: 'select', opcoes: veiculosParaColeta.map(v => v.nome)},
       {campo: 'valor_fixo', label: 'Valor fixo de coleta (R$)', tipo: 'moeda'},
       {campo: 'observacao', label: 'Observação', tipo: 'text'},

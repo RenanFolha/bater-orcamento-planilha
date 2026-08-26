@@ -41,6 +41,9 @@ class OrcamentoRequest(BaseModel):
 class DistanciaRequest(BaseModel):
     origem: str = Field(..., description="Endereço de origem", examples=["Av. Paulista, 1000, São Paulo, SP"])
     destino: str = Field(..., description="Endereço de destino", examples=["Rua XV de Novembro, 500, Curitiba, PR"])
+    peso: float = Field(0, ge=0, description="Peso real da carga em kg — opcional, só usado pra descobrir o veículo e permitir reaproveitar a distância de uma rota+veículo já cotada no histórico")
+    paletes: list[PaleteIn] = Field(default_factory=list, description="Paletes/volumes da carga — mesmo uso do campo peso, opcional")
+    transporte: str = Field("", description="Método de transporte (ver /parametros/transportes) — mesmo uso do campo peso, opcional")
 
 
 class RetiradaRequest(BaseModel):
@@ -134,7 +137,11 @@ class TaxaRegionalIn(BaseModel):
 
 class ColetaCidadeFixaIn(BaseModel):
     filial_origem: str = Field(..., min_length=1, description="Filial de onde o veículo sai para fazer a coleta (ver /parametros/filiais)")
-    cidade_destino: str = Field(..., min_length=1, description="Cidade onde a coleta é feita (endereço do cliente)")
+    cidade_destino: str = Field(
+        ..., min_length=1,
+        description="Cidade(s) onde a coleta é feita (endereço do cliente) — uma ou mais, separadas por vírgula "
+                     "(ex: 'Osasco, Barueri, Cotia'), todas com o mesmo preço fixo",
+    )
     veiculo: str = Field(..., min_length=1, description="Veículo ao qual esse preço fixo se aplica (ver /parametros/veiculos)")
     valor_fixo: float = Field(..., ge=0)
     observacao: str = ""
