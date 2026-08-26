@@ -615,10 +615,6 @@
                         <input type="text" id="origem-endereco-input" placeholder="CEP (00000-000) ou endereço completo" autocomplete="off">
                         <input type="text" id="origem-numero" class="mt-8" placeholder="Número" style="display:none">
                         <div class="cep-info" id="origem-cep-info"></div>
-                        <label class="confirm-endereco" id="origem-confirm-wrap" style="display:none">
-                          <input type="checkbox" id="origem-confirm-check">
-                          <span>Confirmo que este é o endereço correto</span>
-                        </label>
                       </div>
 
                       <div class="mt-8">
@@ -651,10 +647,6 @@
                         <input type="text" id="destino-endereco-input" placeholder="CEP (00000-000) ou endereço completo" autocomplete="off">
                         <input type="text" id="destino-numero" class="mt-8" placeholder="Número" style="display:none">
                         <div class="cep-info" id="destino-cep-info"></div>
-                        <label class="confirm-endereco" id="destino-confirm-wrap" style="display:none">
-                          <input type="checkbox" id="destino-confirm-check">
-                          <span>Confirmo que este é o endereço correto</span>
-                        </label>
                       </div>
 
                       <div class="mt-8">
@@ -672,11 +664,9 @@
 
                       <div id="destino-retorno-wrap" class="mt-8" style="display:none">
                         <input type="hidden" id="distancia_retorno" value="0">
+                        <span class="sub-label">Filial de retorno (vazio)</span>
+                        <select id="destino-retorno-filial" class="mt-8"></select>
                         <div class="cep-info" id="destino-retorno-info"></div>
-                        <label class="confirm-endereco" id="destino-retorno-confirm-wrap" style="display:none">
-                          <input type="checkbox" id="destino-retorno-confirm-check">
-                          <span>Confirmo que o retorno vazio do veículo é para essa filial</span>
-                        </label>
                       </div>
                     </div>
                   </div>
@@ -1318,9 +1308,13 @@ const destinoTransportadoraSel = document.getElementById('destino-transportadora
 const destinoTransportadoraInfo = document.getElementById('destino-transportadora-info');
 const destinoRetornoWrap = document.getElementById('destino-retorno-wrap');
 const destinoRetornoInfo = document.getElementById('destino-retorno-info');
-const destinoRetornoConfirmWrap = document.getElementById('destino-retorno-confirm-wrap');
-const destinoRetornoConfirmCheck = document.getElementById('destino-retorno-confirm-check');
+const destinoRetornoFilialSel = document.getElementById('destino-retorno-filial');
 const distanciaRetornoInput = document.getElementById('distancia_retorno');
+// Endereço de entrega já resolvido na última vez que "Calcular distância"
+// rodou — guardado aqui (fora do handler do botão) porque o seletor de
+// filial de retorno precisa dele de novo quando o usuário troca a filial
+// manualmente, pra recalcular a distância até a filial escolhida.
+let destinoEfetivoEnderecoResolvido = '';
 
 async function carregarFiliais(){
   const res = await fetch(`${API_BASE}/parametros/filiais`);
@@ -1328,6 +1322,7 @@ async function carregarFiliais(){
   filiaisCache = await res.json();
   preencherOpcoes(origemFilialSel, filiaisCache);
   preencherOpcoes(destinoFilialSel, filiaisCache);
+  preencherOpcoes(destinoRetornoFilialSel, filiaisCache);
 }
 
 async function carregarTransportadoras(){
@@ -1403,17 +1398,9 @@ function configurarEnderecoCep(prefixo){
   const enderecoInput = document.getElementById(`${prefixo}-endereco-input`);
   const numeroInput = document.getElementById(`${prefixo}-numero`);
   const infoDiv = document.getElementById(`${prefixo}-cep-info`);
-  const confirmWrap = document.getElementById(`${prefixo}-confirm-wrap`);
-  const confirmCheck = document.getElementById(`${prefixo}-confirm-check`);
 
   // resolvido: { tipo: 'cep'|'completo', dados?: objeto do ViaCEP, endereco: string }
   let resolvido = null;
-
-  function limparConfirmacao(){
-    resolvido = null;
-    confirmWrap.style.display = 'none';
-    confirmCheck.checked = false;
-  }
 
   enderecoInput.addEventListener('input', () => {
     if(pareceCep(enderecoInput.value) || /^[\d\s.-]*$/.test(enderecoInput.value)){
@@ -1422,21 +1409,19 @@ function configurarEnderecoCep(prefixo){
     infoDiv.className = 'cep-info';
     infoDiv.textContent = '';
     numeroInput.style.display = 'none';
-    limparConfirmacao();
+    resolvido = null;
   });
 
   numeroInput.addEventListener('blur', () => {
     if(resolvido && resolvido.tipo === 'cep'){
       resolvido.endereco = montarEnderecoPorCep(resolvido.dados, numeroInput.value.trim());
       infoDiv.textContent = `Endereço encontrado: ${resolvido.endereco}`;
-      confirmCheck.checked = false;
-      confirmWrap.style.display = '';
     }
   });
 
   async function processarEndereco(){
     const bruto = enderecoInput.value.trim();
-    limparConfirmacao();
+    resolvido = null;
     infoDiv.className = 'cep-info';
 
     if(!bruto){
@@ -1459,7 +1444,6 @@ function configurarEnderecoCep(prefixo){
         resolvido = {tipo: 'cep', dados, endereco};
         infoDiv.classList.add('ok');
         infoDiv.textContent = `Endereço encontrado: ${endereco}`;
-        confirmWrap.style.display = '';
       }catch(e){
         infoDiv.classList.add('err');
         infoDiv.textContent = 'Falha ao consultar o CEP. Tente novamente ou digite o endereço completo.';
@@ -1469,7 +1453,6 @@ function configurarEnderecoCep(prefixo){
       resolvido = {tipo: 'completo', endereco: bruto};
       infoDiv.classList.add('ok');
       infoDiv.textContent = `Endereço informado: ${bruto}`;
-      confirmWrap.style.display = '';
     }
   }
 
@@ -1480,11 +1463,7 @@ function configurarEnderecoCep(prefixo){
       if(!resolvido && enderecoInput.value.trim()){
         await processarEndereco();
       }
-      if(!resolvido) return '';
-      if(!confirmCheck.checked){
-        throw new Error('Confirme o endereço marcando a caixa "Confirmo que este é o endereço correto" antes de continuar.');
-      }
-      return resolvido.endereco;
+      return resolvido ? resolvido.endereco : '';
     },
   };
 }
@@ -1519,10 +1498,41 @@ configurarToggle('seg-origem', (valor) => {
 function resetarRetornoVazio(){
   distanciaRetornoInput.value = 0;
   destinoRetornoWrap.style.display = 'none';
-  destinoRetornoConfirmWrap.style.display = 'none';
-  destinoRetornoConfirmCheck.checked = false;
+  destinoRetornoFilialSel.value = '';
   destinoRetornoInfo.textContent = '';
+  destinoEfetivoEnderecoResolvido = '';
 }
+
+// Usuário trocou manualmente a filial de retorno (o auto-sugerido nem
+// sempre é pra onde o veículo realmente volta) — recalcula a distância
+// vazia até a filial escolhida.
+destinoRetornoFilialSel.addEventListener('change', async () => {
+  const filial = destinoRetornoFilialSel.value;
+  if(!filial || !destinoEfetivoEnderecoResolvido){
+    return;
+  }
+  const enderecoFilial = enderecoDaFilial(filial);
+  if(!enderecoFilial){
+    return;
+  }
+  destinoRetornoInfo.className = 'cep-info';
+  destinoRetornoInfo.textContent = `Calculando distância até ${filial}...`;
+  try{
+    const res = await fetch(`${API_BASE}/geo/distancia`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({origem: enderecoFilial, destino: destinoEfetivoEnderecoResolvido}),
+    });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.detail || 'Não foi possível calcular a distância.');
+    distanciaRetornoInput.value = data.distancia_km;
+    destinoRetornoInfo.classList.add('ok');
+    destinoRetornoInfo.textContent = `Retorno vazio até ${filial}: ${data.distancia_km} km.`;
+  }catch(e){
+    destinoRetornoInfo.classList.add('err');
+    destinoRetornoInfo.textContent = `Não foi possível calcular a distância até ${filial}: ${e.message}`;
+  }
+});
 
 configurarToggle('seg-destino', (valor) => {
   destinoTipo = valor;
@@ -1636,31 +1646,33 @@ btnGeo.addEventListener('click', async () => {
     // filial, ou entrega terceirizada) o veículo próprio já termina numa
     // filial, sem precurso de retorno vazio.
     if(destinoTipo === 'cliente' && destinoModo === 'propria'){
+      destinoEfetivoEnderecoResolvido = destinoEfetivoEndereco;
       const resRet = await fetch(`${API_BASE}/geo/resolver-retorno`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({endereco_destino: destinoEfetivoEndereco}),
       });
       const dataRet = await resRet.json();
+      destinoRetornoWrap.style.display = '';
       if(resRet.ok){
         distanciaRetornoInput.value = dataRet.distancia_coleta_km;
-        destinoRetornoInfo.textContent = `Filial mais próxima pro retorno: ${dataRet.filial_mais_proxima} (${dataRet.distancia_coleta_km} km vazio).`;
-        destinoRetornoWrap.style.display = '';
-        destinoRetornoConfirmWrap.style.display = '';
-        destinoRetornoConfirmCheck.checked = false;
+        destinoRetornoFilialSel.value = dataRet.filial_mais_proxima;
+        destinoRetornoInfo.className = 'cep-info ok';
+        destinoRetornoInfo.textContent =
+          `Sugestão automática: ${dataRet.filial_mais_proxima} (${dataRet.distancia_coleta_km} km vazio) — ` +
+          `troque no seletor acima se o veículo voltar pra outra filial.`;
       }else{
         // Não bloqueia o cálculo do frete por isso — só avisa que o
-        // retorno não pôde ser estimado automaticamente.
+        // retorno não pôde ser estimado automaticamente; o usuário ainda
+        // escolhe a filial manualmente no seletor.
         distanciaRetornoInput.value = 0;
-        destinoRetornoInfo.textContent = `Não foi possível estimar o retorno vazio (${dataRet.detail || 'endereço não encontrado'}).`;
-        destinoRetornoWrap.style.display = '';
-        destinoRetornoConfirmWrap.style.display = 'none';
+        destinoRetornoFilialSel.value = '';
+        destinoRetornoInfo.className = 'cep-info err';
+        destinoRetornoInfo.textContent =
+          `Não foi possível sugerir automaticamente (${dataRet.detail || 'endereço não encontrado'}) — escolha a filial de retorno no seletor acima.`;
       }
     }else{
-      distanciaRetornoInput.value = 0;
-      destinoRetornoWrap.style.display = 'none';
-      destinoRetornoConfirmWrap.style.display = 'none';
-      destinoRetornoConfirmCheck.checked = false;
+      resetarRetornoVazio();
     }
 
     const res2 = await fetch(`${API_BASE}/geo/distancia`, {
@@ -1732,8 +1744,8 @@ form.addEventListener('submit', async (ev) => {
     errorBox.classList.add('show');
     return;
   }
-  if(destinoRetornoConfirmWrap.style.display !== 'none' && !destinoRetornoConfirmCheck.checked){
-    errorBox.textContent = 'Confirme a filial de retorno vazio do veículo (ou clique em "Calcular distância" de novo antes de enviar).';
+  if(destinoRetornoWrap.style.display !== 'none' && !destinoRetornoFilialSel.value){
+    errorBox.textContent = 'Escolha a filial de retorno vazio do veículo (ou clique em "Calcular distância" de novo antes de enviar).';
     errorBox.classList.add('show');
     return;
   }
