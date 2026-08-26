@@ -787,6 +787,12 @@
               <h3>Detalhe das taxas adicionais</h3>
               <div id="lista-detalhe-taxas"></div>
             </div>
+            <div style="padding:12px 20px;border-top:1px solid var(--border-soft);">
+              <button type="button" id="btn-toggle-memoria" style="width:100%;background:none;border:1px dashed var(--border);border-radius:7px;padding:9px;font-size:11.5px;color:var(--text-dim);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;">
+                <i class="ti ti-list-details"></i> <span id="btn-toggle-memoria-label">Ver todas as variáveis do cálculo</span>
+              </button>
+              <div class="breakdown" id="bloco-memoria-calculo" style="display:none;margin-top:10px;"></div>
+            </div>
             <div style="padding:16px 20px;border-top:1px solid var(--border-soft);">
               <button type="button" id="btn-salvar-historico" style="width:100%;background:var(--panel-alt);border:1px solid var(--border);border-radius:7px;padding:11px;font-family:'Avenir Next','Space Grotesk',sans-serif;font-weight:700;font-size:12.5px;letter-spacing:0.3px;color:var(--accent-strong);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;transition:background .15s ease;">
                 <i class="ti ti-device-floppy"></i> Salvar no histórico
@@ -865,6 +871,12 @@
             </button>
           </div>
           <div class="card-body" id="detalhe-conteudo"></div>
+        </div>
+        <div class="card" id="detalhe-memoria-card" style="margin-top:14px;">
+          <div class="card-head">
+            <h2><i class="ti ti-list-details" style="color:var(--accent);margin-right:6px;"></i>Memória de cálculo completa</h2>
+          </div>
+          <div class="card-body breakdown" id="detalhe-memoria-calculo"></div>
         </div>
       </div>
     </div>
@@ -966,6 +978,122 @@ const fmtMult = (v) => v.toFixed(2).replace('.', ',') + 'x';
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
 }[c]));
+
+// Lista TODOS os campos que calcular_orcamento devolve (entrada +
+// calculos_intermediarios + resultado), na ordem em que a conta é feita —
+// usada por renderizarMemoriaCalculo pra mostrar cada variável usada na
+// cotação, não só as que já tinham linha própria no resumo curado acima.
+// Um campo novo que o backend passe a devolver não aparece aqui sozinho
+// (precisa adicionar a linha), mas nada do que já existe fica escondido.
+const MEMORIA_CALCULO_CAMPOS = [
+  {header: 'Entrada'},
+  {chave: 'peso_kg', rotulo: 'Peso informado', tipo: 'kg'},
+  {chave: 'distancia_km', rotulo: 'Distância do frete', tipo: 'km'},
+  {chave: 'distancia_coleta_km', rotulo: 'Distância de coleta', tipo: 'km'},
+  {chave: 'valor_mercadoria', rotulo: 'Valor da mercadoria', tipo: 'brl'},
+  {chave: 'veiculo', rotulo: 'Veículo escolhido', tipo: 'texto'},
+  {chave: 'categoria', rotulo: 'Categoria', tipo: 'texto'},
+  {chave: 'transporte', rotulo: 'Transporte', tipo: 'texto'},
+  {chave: 'sla', rotulo: 'SLA', tipo: 'texto'},
+
+  {header: 'Escolha do veículo (peso × volume)'},
+  {chave: 'fator_cubagem', rotulo: 'Fator de cubagem do transporte', tipo: 'num'},
+  {chave: 'peso_cubado_kg', rotulo: 'Peso cubado', tipo: 'kg'},
+  {chave: 'peso_considerado_kg', rotulo: 'Peso considerado (maior entre real e cubado)', tipo: 'kg'},
+  {chave: 'volume_total_m3', rotulo: 'Volume total da carga', tipo: 'm3'},
+  {chave: 'capacidade_util_m3_veiculo', rotulo: 'Capacidade útil do veículo', tipo: 'm3'},
+  {chave: 'percentual_capacidade_util_veiculo', rotulo: '% da capacidade que pode ocupar', tipo: 'pct'},
+  {chave: 'capacidade_disponivel_m3_veiculo', rotulo: 'Capacidade disponível (útil × %)', tipo: 'm3'},
+  {chave: 'capacidade_ocupada_pct', rotulo: 'Ocupação do veículo', tipo: 'pct'},
+
+  {header: 'Frete base'},
+  {chave: 'tarifa_km_veiculo', rotulo: 'Tarifa por km do veículo', tipo: 'brl'},
+  {chave: 'custo_km', rotulo: 'Custo por km × distância', tipo: 'brl'},
+  {chave: 'peso_incluso_veiculo_kg', rotulo: 'Peso incluso no veículo', tipo: 'kg'},
+  {chave: 'peso_excedente_kg', rotulo: 'Peso excedente', tipo: 'kg'},
+  {chave: 'valor_kg_excedente', rotulo: 'Valor por kg excedente', tipo: 'brl'},
+  {chave: 'custo_peso_excedente', rotulo: 'Custo do peso excedente', tipo: 'brl'},
+  {chave: 'frete_base', rotulo: 'Frete base (custo/km + custo peso excedente)', tipo: 'brl'},
+
+  {header: 'Multiplicadores'},
+  {chave: 'multiplicador_categoria', rotulo: 'Multiplicador da categoria', tipo: 'mult'},
+  {chave: 'multiplicador_transporte', rotulo: 'Multiplicador do transporte', tipo: 'mult'},
+  {chave: 'multiplicador_sla', rotulo: 'Multiplicador do SLA', tipo: 'mult'},
+  {chave: 'frete_ajustado', rotulo: 'Frete ajustado (base × multiplicadores)', tipo: 'brl'},
+
+  {header: 'Coleta e entrega'},
+  {chave: 'coleta_terceirizada', rotulo: 'Coleta terceirizada?', tipo: 'bool'},
+  {chave: 'transportadora_coleta_nome', rotulo: 'Transportadora da coleta', tipo: 'texto'},
+  {chave: 'coleta_fixa_por_cidade', rotulo: 'Coleta com preço fixo por cidade?', tipo: 'bool'},
+  {chave: 'custo_coleta', rotulo: 'Custo de coleta', tipo: 'brl'},
+  {chave: 'entrega_terceirizada', rotulo: 'Entrega terceirizada?', tipo: 'bool'},
+  {chave: 'transportadora_entrega_nome', rotulo: 'Transportadora da entrega', tipo: 'texto'},
+  {chave: 'custo_entrega_terceirizada', rotulo: 'Custo de entrega terceirizada', tipo: 'brl'},
+
+  {header: 'Pedágio, manutenção e retorno vazio'},
+  {chave: 'pedagio', rotulo: 'Pedágio', tipo: 'brl'},
+  {chave: 'tarifa_km_manutencao', rotulo: 'Tarifa de manutenção por km', tipo: 'brl'},
+  {chave: 'custo_manutencao', rotulo: 'Custo de manutenção', tipo: 'brl'},
+  {chave: 'tarifa_km_retorno', rotulo: 'Tarifa de retorno vazio por km', tipo: 'brl'},
+  {chave: 'distancia_retorno_km', rotulo: 'Distância de retorno vazio', tipo: 'km'},
+  {chave: 'custo_retorno', rotulo: 'Custo de retorno vazio', tipo: 'brl'},
+
+  {header: 'Taxas'},
+  {chave: 'taxas_adicionais', rotulo: 'Taxas adicionais aplicadas', tipo: 'lista_taxa'},
+  {chave: 'custo_taxas_adicionais', rotulo: 'Total de taxas adicionais', tipo: 'brl'},
+  {chave: 'taxas_regionais', rotulo: 'Taxas regionais aplicadas', tipo: 'lista_taxa_regional'},
+  {chave: 'custo_taxas_regionais', rotulo: 'Total de taxas regionais', tipo: 'brl'},
+  {chave: 'taxa_balsa', rotulo: 'Taxa de balsa aplicada', tipo: 'balsa'},
+  {chave: 'custo_balsa', rotulo: 'Custo de balsa', tipo: 'brl'},
+
+  {header: 'Resultado'},
+  {chave: 'frete_total', rotulo: 'Frete total', tipo: 'brl'},
+  {chave: 'prazo_estimado_dias_uteis', rotulo: 'Prazo estimado', tipo: 'dias'},
+];
+
+function _formatarValorMemoria(v, tipo){
+  if(v === null || v === undefined || v === '') return '—';
+  switch(tipo){
+    case 'brl': return fmtBRL(v);
+    case 'pct': return `${v}%`;
+    case 'mult': return fmtMult(v);
+    case 'kg': return `${v} kg`;
+    case 'm3': return `${v} m³`;
+    case 'km': return `${v} km`;
+    case 'dias': return `${v} dias úteis`;
+    case 'bool': return v ? 'Sim' : 'Não';
+    case 'lista_taxa':
+      return (v && v.length)
+        ? v.map(t => `${t.nome} (${t.tipo === 'percentual' ? t.valor_configurado + '%' : fmtBRL(t.valor_configurado)}) = ${fmtBRL(t.valor_aplicado)}`).join('; ')
+        : 'nenhuma';
+    case 'lista_taxa_regional':
+      return (v && v.length)
+        ? v.map(t => `${t.nome} — ${t.cidade} (${t.tipo === 'percentual' ? t.valor_configurado + '%' : fmtBRL(t.valor_configurado)}) = ${fmtBRL(t.valor_aplicado)}`).join('; ')
+        : 'nenhuma';
+    case 'balsa':
+      return v
+        ? `${v.cidade_origem} → ${v.cidade_destino} (${v.veiculo}, ${v.tipo === 'percentual' ? v.valor_configurado + '%' : fmtBRL(v.valor_configurado)}) = ${fmtBRL(v.valor_aplicado)}`
+        : 'não aplicada';
+    default: return String(v);
+  }
+}
+
+// Renderiza a lista completa de variáveis usadas na cotação. `data` é o
+// objeto {entrada, calculos_intermediarios, resultado} devolvido por
+// POST /orcamento (mesmo formato salvo em dados.resultado no histórico).
+function renderizarMemoriaCalculo(data, containerId = 'bloco-memoria-calculo', comTitulo = true){
+  const container = document.getElementById(containerId);
+  if(!container || !data) return;
+  const fonte = {...data.entrada, ...data.calculos_intermediarios, ...data.resultado};
+  const linhas = MEMORIA_CALCULO_CAMPOS.map(item => {
+    if(item.header){
+      return `<div style="margin:12px 0 4px;font-size:10.5px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-dim);">${esc(item.header)}</div>`;
+    }
+    const valor = _formatarValorMemoria(fonte[item.chave], item.tipo);
+    return `<div class="line"><span>${esc(item.rotulo)}</span><span>${esc(valor)}</span></div>`;
+  }).join('');
+  container.innerHTML = (comTitulo ? '<h3>Memória de cálculo completa</h3>' : '') + linhas;
+}
 
 // Máscara de campo monetário: trata o que foi digitado como centavos
 // (só dígitos) e formata com separador de milhar "." e decimal ",",
@@ -1636,6 +1764,7 @@ form.addEventListener('submit', async (ev) => {
 
     const calc = data.calculos_intermediarios;
     const result = data.resultado;
+    renderizarMemoriaCalculo(data);
 
     document.getElementById('out-total').textContent = fmtBRL(result.frete_total);
     document.getElementById('out-veiculo').textContent = data.entrada.veiculo;
@@ -1762,6 +1891,14 @@ form.addEventListener('submit', async (ev) => {
     btn.disabled = false;
     btn.textContent = 'Calcular frete';
   }
+});
+
+document.getElementById('btn-toggle-memoria').addEventListener('click', () => {
+  const bloco = document.getElementById('bloco-memoria-calculo');
+  const label = document.getElementById('btn-toggle-memoria-label');
+  const abrindo = bloco.style.display === 'none';
+  bloco.style.display = abrindo ? '' : 'none';
+  label.textContent = abrindo ? 'Esconder todas as variáveis do cálculo' : 'Ver todas as variáveis do cálculo';
 });
 
 document.getElementById('btn-salvar-historico').addEventListener('click', async () => {
@@ -2567,6 +2704,8 @@ async function abrirDetalheHistorico(codigo){
     document.getElementById('detalhe-conteudo').innerHTML = linhas.map(([label, valor]) => `
       <div class="line"><span>${esc(label)}</span><span>${esc(valor)}</span></div>
     `).join('');
+
+    renderizarMemoriaCalculo(registro.dados?.resultado, 'detalhe-memoria-calculo', false);
 
     document.getElementById('view-historico').style.display = 'none';
     document.getElementById('view-historico-detalhe').style.display = 'block';
