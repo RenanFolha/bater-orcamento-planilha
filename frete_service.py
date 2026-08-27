@@ -58,6 +58,12 @@ def _sem_sufixo_uf(cidade: str) -> str:
     return _SUFIXO_UF_REGEX.sub("", cidade).strip()
 
 
+def _dividir_cidades(texto: str) -> list[str]:
+    """Mesma semântica de frete_db._dividir_cidades: cidade(s) separadas
+    por vírgula numa lista já limpa (sem espaços/entradas vazias)."""
+    return [c.strip() for c in (texto or "").split(",") if c.strip()]
+
+
 class FreteConfigError(Exception):
     """Erro ao ler/validar os parâmetros do banco."""
 
@@ -438,7 +444,9 @@ def _taxas_regionais_aplicaveis(
     p: "ParametrosFrete", cidade_origem: str | None, cidade_destino: str | None
 ) -> list[TaxaRegional]:
     """Retorna as taxas regionais cadastradas cuja cidade bate com a
-    cidade de origem OU de destino do frete (comparação case-insensitive)."""
+    cidade de origem OU de destino do frete (comparação case-insensitive)
+    — a cidade pode estar em qualquer posição da lista guardada na
+    linha da taxa."""
     cidades_da_rota = set()
     for texto in (cidade_origem, cidade_destino):
         cidade = _cidade_da_retirada(texto) if texto else None
@@ -446,7 +454,12 @@ def _taxas_regionais_aplicaveis(
             cidades_da_rota.add(cidade.strip().lower())
     if not cidades_da_rota:
         return []
-    return [t for t in p.taxas_regionais if t.cidade.strip().lower() in cidades_da_rota]
+    aplicaveis = []
+    for t in p.taxas_regionais:
+        cidades_taxa = {c.lower() for c in _dividir_cidades(t.cidade)}
+        if cidades_da_rota & cidades_taxa:
+            aplicaveis.append(t)
+    return aplicaveis
 
 
 def _taxa_balsa_aplicavel(
@@ -473,6 +486,30 @@ def _taxa_balsa_aplicavel(
         ):
             return t
     return None
+
+
+def _taxa_balsa_outros_veiculos(
+    p: "ParametrosFrete", cidade_origem: str | None, cidade_destino: str | None, veiculo_atual: str
+) -> list[str]:
+    """Veículos (diferentes do escolhido no orçamento) que têm taxa de
+    balsa cadastrada pra essa mesma rota direcional — só um diagnóstico
+    pra memória de cálculo avisar quando a rota bateu mas o veículo não,
+    em vez de zerar o custo de balsa silenciosamente."""
+    if not cidade_origem or not cidade_destino:
+        return []
+    cid_o = _cidade_da_retirada(cidade_origem)
+    cid_d = _cidade_da_retirada(cidade_destino)
+    if not cid_o or not cid_d:
+        return []
+    cid_o, cid_d = cid_o.strip().lower(), cid_d.strip().lower()
+    veic_atual = veiculo_atual.strip().lower()
+    encontrados = {
+        t.veiculo for t in p.taxas_balsa
+        if t.cidade_origem.strip().lower() == cid_o
+        and t.cidade_destino.strip().lower() == cid_d
+        and t.veiculo.strip().lower() != veic_atual
+    }
+    return sorted(encontrados)
 
 
 @dataclass
@@ -617,6 +654,7 @@ def calcular_orcamento(
     # da balsa pode ser diferente em cada sentido.
     custo_balsa = 0.0
     detalhe_balsa = None
+    balsa_outro_veiculo = []
     taxa_balsa = _taxa_balsa_aplicavel(p, cidade_origem, cidade_destino, v.nome)
     if taxa_balsa:
         if taxa_balsa.tipo == "percentual":
@@ -628,9 +666,14 @@ def calcular_orcamento(
             "veiculo": taxa_balsa.veiculo, "tipo": taxa_balsa.tipo,
             "valor_configurado": taxa_balsa.valor, "valor_aplicado": round(custo_balsa, 2),
         }
+    else:
+        # Rota bateu (ou nem foi checada) mas não pro veículo escolhido —
+        # avisa na memória de cálculo em vez de só zerar silenciosamente.
+        balsa_outro_veiculo = _taxa_balsa_outros_veiculos(p, cidade_origem, cidade_destino, v.nome)
 
     custo_coleta = 0.0
     coleta_fixa_aplicada = False
+    coleta_fixa_outro_veiculo = []
     if coleta_terceirizada:
         custo_coleta = valor_coleta_terceirizada
     elif distancia_coleta > 0 or cidade_coleta:
@@ -648,9 +691,16 @@ def calcular_orcamento(
         if cidade_fixa:
             custo_coleta = cidade_fixa["valor_fixo"]
             coleta_fixa_aplicada = True
-        elif distancia_coleta > 0:
-            faixa_coleta = p.buscar_faixa_coleta(distancia_coleta)
-            custo_coleta = faixa_coleta.taxa_fixa + distancia_coleta * faixa_coleta.tarifa_km
+        else:
+            if cidade_normalizada and cidade_origem:
+                # Cidade+filial bateram, só não pro veículo deste orçamento
+                # — avisa em vez de cair calado pra faixa por km.
+                coleta_fixa_outro_veiculo = db.buscar_coleta_cidade_fixa_outros_veiculos(
+                    cidade_origem, cidade_normalizada, v.nome
+                )
+            if distancia_coleta > 0:
+                faixa_coleta = p.buscar_faixa_coleta(distancia_coleta)
+                custo_coleta = faixa_coleta.taxa_fixa + distancia_coleta * faixa_coleta.tarifa_km
 
     custo_entrega_terceirizada = valor_entrega_terceirizada if entrega_terceirizada else 0.0
 
@@ -706,6 +756,7 @@ def calcular_orcamento(
             "frete_ajustado": round(frete_ajustado, 2),
             "custo_coleta": round(custo_coleta, 2),
             "coleta_fixa_por_cidade": coleta_fixa_aplicada,
+            "coleta_fixa_outro_veiculo": coleta_fixa_outro_veiculo or None,
             "coleta_terceirizada": coleta_terceirizada,
             "transportadora_coleta_nome": transportadora_coleta_nome if coleta_terceirizada else None,
             "custo_entrega_terceirizada": round(custo_entrega_terceirizada, 2),
@@ -724,6 +775,7 @@ def calcular_orcamento(
             "custo_taxas_regionais": round(custo_taxas_regionais, 2),
             "taxa_balsa": detalhe_balsa,
             "custo_balsa": round(custo_balsa, 2),
+            "balsa_outro_veiculo": balsa_outro_veiculo or None,
         },
         "resultado": {
             "frete_total": round(frete_total, 2),

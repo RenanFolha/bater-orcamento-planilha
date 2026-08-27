@@ -166,18 +166,27 @@ def admin_listar_taxas_regionais(usuario: dict = Depends(exigir_admin)):
 
 @router.post("/taxas-regionais")
 def admin_criar_taxa_regional(payload: TaxaRegionalIn, usuario: dict = Depends(exigir_admin)):
-    return admin_criar(
-        db.inserir_taxa_regional, payload,
-        f"Já existe uma taxa '{payload.nome}' cadastrada para a cidade '{payload.cidade}'.",
-    )
+    # Não usa o helper admin_criar genérico aqui: a validação de conflito
+    # (cidade repetida entre linhas da mesma taxa) já monta uma mensagem
+    # específica em frete_db.py — o helper genérico descartaria esse
+    # texto em favor de uma mensagem fixa (mesmo padrão de
+    # coleta-cidades-fixas).
+    try:
+        novo_id = db.inserir_taxa_regional(**payload.model_dump())
+    except sqlite3.IntegrityError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    fs.carregar_parametros()
+    return {"id": novo_id}
 
 
 @router.put("/taxas-regionais/{id_}")
 def admin_atualizar_taxa_regional(id_: int, payload: TaxaRegionalIn, usuario: dict = Depends(exigir_admin)):
-    return admin_atualizar(
-        db.atualizar_taxa_regional, id_, payload,
-        f"Já existe uma taxa '{payload.nome}' cadastrada para a cidade '{payload.cidade}'.",
-    )
+    try:
+        db.atualizar_taxa_regional(id_, **payload.model_dump())
+    except sqlite3.IntegrityError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    fs.carregar_parametros()
+    return {"status": "ok"}
 
 
 @router.delete("/taxas-regionais/{id_}")

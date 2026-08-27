@@ -158,12 +158,17 @@ CREATE TABLE IF NOT EXISTS transportadoras_terceirizadas (
 
 CREATE TABLE IF NOT EXISTS taxas_regionais (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- Uma ou mais cidades separadas por vírgula (mesmo padrão de
+    -- coleta_cidades_fixas.cidade_destino) — uma taxa só cobre várias
+    -- cidades ao mesmo tempo, sem precisar de uma linha por cidade. Sem
+    -- UNIQUE aqui de propósito: a checagem de cidade duplicada (mesma
+    -- cidade em duas linhas da mesma taxa) é feita em Python (ver
+    -- _cidades_regionais_conflitantes).
     cidade TEXT NOT NULL,
     nome TEXT NOT NULL,
     tipo TEXT NOT NULL DEFAULT 'fixo' CHECK (tipo IN ('fixo', 'percentual')),
     valor REAL NOT NULL,
-    observacao TEXT DEFAULT '',
-    UNIQUE(cidade, nome)
+    observacao TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS taxas_balsa (
@@ -400,6 +405,34 @@ def _migrar_coleta_cidades_fixas_lista(conn: sqlite3.Connection):
     conn.execute("DROP TABLE coleta_cidades_fixas_old")
 
 
+def _migrar_taxas_regionais_lista(conn: sqlite3.Connection):
+    """taxas_regionais passou a aceitar uma LISTA de cidades separadas por
+    vírgula em `cidade` (mesmo motivo de coleta_cidades_fixas — uma taxa
+    cobre várias cidades numa linha só). Remove a antiga UNIQUE(cidade,
+    nome) recriando a tabela e preservando todas as linhas e ids."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='taxas_regionais'"
+    ).fetchone()
+    if not row or "UNIQUE(cidade, nome)" not in (row["sql"] or ""):
+        return  # já migrado
+    conn.execute("ALTER TABLE taxas_regionais RENAME TO taxas_regionais_old")
+    conn.execute("""
+        CREATE TABLE taxas_regionais (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cidade TEXT NOT NULL,
+            nome TEXT NOT NULL,
+            tipo TEXT NOT NULL DEFAULT 'fixo' CHECK (tipo IN ('fixo', 'percentual')),
+            valor REAL NOT NULL,
+            observacao TEXT DEFAULT ''
+        )
+    """)
+    conn.execute("""
+        INSERT INTO taxas_regionais (id, cidade, nome, tipo, valor, observacao)
+        SELECT id, cidade, nome, tipo, valor, observacao FROM taxas_regionais_old
+    """)
+    conn.execute("DROP TABLE taxas_regionais_old")
+
+
 def _migrar_colunas(conn: sqlite3.Connection):
     """Para bancos criados antes de existir a coluna tipo_frete:
     adiciona a coluna sem apagar nada do que já estava lá. Também remove
@@ -429,6 +462,7 @@ def _migrar_colunas(conn: sqlite3.Connection):
         """)
     else:
         _migrar_coleta_cidades_fixas_lista(conn)
+    _migrar_taxas_regionais_lista(conn)
     if not _coluna_existe(conn, "veiculos", "de"):
         conn.execute("ALTER TABLE veiculos ADD COLUMN de REAL NOT NULL DEFAULT 0")
     if not _coluna_existe(conn, "veiculos", "ate"):
@@ -930,6 +964,29 @@ def buscar_coleta_cidade_fixa(filial_origem: str, cidade_destino: str, veiculo: 
     return None
 
 
+def buscar_coleta_cidade_fixa_outros_veiculos(filial_origem: str, cidade_destino: str, veiculo_atual: str) -> list[str]:
+    """Veículos (diferentes do informado) que têm preço fixo de coleta
+    cadastrado pra essa mesma filial+cidade — usado só como diagnóstico
+    (ver frete_service.calcular_orcamento) quando o preço fixo quase
+    bateu, mas não pro veículo escolhido no orçamento: em vez de cair
+    silenciosamente pra faixa por km, a memória de cálculo avisa que
+    havia preço fixo pra outro(s) veículo(s)."""
+    alvo = cidade_destino.strip().lower()
+    veic_atual = veiculo_atual.strip().lower()
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT veiculo, cidade_destino FROM coleta_cidades_fixas WHERE LOWER(filial_origem) = LOWER(?)",
+            (filial_origem.strip(),),
+        ).fetchall()
+    encontrados = set()
+    for row in rows:
+        if row["veiculo"].strip().lower() == veic_atual:
+            continue
+        if alvo in {c.lower() for c in _dividir_cidades(row["cidade_destino"])}:
+            encontrados.add(row["veiculo"])
+    return sorted(encontrados)
+
+
 def listar_transportadoras_terceirizadas_admin() -> list[dict]:
     with get_connection() as conn:
         return [
@@ -966,37 +1023,57 @@ def listar_taxas_regionais_admin() -> list[dict]:
         return [dict(r) for r in conn.execute("SELECT * FROM taxas_regionais ORDER BY cidade, nome")]
 
 
-def _taxa_regional_duplicada(conn: sqlite3.Connection, cidade: str, nome: str, ignorar_id: int | None = None) -> bool:
-    """A UNIQUE(cidade, nome) é case-sensitive no SQLite, mas
-    _taxas_regionais_aplicaveis (frete_service.py) compara em minúsculas —
-    sem essa checagem, 'Manaus'/'MANAUS' com a mesma taxa cadastrada
-    separadamente fariam a taxa ser aplicada em dobro no orçamento."""
-    query = "SELECT 1 FROM taxas_regionais WHERE LOWER(cidade) = LOWER(?) AND LOWER(nome) = LOWER(?)"
-    params = [cidade.strip(), nome.strip()]
+def _cidades_regionais_conflitantes(
+    conn: sqlite3.Connection, nome: str, cidades: list[str], ignorar_id: int | None = None,
+) -> list[str]:
+    """Cidades da lista que já aparecem em OUTRA linha da mesma taxa
+    (mesmo `nome`, case-insensitive) — sem essa checagem, duas linhas
+    cobrindo a mesma cidade fariam a taxa ser aplicada em dobro no
+    orçamento (_taxas_regionais_aplicaveis soma todas as que baterem)."""
+    query = "SELECT id, cidade FROM taxas_regionais WHERE LOWER(nome) = LOWER(?)"
+    params = [nome.strip()]
     if ignorar_id is not None:
         query += " AND id != ?"
         params.append(ignorar_id)
-    return conn.execute(query, params).fetchone() is not None
+    alvo_lower = {c.lower() for c in cidades}
+    conflitos: dict[str, str] = {}
+    for row in conn.execute(query, params):
+        for cidade in _dividir_cidades(row["cidade"]):
+            if cidade.lower() in alvo_lower:
+                conflitos[cidade.lower()] = cidade
+    return sorted(conflitos.values())
 
 
 def inserir_taxa_regional(cidade, nome, tipo, valor, observacao=""):
+    cidades = _dividir_cidades(cidade)
+    if not cidades:
+        raise sqlite3.IntegrityError("informe ao menos uma cidade")
     with get_connection() as conn:
-        if _taxa_regional_duplicada(conn, cidade, nome):
-            raise sqlite3.IntegrityError(f"taxa '{nome}' já cadastrada para a cidade '{cidade}'")
+        conflitos = _cidades_regionais_conflitantes(conn, nome, cidades)
+        if conflitos:
+            raise sqlite3.IntegrityError(
+                f"cidade(s) {', '.join(conflitos)} já têm a taxa '{nome}' cadastrada em outra linha"
+            )
         cur = conn.execute(
             "INSERT INTO taxas_regionais (cidade, nome, tipo, valor, observacao) VALUES (?,?,?,?,?)",
-            (cidade, nome, tipo, valor, observacao),
+            (", ".join(cidades), nome, tipo, valor, observacao),
         )
         return cur.lastrowid
 
 
 def atualizar_taxa_regional(id_, cidade, nome, tipo, valor, observacao=""):
+    cidades = _dividir_cidades(cidade)
+    if not cidades:
+        raise sqlite3.IntegrityError("informe ao menos uma cidade")
     with get_connection() as conn:
-        if _taxa_regional_duplicada(conn, cidade, nome, ignorar_id=id_):
-            raise sqlite3.IntegrityError(f"taxa '{nome}' já cadastrada para a cidade '{cidade}'")
+        conflitos = _cidades_regionais_conflitantes(conn, nome, cidades, ignorar_id=id_)
+        if conflitos:
+            raise sqlite3.IntegrityError(
+                f"cidade(s) {', '.join(conflitos)} já têm a taxa '{nome}' cadastrada em outra linha"
+            )
         conn.execute(
             "UPDATE taxas_regionais SET cidade=?, nome=?, tipo=?, valor=?, observacao=? WHERE id=?",
-            (cidade, nome, tipo, valor, observacao, id_),
+            (", ".join(cidades), nome, tipo, valor, observacao, id_),
         )
 
 

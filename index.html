@@ -1025,6 +1025,7 @@ const MEMORIA_CALCULO_CAMPOS = [
   {chave: 'coleta_terceirizada', rotulo: 'Coleta terceirizada?', tipo: 'bool'},
   {chave: 'transportadora_coleta_nome', rotulo: 'Transportadora da coleta', tipo: 'texto'},
   {chave: 'coleta_fixa_por_cidade', rotulo: 'Coleta com preço fixo por cidade?', tipo: 'bool'},
+  {chave: 'coleta_fixa_outro_veiculo', rotulo: 'Preço fixo cadastrado só p/ outro veículo', tipo: 'lista_veiculos'},
   {chave: 'custo_coleta', rotulo: 'Custo de coleta', tipo: 'brl'},
   {chave: 'entrega_terceirizada', rotulo: 'Entrega terceirizada?', tipo: 'bool'},
   {chave: 'transportadora_entrega_nome', rotulo: 'Transportadora da entrega', tipo: 'texto'},
@@ -1045,6 +1046,7 @@ const MEMORIA_CALCULO_CAMPOS = [
   {chave: 'taxas_regionais', rotulo: 'Taxas regionais aplicadas', tipo: 'lista_taxa_regional'},
   {chave: 'custo_taxas_regionais', rotulo: 'Total de taxas regionais', tipo: 'brl'},
   {chave: 'taxa_balsa', rotulo: 'Taxa de balsa aplicada', tipo: 'balsa'},
+  {chave: 'balsa_outro_veiculo', rotulo: 'Taxa de balsa cadastrada só p/ outro veículo', tipo: 'lista_veiculos'},
   {chave: 'custo_balsa', rotulo: 'Custo de balsa', tipo: 'brl'},
 
   {header: 'Resultado'},
@@ -1075,6 +1077,8 @@ function _formatarValorMemoria(v, tipo){
       return v
         ? `${v.cidade_origem} → ${v.cidade_destino} (${v.veiculo}, ${v.tipo === 'percentual' ? v.valor_configurado + '%' : fmtBRL(v.valor_configurado)}) = ${fmtBRL(v.valor_aplicado)}`
         : 'não aplicada';
+    case 'lista_veiculos':
+      return (v && v.length) ? v.join(', ') : '—';
     default: return String(v);
   }
 }
@@ -2856,9 +2860,11 @@ async function carregarTabelaPrecos(){
   await criarEditorTabela({
     containerId: 'precos-taxas-regionais', endpoint: 'taxas-regionais',
     titulo: 'Taxas Regionais (só cobradas se origem OU destino for a cidade)',
-    campoMultiplo: 'cidade',
+    // Sem campoMultiplo aqui de propósito (mesma mudança feita em Coleta
+    // com Preço Fixo): vírgula não cria mais uma linha por cidade, uma
+    // linha só cobre várias cidades com o mesmo valor.
     colunas: [
-      {campo: 'cidade', label: 'Cidade', tipo: 'text'},
+      {campo: 'cidade', label: 'Cidade(s) — separe por vírgula', tipo: 'text'},
       {campo: 'nome', label: 'Nome da taxa', tipo: 'text'},
       {campo: 'tipo', label: 'Tipo', tipo: 'select', opcoes: ['fixo', 'percentual']},
       {campo: 'valor', label: 'Valor (R$ ou %)', tipo: 'number', step: '0.01'},

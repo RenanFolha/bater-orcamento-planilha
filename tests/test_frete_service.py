@@ -315,6 +315,21 @@ def test_taxa_regional_nao_aplicada_para_outra_cidade(parametros):
     assert resultado["calculos_intermediarios"]["custo_taxas_regionais"] == pytest.approx(0.0)
 
 
+def test_taxa_regional_lista_de_cidades_aplica_em_qualquer_uma(parametros):
+    # uma taxa regional cobrindo várias cidades numa linha só (mesmo
+    # padrão de coleta_cidades_fixas) -- qualquer uma delas dispara a taxa
+    parametros.taxas_regionais = [
+        fs.TaxaRegional(cidade="Manaus, Boa Vista", nome="Área de Risco", tipo="fixo", valor=30.0),
+    ]
+    for cidade in ("Manaus, Amazonas, Brasil", "Boa Vista, Roraima, Brasil"):
+        resultado = fs.calcular_orcamento(
+            peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=100,
+            categoria="Geral", transporte="Rodoviário", sla="Padrão",
+            cidade_origem=cidade,
+        )
+        assert resultado["calculos_intermediarios"]["custo_taxas_regionais"] == pytest.approx(30.0)
+
+
 def test_taxa_balsa_aplicada_na_direcao_e_veiculo_certos(parametros):
     # peso=50 escolhe o veículo "VUC" no fixture de teste (única faixa que cobre 50kg)
     resultado = fs.calcular_orcamento(
@@ -346,7 +361,52 @@ def test_taxa_balsa_nao_aplicada_para_outro_veiculo(parametros):
         categoria="Geral", transporte="Rodoviário", sla="Padrão",
         cidade_origem="Belém, Pará, Brasil", cidade_destino="Macapá, Amapá, Brasil",
     )
-    assert resultado["calculos_intermediarios"]["custo_balsa"] == pytest.approx(0.0)
+    calc = resultado["calculos_intermediarios"]
+    assert calc["custo_balsa"] == pytest.approx(0.0)
+    # avisa que a rota bateu, só não pro veículo escolhido (Truck) -- em
+    # vez de zerar silenciosamente
+    assert calc["balsa_outro_veiculo"] == ["VUC"]
+
+
+def test_taxa_balsa_sem_aviso_quando_rota_nem_existe(parametros):
+    # rota diferente (não cadastrada em nenhum veículo) -- não deve sugerir nada
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        cidade_origem="Curitiba, PR, Brasil", cidade_destino="Florianópolis, SC, Brasil",
+    )
+    assert resultado["calculos_intermediarios"]["balsa_outro_veiculo"] is None
+
+
+def test_coleta_fixa_avisa_outro_veiculo_quando_nao_bate(parametros, monkeypatch):
+    monkeypatch.setattr(fs.db, "buscar_coleta_cidade_fixa", lambda *a, **k: None)
+    monkeypatch.setattr(
+        fs.db, "buscar_coleta_cidade_fixa_outros_veiculos",
+        lambda filial_origem, cidade_destino, veiculo_atual: ["Carreta", "Truck"],
+    )
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=100,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        distancia_coleta=20, cidade_coleta="Alguma Cidade, SP, Brasil", cidade_origem="SP",
+    )
+    calc = resultado["calculos_intermediarios"]
+    assert calc["coleta_fixa_por_cidade"] is False
+    assert calc["coleta_fixa_outro_veiculo"] == ["Carreta", "Truck"]
+    # continua caindo pra faixa por km normalmente, o aviso é só informativo
+    assert calc["custo_coleta"] == pytest.approx(10 + 20 * 0.5)
+
+
+def test_coleta_fixa_sem_aviso_quando_ja_aplicou(parametros, monkeypatch):
+    monkeypatch.setattr(
+        fs.db, "buscar_coleta_cidade_fixa",
+        lambda filial_origem, cidade_destino, veiculo: {"valor_fixo": 99.0},
+    )
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=100,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        distancia_coleta=20, cidade_coleta="Alguma Cidade, SP, Brasil", cidade_origem="SP",
+    )
+    assert resultado["calculos_intermediarios"]["coleta_fixa_outro_veiculo"] is None
 
 
 def test_categoria_invalida_gera_erro_com_opcoes(parametros):

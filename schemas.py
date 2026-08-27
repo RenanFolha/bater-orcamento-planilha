@@ -142,7 +142,10 @@ class TaxaAdicionalIn(BaseModel):
 
 
 class TaxaRegionalIn(BaseModel):
-    cidade: str = Field(..., min_length=1)
+    cidade: str = Field(
+        ..., min_length=1,
+        description="Cidade(s) onde a taxa se aplica — uma ou mais separadas por vírgula (ex: 'Manaus, Boa Vista'), todas com o mesmo valor",
+    )
     nome: str = Field(..., min_length=1)
     tipo: str = Field("fixo", pattern="^(fixo|percentual)$", description="'fixo' (R$) ou 'percentual' (% do valor da mercadoria)")
     valor: float = Field(..., ge=0)
