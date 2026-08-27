@@ -125,4 +125,9 @@ def health():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    # Por padrão só escuta em localhost — evita expor a API (e o login) pra
+    # rede sem querer. Quem precisar acessar de outra máquina na rede local
+    # define HOST=0.0.0.0 explicitamente (ex: variável de ambiente no
+    # iniciar_api.bat).
+    host = os.environ.get("HOST", "127.0.0.1")
+    uvicorn.run("main:app", host=host, port=8000, reload=True)

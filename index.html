@@ -2066,6 +2066,15 @@ function atualizarUIAuth(){
     document.getElementById('sidebar-user-role').textContent = currentUser.role === 'admin' ? 'Administrador' : 'Usuário';
   }
 
+  // Login com a senha padrão (ex: admin recém-criado) — abre a troca de
+  // senha já aberta e avisada, pra não passar despercebido.
+  if(logado && currentUser.deve_trocar_senha){
+    document.getElementById('senha-form').classList.remove('hidden');
+    const statusEl = document.getElementById('senha-status');
+    statusEl.className = 'senha-status err';
+    statusEl.textContent = 'Você está com a senha padrão — troque agora antes de continuar.';
+  }
+
   // Se a view atual exigia login/admin e o usuário deixou de ter acesso
   // (ex: fez logout com "Histórico" aberto), volta pro Novo Orçamento.
   const viewAtual = Object.entries(views).find(([, el]) => el && el.style.display !== 'none');
@@ -2145,6 +2154,7 @@ document.getElementById('btn-confirmar-senha').addEventListener('click', async (
     });
     const data = await res.json();
     if(!res.ok) throw new Error(data.detail || 'Erro ao trocar a senha.');
+    if(currentUser) currentUser.deve_trocar_senha = false;
     statusEl.className = 'senha-status ok';
     statusEl.textContent = 'Senha alterada.';
     senhaAtualEl.value = '';

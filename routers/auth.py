@@ -37,9 +37,16 @@ def login(payload: LoginRequest, request: Request, response: Response):
     token = auth.criar_sessao(usuario["id"])
     response.set_cookie(
         COOKIE_SESSAO, token, httponly=True, samesite="lax",
+        # "secure" só pode ir em cookie servido por HTTPS (senão o navegador
+        # descarta); detectamos pelo esquema da própria requisição (funciona
+        # tanto local via HTTP quanto atrás de um proxy/deploy com TLS).
+        secure=request.url.scheme == "https",
         max_age=auth.SESSAO_DURACAO_HORAS * 3600, path="/",
     )
-    return {"id": usuario["id"], "nome": usuario["nome"], "username": usuario["username"], "role": usuario["role"]}
+    return {
+        "id": usuario["id"], "nome": usuario["nome"], "username": usuario["username"], "role": usuario["role"],
+        "deve_trocar_senha": bool(usuario["deve_trocar_senha"]),
+    }
 
 
 @router.post("/logout")

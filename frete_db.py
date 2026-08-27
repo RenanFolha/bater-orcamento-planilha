@@ -195,7 +195,8 @@ CREATE TABLE IF NOT EXISTS usuarios (
     senha_salt TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT 'usuario' CHECK (role IN ('admin', 'usuario')),
     ativo INTEGER NOT NULL DEFAULT 1,
-    criado_em TEXT NOT NULL DEFAULT ''
+    criado_em TEXT NOT NULL DEFAULT '',
+    deve_trocar_senha INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS sessoes (
@@ -483,6 +484,11 @@ def _migrar_colunas(conn: sqlite3.Connection):
         # "Responsável" que já existia. Bancos antigos ficam com '' (só
         # admin consegue excluir esses registros legados).
         conn.execute("ALTER TABLE orcamentos_historico ADD COLUMN criado_por TEXT NOT NULL DEFAULT ''")
+    if not _coluna_existe(conn, "usuarios", "deve_trocar_senha"):
+        # Sinaliza que o usuário precisa trocar a senha no próximo login —
+        # usado pra obrigar a troca da senha padrão do admin criado
+        # automaticamente (ver garantir_usuario_padrao em auth_service.py).
+        conn.execute("ALTER TABLE usuarios ADD COLUMN deve_trocar_senha INTEGER NOT NULL DEFAULT 0")
 
 
 def _completar_carreta_fechada(conn: sqlite3.Connection):
@@ -1251,7 +1257,7 @@ def _usuario_duplicado(conn: sqlite3.Connection, username: str, ignorar_id: int 
 def listar_usuarios_admin() -> list[dict]:
     with get_connection() as conn:
         return [dict(r) for r in conn.execute(
-            "SELECT id, nome, username, role, ativo, criado_em FROM usuarios ORDER BY nome"
+            "SELECT id, nome, username, role, ativo, criado_em, deve_trocar_senha FROM usuarios ORDER BY nome"
         )]
 
 
@@ -1286,14 +1292,20 @@ def contar_admins_ativos(ignorar_id: int | None = None) -> int:
         return conn.execute(query, params).fetchone()[0]
 
 
-def inserir_usuario(nome: str, username: str, senha_hash: str, senha_salt: str, role: str, ativo: bool = True) -> int:
+def inserir_usuario(
+    nome: str, username: str, senha_hash: str, senha_salt: str, role: str, ativo: bool = True,
+    deve_trocar_senha: bool = False,
+) -> int:
     with get_connection() as conn:
         if _usuario_duplicado(conn, username):
             raise sqlite3.IntegrityError(f"já existe um usuário com o login '{username}'")
         cur = conn.execute(
-            "INSERT INTO usuarios (nome, username, senha_hash, senha_salt, role, ativo, criado_em) "
-            "VALUES (?,?,?,?,?,?,?)",
-            (nome, username, senha_hash, senha_salt, role, int(ativo), datetime.now().isoformat(timespec="seconds")),
+            "INSERT INTO usuarios (nome, username, senha_hash, senha_salt, role, ativo, criado_em, deve_trocar_senha) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (
+                nome, username, senha_hash, senha_salt, role, int(ativo),
+                datetime.now().isoformat(timespec="seconds"), int(deve_trocar_senha),
+            ),
         )
         return cur.lastrowid
 
@@ -1310,10 +1322,17 @@ def atualizar_usuario(id_: int, nome: str, username: str, role: str, ativo: bool
 
 def atualizar_senha_usuario(id_: int, senha_hash: str, senha_salt: str):
     with get_connection() as conn:
+        # Trocar a senha também limpa o sinalizador de troca obrigatória
+        # (ex: senha padrão do admin) — a exigência já foi cumprida.
         conn.execute(
-            "UPDATE usuarios SET senha_hash=?, senha_salt=? WHERE id=?",
+            "UPDATE usuarios SET senha_hash=?, senha_salt=?, deve_trocar_senha=0 WHERE id=?",
             (senha_hash, senha_salt, id_),
         )
+
+
+def marcar_deve_trocar_senha(id_: int):
+    with get_connection() as conn:
+        conn.execute("UPDATE usuarios SET deve_trocar_senha=1 WHERE id=?", (id_,))
 
 
 def excluir_usuario(id_: int):
@@ -1332,7 +1351,7 @@ def criar_sessao(token: str, usuario_id: int, criado_em: str, expira_em: str):
 def buscar_sessao(token: str) -> dict | None:
     with get_connection() as conn:
         row = conn.execute(
-            "SELECT s.expira_em, u.id, u.nome, u.username, u.role, u.ativo "
+            "SELECT s.expira_em, u.id, u.nome, u.username, u.role, u.ativo, u.deve_trocar_senha "
             "FROM sessoes s JOIN usuarios u ON u.id = s.usuario_id WHERE s.token = ?",
             (token,),
         ).fetchone()

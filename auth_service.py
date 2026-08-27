@@ -82,16 +82,30 @@ def garantir_usuario_padrao():
     entrar. Troque a senha assim que possível (tela de login →
     "Trocar senha")."""
     if db.contar_usuarios() > 0:
+        _marcar_admin_padrao_pendente_se_necessario()
         return
     senha_hash, senha_salt = gerar_hash_senha(ADMIN_SENHA_PADRAO)
     db.inserir_usuario(
         nome="Administrador", username=ADMIN_USERNAME_PADRAO,
         senha_hash=senha_hash, senha_salt=senha_salt, role="admin", ativo=True,
+        deve_trocar_senha=True,
     )
     print(
         f"[frete] Usuário admin padrão criado — login: '{ADMIN_USERNAME_PADRAO}' / "
         f"senha: '{ADMIN_SENHA_PADRAO}'. Troque a senha assim que possível."
     )
+
+
+def _marcar_admin_padrao_pendente_se_necessario():
+    """Cobre bancos que já existiam antes do sinalizador deve_trocar_senha
+    (ver migração em frete_db.py): se o usuário 'admin' ainda estiver com a
+    senha padrão 'admin123', marca a troca como pendente — sem isso, quem
+    já tinha o frete.db criado ficava sem o aviso de senha padrão."""
+    usuario = db.buscar_usuario_por_username(ADMIN_USERNAME_PADRAO)
+    if not usuario or usuario["deve_trocar_senha"]:
+        return
+    if verificar_senha(ADMIN_SENHA_PADRAO, usuario["senha_hash"], usuario["senha_salt"]):
+        db.marcar_deve_trocar_senha(usuario["id"])
 
 
 def autenticar(username: str, senha: str) -> dict | None:
@@ -123,7 +137,10 @@ def validar_sessao(token: str | None) -> dict | None:
         return None
     if not sessao["ativo"]:
         return None
-    return {"id": sessao["id"], "nome": sessao["nome"], "username": sessao["username"], "role": sessao["role"]}
+    return {
+        "id": sessao["id"], "nome": sessao["nome"], "username": sessao["username"], "role": sessao["role"],
+        "deve_trocar_senha": bool(sessao["deve_trocar_senha"]),
+    }
 
 
 def encerrar_sessao(token: str | None):
