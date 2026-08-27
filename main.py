@@ -123,11 +123,37 @@ def health():
     return {"status": "ok"}
 
 
+_HOSTS_LOCAIS = {"127.0.0.1", "localhost", "::1"}
+
+
 if __name__ == "__main__":
+    import sys
     import uvicorn
+
     # Por padrão só escuta em localhost — evita expor a API (e o login) pra
     # rede sem querer. Quem precisar acessar de outra máquina na rede local
     # define HOST=0.0.0.0 explicitamente (ex: variável de ambiente no
     # iniciar_api.bat).
     host = os.environ.get("HOST", "127.0.0.1")
-    uvicorn.run("main:app", host=host, port=8000, reload=True)
+    ssl_keyfile = os.environ.get("SSL_KEYFILE") or None
+    ssl_certfile = os.environ.get("SSL_CERTFILE") or None
+
+    if bool(ssl_keyfile) != bool(ssl_certfile):
+        sys.exit("Erro: SSL_KEYFILE e SSL_CERTFILE precisam ser definidos juntos (só um dos dois foi passado).")
+
+    # Fora de localhost, login e cookie de sessão trafegam pela rede — sem
+    # TLS isso vai em texto puro. Em vez de deixar passar sem avisar,
+    # recusa subir até alguém configurar um certificado (autoassinado pra
+    # uso interno, ou via proxy reverso como Caddy/nginx na frente, caso em
+    # que a própria API pode continuar em HTTP e receber HOST=127.0.0.1).
+    if host not in _HOSTS_LOCAIS and not ssl_keyfile:
+        sys.exit(
+            f"Erro: HOST={host!r} expõe a API fora desta máquina, mas nenhum certificado TLS foi configurado.\n"
+            "Defina SSL_KEYFILE e SSL_CERTFILE (variáveis de ambiente) antes de subir a API assim, "
+            "ou coloque um proxy reverso com TLS na frente e mantenha HOST=127.0.0.1 aqui."
+        )
+
+    uvicorn.run(
+        "main:app", host=host, port=8000, reload=True,
+        ssl_keyfile=ssl_keyfile, ssl_certfile=ssl_certfile,
+    )
