@@ -22,6 +22,7 @@ estava lá.
 
 import os
 import sqlite3
+import unicodedata
 from contextlib import contextmanager
 from datetime import datetime
 
@@ -29,6 +30,17 @@ DB_PATH = os.environ.get(
     "FRETE_DB_PATH",
     os.path.join(os.path.dirname(__file__), "frete.db"),
 )
+
+
+def normalizar_texto(texto: str) -> str:
+    """minúsculas + sem acento + sem espaço nas pontas — usado para
+    comparar nome de filial/cidade cadastrado em lugares independentes
+    (ex: nome da filial vs. cidade digitada numa taxa de balsa/regional)
+    sem que uma diferença de acentuação (ex: 'Belem' vs 'Belém') faça a
+    comparação falhar silenciosamente. LOWER() do SQLite não remove
+    acento, por isso normaliza em Python."""
+    sem_acento = unicodedata.normalize("NFKD", texto or "").encode("ascii", "ignore").decode("ascii")
+    return sem_acento.strip().lower()
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS faixas_peso (
@@ -954,18 +966,22 @@ def excluir_coleta_cidade_fixa(id_):
 
 
 def buscar_coleta_cidade_fixa(filial_origem: str, cidade_destino: str, veiculo: str) -> dict | None:
-    """Busca (case-insensitive) se a rota filial_origem -> cidade_destino,
-    para o veículo informado, tem preço de coleta fixo cadastrado — a
-    cidade pode estar em qualquer posição da lista guardada na linha."""
-    alvo = cidade_destino.strip().lower()
+    """Busca se a rota filial_origem -> cidade_destino, para o veículo
+    informado, tem preço de coleta fixo cadastrado — a cidade pode estar
+    em qualquer posição da lista guardada na linha. Comparação por
+    normalizar_texto (sem acento/case) em vez de LOWER() do SQL, que não
+    remove acento — filial_origem e cidade_destino vêm de cadastros
+    independentes (nome da filial vs. texto digitado na taxa), então uma
+    grafia diferente (ex: 'Belem' vs 'Belém') não pode quebrar o match."""
+    filial_alvo = normalizar_texto(filial_origem)
+    veic_alvo = normalizar_texto(veiculo)
+    alvo = normalizar_texto(cidade_destino)
     with get_connection() as conn:
-        rows = conn.execute(
-            "SELECT * FROM coleta_cidades_fixas "
-            "WHERE LOWER(filial_origem) = LOWER(?) AND LOWER(veiculo) = LOWER(?) ORDER BY id",
-            (filial_origem.strip(), veiculo.strip()),
-        ).fetchall()
+        rows = conn.execute("SELECT * FROM coleta_cidades_fixas ORDER BY id").fetchall()
     for row in rows:
-        if alvo in {c.lower() for c in _dividir_cidades(row["cidade_destino"])}:
+        if normalizar_texto(row["filial_origem"]) != filial_alvo or normalizar_texto(row["veiculo"]) != veic_alvo:
+            continue
+        if alvo in {normalizar_texto(c) for c in _dividir_cidades(row["cidade_destino"])}:
             return dict(row)
     return None
 
@@ -977,18 +993,18 @@ def buscar_coleta_cidade_fixa_outros_veiculos(filial_origem: str, cidade_destino
     bateu, mas não pro veículo escolhido no orçamento: em vez de cair
     silenciosamente pra faixa por km, a memória de cálculo avisa que
     havia preço fixo pra outro(s) veículo(s)."""
-    alvo = cidade_destino.strip().lower()
-    veic_atual = veiculo_atual.strip().lower()
+    filial_alvo = normalizar_texto(filial_origem)
+    alvo = normalizar_texto(cidade_destino)
+    veic_atual = normalizar_texto(veiculo_atual)
     with get_connection() as conn:
-        rows = conn.execute(
-            "SELECT veiculo, cidade_destino FROM coleta_cidades_fixas WHERE LOWER(filial_origem) = LOWER(?)",
-            (filial_origem.strip(),),
-        ).fetchall()
+        rows = conn.execute("SELECT veiculo, filial_origem, cidade_destino FROM coleta_cidades_fixas").fetchall()
     encontrados = set()
     for row in rows:
-        if row["veiculo"].strip().lower() == veic_atual:
+        if normalizar_texto(row["filial_origem"]) != filial_alvo:
             continue
-        if alvo in {c.lower() for c in _dividir_cidades(row["cidade_destino"])}:
+        if normalizar_texto(row["veiculo"]) == veic_atual:
+            continue
+        if alvo in {normalizar_texto(c) for c in _dividir_cidades(row["cidade_destino"])}:
             encontrados.add(row["veiculo"])
     return sorted(encontrados)
 

@@ -342,6 +342,19 @@ def test_taxa_balsa_aplicada_na_direcao_e_veiculo_certos(parametros):
     assert calc["taxa_balsa"]["veiculo"] == "VUC"
 
 
+def test_taxa_balsa_aplicada_com_grafia_diferente_do_cadastro(parametros):
+    # taxa cadastrada como "Belém" (com acento) deve bater mesmo quando a
+    # rota chega com grafia diferente (ex: nome de filial sem acento) --
+    # sem isso, uma filial cadastrada como "Belem" nunca bateria contra
+    # uma taxa de balsa cadastrada como "Belém".
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        cidade_origem="Belem", cidade_destino="MACAPA",
+    )
+    assert resultado["calculos_intermediarios"]["custo_balsa"] == pytest.approx(120.0)
+
+
 def test_taxa_balsa_nao_aplicada_na_direcao_invertida(parametros):
     # a mesma travessia, mas cotada no sentido contrário -- taxa é
     # direcional, não deve aplicar sem uma linha cadastrada pra essa volta

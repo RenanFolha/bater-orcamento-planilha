@@ -451,12 +451,12 @@ def _taxas_regionais_aplicaveis(
     for texto in (cidade_origem, cidade_destino):
         cidade = _cidade_da_retirada(texto) if texto else None
         if cidade:
-            cidades_da_rota.add(cidade.strip().lower())
+            cidades_da_rota.add(db.normalizar_texto(cidade))
     if not cidades_da_rota:
         return []
     aplicaveis = []
     for t in p.taxas_regionais:
-        cidades_taxa = {c.lower() for c in _dividir_cidades(t.cidade)}
+        cidades_taxa = {db.normalizar_texto(c) for c in _dividir_cidades(t.cidade)}
         if cidades_da_rota & cidades_taxa:
             aplicaveis.append(t)
     return aplicaveis
@@ -477,12 +477,12 @@ def _taxa_balsa_aplicavel(
     cid_d = _cidade_da_retirada(cidade_destino)
     if not cid_o or not cid_d:
         return None
-    cid_o, cid_d, veic = cid_o.strip().lower(), cid_d.strip().lower(), veiculo.strip().lower()
+    cid_o, cid_d, veic = db.normalizar_texto(cid_o), db.normalizar_texto(cid_d), db.normalizar_texto(veiculo)
     for t in p.taxas_balsa:
         if (
-            t.cidade_origem.strip().lower() == cid_o
-            and t.cidade_destino.strip().lower() == cid_d
-            and t.veiculo.strip().lower() == veic
+            db.normalizar_texto(t.cidade_origem) == cid_o
+            and db.normalizar_texto(t.cidade_destino) == cid_d
+            and db.normalizar_texto(t.veiculo) == veic
         ):
             return t
     return None
@@ -501,13 +501,13 @@ def _taxa_balsa_outros_veiculos(
     cid_d = _cidade_da_retirada(cidade_destino)
     if not cid_o or not cid_d:
         return []
-    cid_o, cid_d = cid_o.strip().lower(), cid_d.strip().lower()
-    veic_atual = veiculo_atual.strip().lower()
+    cid_o, cid_d = db.normalizar_texto(cid_o), db.normalizar_texto(cid_d)
+    veic_atual = db.normalizar_texto(veiculo_atual)
     encontrados = {
         t.veiculo for t in p.taxas_balsa
-        if t.cidade_origem.strip().lower() == cid_o
-        and t.cidade_destino.strip().lower() == cid_d
-        and t.veiculo.strip().lower() != veic_atual
+        if db.normalizar_texto(t.cidade_origem) == cid_o
+        and db.normalizar_texto(t.cidade_destino) == cid_d
+        and db.normalizar_texto(t.veiculo) != veic_atual
     }
     return sorted(encontrados)
 
