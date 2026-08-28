@@ -540,7 +540,9 @@ def escolher_veiculo(peso: float, paletes: list[dict], transp: Transporte) -> Se
         pal["comprimento"] * pal["largura"] * pal["altura"] * pal.get("quantidade", 1) for pal in paletes
     )
     volume_total_m3 = volume_total_cm3 / 1_000_000
-    peso_cubado = volume_total_cm3 / transp.fator_cubagem
+    # Padrão de mercado: fator_cubagem é em kg/m³ (ex: 300 rodoviário, 167
+    # aéreo — o mesmo valor padrão IATA), multiplicado pelo volume em m³.
+    peso_cubado = volume_total_m3 * transp.fator_cubagem
     peso_considerado = max(peso, peso_cubado)
     veiculo = parametros.buscar_veiculo_por_peso_e_volume(peso_considerado, volume_total_m3)
     return SelecaoVeiculo(veiculo, volume_total_m3, peso_cubado, peso_considerado)

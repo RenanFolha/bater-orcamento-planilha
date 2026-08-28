@@ -1288,7 +1288,7 @@ function atualizarCubagem(){
 
   const volumeCm3Total = paletes.reduce((soma, p) => soma + (p.comprimento * p.largura * p.altura * p.quantidade), 0);
   const volumeM3Total = volumeCm3Total / 1000000;
-  const pesoCubado = volumeCm3Total / transp.fator_cubagem;
+  const pesoCubado = volumeM3Total * transp.fator_cubagem;
   const pesoConsiderado = Math.max(peso, pesoCubado);
   const qualPesa = pesoCubado > peso ? 'cubado' : 'real';
   const totalPaletes = paletes.reduce((soma, p) => soma + p.quantidade, 0);
