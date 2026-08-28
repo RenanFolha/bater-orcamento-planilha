@@ -14,3 +14,7 @@ frete.db-shm
 
 .idea/
 .vscode/
+
+# Certificado TLS autoassinado (chave privada nunca deve ser versionada —
+# gerado localmente, cada ambiente cria o seu próprio; ver README.md).
+certs/
