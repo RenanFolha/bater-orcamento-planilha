@@ -550,7 +550,7 @@
                   <div class="idx">01</div>
                   <div>
                     <label for="peso">Peso real (kg)</label>
-                    <input type="number" id="peso" min="0.01" step="0.01" value="8" required>
+                    <input type="text" inputmode="decimal" id="peso" value="8" oninput="formatarPesoDigitando(this)" required>
                   </div>
                 </div>
                 <div class="field">
@@ -850,7 +850,7 @@
         <div class="card">
           <div class="card-head">
             <h2><i class="ti ti-history" style="color:var(--accent);margin-right:6px;"></i>Orçamentos salvos</h2>
-          </div>
+        </div>
           <div id="historico-lista"></div>
         </div>
       </div>
@@ -1123,6 +1123,25 @@ function valorMoedaParaNumero(str){
   return isNaN(n) ? 0 : n;
 }
 
+// Máscara de campo de peso: ao contrário da moeda, não trata os dígitos
+// como casas decimais fixas — só formata a parte inteira com separador
+// de milhar "." enquanto digita, preservando até 2 casas decimais depois
+// da vírgula (ex: "1200" -> "1.200", "1200,5" -> "1.200,5").
+function formatarPesoDigitando(el){
+  let valor = el.value.replace(/[^\d,]/g, '');
+  const [parteInteira, ...resto] = valor.split(',');
+  const inteiroLimpo = parteInteira.replace(/^0+(?=\d)/, '') || '0';
+  const inteiroFormatado = Number(inteiroLimpo).toLocaleString('pt-BR');
+  const decimal = resto.length ? resto.join('').slice(0, 2) : null;
+  el.value = decimal !== null ? `${inteiroFormatado},${decimal}` : inteiroFormatado;
+}
+function pesoParaNumero(str){
+  if(str == null || str === '') return 0;
+  const limpo = String(str).replace(/\./g, '').replace(',', '.');
+  const n = parseFloat(limpo);
+  return isNaN(n) ? 0 : n;
+}
+
 function preencherOpcoes(selectEl, data, labelKey='nome'){
   selectEl.replaceChildren();
   for(const item of data){
@@ -1258,7 +1277,7 @@ document.getElementById('btn-add-palete').addEventListener('click', criarLinhaPa
 
 function atualizarCubagem(){
   const cubagemInfo = document.getElementById('cubagem-info');
-  const peso = parseFloat(document.getElementById('peso').value) || 0;
+  const peso = pesoParaNumero(document.getElementById('peso').value) || 0;
   const paletes = coletarPaletes().filter(p => p.comprimento > 0 && p.largura > 0 && p.altura > 0);
   const nomeTransporte = document.getElementById('transporte').value;
   const transp = transportesCache.find(t => t.nome === nomeTransporte);
@@ -1693,7 +1712,7 @@ btnGeo.addEventListener('click', async () => {
         // só permitem ao backend descobrir o veículo e reaproveitar a
         // distância de uma rota+veículo já cotada no histórico, sem
         // gastar geocodificação de novo.
-        peso: parseFloat(document.getElementById('peso').value) || 0,
+        peso: pesoParaNumero(document.getElementById('peso').value) || 0,
         paletes: coletarPaletes(),
         transporte: document.getElementById('transporte').value || '',
       }),
@@ -1767,7 +1786,7 @@ form.addEventListener('submit', async (ev) => {
   }
 
   const payload = {
-    peso: parseFloat(document.getElementById('peso').value),
+    peso: pesoParaNumero(document.getElementById('peso').value),
     paletes,
     distancia: parseFloat(document.getElementById('distancia').value),
     distancia_coleta: parseFloat(distanciaColetaInput.value) || 0,
