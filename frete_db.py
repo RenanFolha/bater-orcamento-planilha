@@ -313,8 +313,8 @@ def _seed_se_vazio(conn: sqlite3.Connection):
         conn.executemany(
             "INSERT INTO transportes (nome, multiplicador, fator_cubagem, observacao) VALUES (?,?,?,?)",
             [
-                ("Rodoviário", 1.00, 3000, "Padrão para cargas nacionais"),
-                ("Aéreo", 2.50, 6000, "Mais rápido e mais caro")
+                ("Rodoviário", 1.00, 300, "Padrão para cargas nacionais"),
+                ("Aéreo", 2.50, 167, "Mais rápido e mais caro")
             ],
         )
 
