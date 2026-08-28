@@ -14,13 +14,13 @@ def _parametros_teste():
     p = fs.ParametrosFrete()
     p.veiculos = {
         "vuc": fs.Veiculo(
-            nome="VUC", de=0, ate=1000, tarifa_km=2.0, peso_incluso_kg=100,
-            valor_kg_excedente=1.0, tarifa_km_retorno=0.5, tarifa_km_manutencao=0.1,
+            nome="VUC", de=0, ate=1000, tarifa_km=2.0,
+            valor_tonelada_excedente=1.0, tarifa_km_retorno=0.5, tarifa_km_manutencao=0.1,
             capacidade_m3=10,
         ),
         "truck": fs.Veiculo(
-            nome="Truck", de=1000, ate=999999, tarifa_km=3.0, peso_incluso_kg=500,
-            valor_kg_excedente=0.8, capacidade_m3=30,
+            nome="Truck", de=1000, ate=999999, tarifa_km=3.0,
+            valor_tonelada_excedente=800.0, capacidade_m3=30,
         ),
     }
     p.veiculos_por_peso = sorted(p.veiculos.values(), key=lambda v: v.de)
@@ -68,13 +68,65 @@ def test_calculo_basico_sem_coleta(parametros):
 
     assert resultado["entrada"]["veiculo"] == "VUC"
     assert calc["custo_km"] == pytest.approx(200.0)
+    # peso (50kg) está bem dentro da faixa do VUC (até 1000kg) -> sem
+    # excedente, o veículo já cobre esse peso normalmente.
     assert calc["peso_excedente_kg"] == pytest.approx(0.0)
+    assert calc["custo_peso_excedente"] == pytest.approx(0.0)
     assert calc["frete_ajustado"] == pytest.approx(200.0)
     assert calc["custo_manutencao"] == pytest.approx(10.0)
     assert calc["custo_taxas_adicionais"] == pytest.approx(10.0)
     assert resultado["resultado"]["frete_total"] == pytest.approx(220.0)
     assert calc["faixa_km_aplicada"] is False
     assert calc["tarifa_km_veiculo"] == pytest.approx(2.0)  # tarifa_km fixa do VUC, sem faixa cadastrada
+
+
+def test_peso_dentro_da_faixa_do_veiculo_nao_gera_excedente(parametros):
+    # peso=1500 fica dentro da faixa do Truck (1000-999999) -- mesmo o
+    # Truck tendo valor_tonelada_excedente configurado (800.0), não deve
+    # cobrar nada, porque o veículo escolhido já cobre esse peso normalmente.
+    resultado = fs.calcular_orcamento(
+        peso=1500, paletes=_paletes(), distancia=10, valor_mercadoria=100,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+    )
+    assert resultado["entrada"]["veiculo"] == "Truck"
+    calc = resultado["calculos_intermediarios"]
+    assert calc["peso_excedente_kg"] == pytest.approx(0.0)
+    assert calc["custo_peso_excedente"] == pytest.approx(0.0)
+
+
+def test_peso_excedente_so_aplica_acima_do_ate_do_maior_veiculo(parametros):
+    # nenhum veículo cobre pesos acima de 2000kg nesse cenário --
+    # buscar_veiculo_por_peso cai no fallback (usa o maior veículo mesmo
+    # assim) e o excedente vira sobretaxa pelos kg que passaram do
+    # limite máximo disponível (ver comentário em calcular_orcamento).
+    parametros.veiculos["truck"].ate = 2000
+    parametros.veiculos_por_peso = sorted(parametros.veiculos.values(), key=lambda v: v.de)
+    resultado = fs.calcular_orcamento(
+        peso=2500, paletes=_paletes(), distancia=10, valor_mercadoria=100,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+    )
+    assert resultado["entrada"]["veiculo"] == "Truck"
+    calc = resultado["calculos_intermediarios"]
+    # excedente = 2500 - 2000 (até do Truck) = 500kg = 0.5 tonelada * R$800/ton = 400
+    assert calc["peso_excedente_kg"] == pytest.approx(500.0)
+    assert calc["custo_peso_excedente"] == pytest.approx(400.0)
+
+
+def test_valor_excedente_e_por_tonelada_nao_por_kg(parametros):
+    # regressão: valor_tonelada_excedente já se chamou valor_kg_excedente
+    # e multiplicava direto pelo kg, gerando um custo 1000x maior que o
+    # pretendido (ex: R$220/tonelada virava R$220/kg sem querer).
+    parametros.veiculos["truck"].ate = 10000
+    parametros.veiculos["truck"].valor_tonelada_excedente = 220.0
+    parametros.veiculos_por_peso = sorted(parametros.veiculos.values(), key=lambda v: v.de)
+    resultado = fs.calcular_orcamento(
+        peso=12000, paletes=_paletes(), distancia=10, valor_mercadoria=100,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+    )
+    calc = resultado["calculos_intermediarios"]
+    # excedente = 12000 - 10000 = 2000kg = 2 toneladas * R$220/ton = 440
+    assert calc["peso_excedente_kg"] == pytest.approx(2000.0)
+    assert calc["custo_peso_excedente"] == pytest.approx(440.0)
 
 
 def test_faixa_km_veiculo_substitui_tarifa_fixa(parametros):

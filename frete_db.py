@@ -109,8 +109,7 @@ CREATE TABLE IF NOT EXISTS veiculos (
     de REAL NOT NULL DEFAULT 0,
     ate REAL NOT NULL DEFAULT 999999,
     tarifa_km REAL NOT NULL,
-    peso_incluso_kg REAL NOT NULL DEFAULT 0,
-    valor_kg_excedente REAL NOT NULL DEFAULT 0,
+    valor_tonelada_excedente REAL NOT NULL DEFAULT 0,
     tarifa_km_retorno REAL NOT NULL DEFAULT 0,
     tarifa_km_manutencao REAL NOT NULL DEFAULT 0,
     capacidade_m3 REAL NOT NULL DEFAULT 0,
@@ -353,13 +352,13 @@ def _seed_se_vazio(conn: sqlite3.Connection):
 
     if conn.execute("SELECT COUNT(*) FROM veiculos").fetchone()[0] == 0:
         conn.executemany(
-            "INSERT INTO veiculos (nome, de, ate, tarifa_km, peso_incluso_kg, valor_kg_excedente, capacidade_m3, observacao) VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT INTO veiculos (nome, de, ate, tarifa_km, valor_tonelada_excedente, capacidade_m3, observacao) VALUES (?,?,?,?,?,?,?)",
             [
-                ("Caminhonete", 0, 750, 2.00, 400, 1.50, 2.5, "Valores de exemplo — ajuste na Tabela de Preços"),
-                ("Van / HR", 750, 1500, 2.60, 800, 1.10, 8.0, "Valores de exemplo — ajuste"),
-                ("VUC", 1500, 3500, 3.20, 1500, 0.80, 15.0, "Valores de exemplo — ajuste"),
-                ("Truck / Toco (Caminhão 3/4)", 3500, 8000, 4.80, 6000, 0.45, 35.0, "Valores de exemplo — ajuste"),
-                ("Carreta", 8000, 999999, 5.50, 15000, 0.35, 90.0, "Valores de exemplo — ajuste"),
+                ("Caminhonete", 0, 750, 2.00, 1.50, 2.5, "Valores de exemplo — ajuste na Tabela de Preços"),
+                ("Van / HR", 750, 1500, 2.60, 1.10, 8.0, "Valores de exemplo — ajuste"),
+                ("VUC", 1500, 3500, 3.20, 0.80, 15.0, "Valores de exemplo — ajuste"),
+                ("Truck / Toco (Caminhão 3/4)", 3500, 8000, 4.80, 0.45, 35.0, "Valores de exemplo — ajuste"),
+                ("Carreta", 8000, 999999, 5.50, 0.35, 90.0, "Valores de exemplo — ajuste"),
             ],
         )
 
@@ -496,6 +495,18 @@ def _migrar_colunas(conn: sqlite3.Connection):
         # "Responsável" que já existia. Bancos antigos ficam com '' (só
         # admin consegue excluir esses registros legados).
         conn.execute("ALTER TABLE orcamentos_historico ADD COLUMN criado_por TEXT NOT NULL DEFAULT ''")
+    if _coluna_existe(conn, "veiculos", "peso_incluso_kg"):
+        # Franquia de peso removida do cálculo — o excedente agora é só
+        # o que passa do "até" do próprio veículo, sem campo de franquia
+        # separado (ver frete_service.calcular_orcamento).
+        # DROP COLUMN existe desde o SQLite 3.35 (2021).
+        conn.execute("ALTER TABLE veiculos DROP COLUMN peso_incluso_kg")
+    if _coluna_existe(conn, "veiculos", "valor_kg_excedente"):
+        # Renomeado: o valor cadastrado é por TONELADA excedente, não
+        # por kg — o nome antigo (valor_kg_excedente) induzia a cadastrar
+        # um valor 1000x maior que o pretendido.
+        # RENAME COLUMN existe desde o SQLite 3.25 (2018).
+        conn.execute("ALTER TABLE veiculos RENAME COLUMN valor_kg_excedente TO valor_tonelada_excedente")
     if not _coluna_existe(conn, "usuarios", "deve_trocar_senha"):
         # Sinaliza que o usuário precisa trocar a senha no próximo login —
         # usado pra obrigar a troca da senha padrão do admin criado
@@ -816,29 +827,29 @@ def listar_veiculos_admin() -> list[dict]:
         return [dict(r) for r in conn.execute("SELECT * FROM veiculos ORDER BY nome")]
 
 
-def inserir_veiculo(nome, de, ate, tarifa_km, peso_incluso_kg, valor_kg_excedente,
+def inserir_veiculo(nome, de, ate, tarifa_km, valor_tonelada_excedente,
                      tarifa_km_retorno=0, tarifa_km_manutencao=0, capacidade_m3=0,
                      percentual_capacidade_util=80, observacao=""):
     with get_connection() as conn:
         cur = conn.execute(
-            "INSERT INTO veiculos (nome, de, ate, tarifa_km, peso_incluso_kg, valor_kg_excedente, "
+            "INSERT INTO veiculos (nome, de, ate, tarifa_km, valor_tonelada_excedente, "
             "tarifa_km_retorno, tarifa_km_manutencao, capacidade_m3, percentual_capacidade_util, observacao) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            (nome, de, ate, tarifa_km, peso_incluso_kg, valor_kg_excedente,
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (nome, de, ate, tarifa_km, valor_tonelada_excedente,
              tarifa_km_retorno, tarifa_km_manutencao, capacidade_m3, percentual_capacidade_util, observacao),
         )
         return cur.lastrowid
 
 
-def atualizar_veiculo(id_, nome, de, ate, tarifa_km, peso_incluso_kg, valor_kg_excedente,
+def atualizar_veiculo(id_, nome, de, ate, tarifa_km, valor_tonelada_excedente,
                        tarifa_km_retorno=0, tarifa_km_manutencao=0, capacidade_m3=0,
                        percentual_capacidade_util=80, observacao=""):
     with get_connection() as conn:
         conn.execute(
-            "UPDATE veiculos SET nome=?, de=?, ate=?, tarifa_km=?, peso_incluso_kg=?, valor_kg_excedente=?, "
+            "UPDATE veiculos SET nome=?, de=?, ate=?, tarifa_km=?, valor_tonelada_excedente=?, "
             "tarifa_km_retorno=?, tarifa_km_manutencao=?, capacidade_m3=?, percentual_capacidade_util=?, "
             "observacao=? WHERE id=?",
-            (nome, de, ate, tarifa_km, peso_incluso_kg, valor_kg_excedente,
+            (nome, de, ate, tarifa_km, valor_tonelada_excedente,
              tarifa_km_retorno, tarifa_km_manutencao, capacidade_m3, percentual_capacidade_util, observacao, id_),
         )
 

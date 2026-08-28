@@ -141,11 +141,11 @@ abas do topo da tela (Carreta, Truck/Toco, VUC, Van/HR, Caminhonete —
 edite/adicione veículos na Tabela de Preços). Cada veículo tem:
 
 - **Tarifa por km** (R$/km × distância percorrida)
-- **Peso incluso** (kg que já vêm cobertos pela tarifa)
-- **Valor por kg excedente** (cobrado sobre o que passar do peso incluso)
+- **Valor por tonelada excedente** (sobretaxa por tonelada de sobrepeso além do "até" do veículo — só cobra quando a carga ultrapassa até o maior veículo cadastrado, caso em que o sistema usa esse veículo mesmo assim)
 
 ```
-frete_base = (tarifa_km × distância) + (peso_excedente × valor_kg_excedente)
+peso_excedente_kg = max(peso_considerado - veiculo.até, 0)
+frete_base = (tarifa_km × distância) + (peso_excedente_kg / 1000 × valor_tonelada_excedente)
 frete_ajustado = frete_base × multiplicador_categoria × multiplicador_transporte × multiplicador_sla
 ```
 

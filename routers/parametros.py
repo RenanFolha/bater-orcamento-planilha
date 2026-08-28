@@ -46,7 +46,7 @@ def listar_veiculos():
     return [
         {
             "nome": v.nome, "de": v.de, "ate": v.ate, "tarifa_km": v.tarifa_km,
-            "peso_incluso_kg": v.peso_incluso_kg, "valor_kg_excedente": v.valor_kg_excedente,
+            "valor_tonelada_excedente": v.valor_tonelada_excedente,
         }
         for v in fs.parametros.veiculos.values()
     ]

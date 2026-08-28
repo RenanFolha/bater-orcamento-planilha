@@ -7,10 +7,17 @@ Preços" ou direto no banco com o DB Browser for SQLite, e chame POST
 
 Fórmula do frete principal (por veículo):
     custo_km = veiculo.tarifa_km * distancia
-    peso_excedente = max(peso_considerado - veiculo.peso_incluso_kg, 0)
-    custo_peso_excedente = peso_excedente * veiculo.valor_kg_excedente
+    peso_excedente_kg = max(peso_considerado - veiculo.ate, 0)
+    custo_peso_excedente = (peso_excedente_kg / 1000) * veiculo.valor_tonelada_excedente
     frete_base = custo_km + custo_peso_excedente
     frete_ajustado = frete_base * categoria.multiplicador * transporte.multiplicador * sla.multiplicador
+
+peso_excedente_kg normalmente é zero — o veículo já é escolhido pra
+cobrir o peso considerado (buscar_veiculo_por_peso). Só fica positivo
+quando a carga ultrapassa até o maior veículo cadastrado: nesse caso o
+sistema usa esse veículo mesmo assim (fallback) e
+valor_tonelada_excedente vira uma sobretaxa pelas toneladas que
+passaram do limite máximo disponível.
 
 Em cima disso somam-se: taxas adicionais (fixas em R$ ou % do valor da
 mercadoria) e a taxa de coleta (quando há retirada no cliente — usa
@@ -114,8 +121,7 @@ class Veiculo:
     de: float
     ate: float
     tarifa_km: float
-    peso_incluso_kg: float
-    valor_kg_excedente: float
+    valor_tonelada_excedente: float
     tarifa_km_retorno: float = 0
     tarifa_km_manutencao: float = 0
     capacidade_m3: float = 0
@@ -184,7 +190,7 @@ class ParametrosFrete:
         with db.get_connection() as conn:
             self.veiculos = {
                 r["nome"].strip().lower(): Veiculo(
-                    r["nome"], r["de"], r["ate"], r["tarifa_km"], r["peso_incluso_kg"], r["valor_kg_excedente"],
+                    r["nome"], r["de"], r["ate"], r["tarifa_km"], r["valor_tonelada_excedente"],
                     r["tarifa_km_retorno"], r["tarifa_km_manutencao"], r["capacidade_m3"],
                     r["percentual_capacidade_util"],
                 )
@@ -598,8 +604,17 @@ def calcular_orcamento(
 
     tarifa_km_usada, faixa_km_aplicada = p.tarifa_km_efetiva(v, distancia)
     custo_km = tarifa_km_usada * distancia
-    peso_excedente = max(peso_considerado - v.peso_incluso_kg, 0)
-    custo_peso_excedente = peso_excedente * v.valor_kg_excedente
+    # Peso excedente = quanto o peso considerado passa do "até" (limite
+    # superior) da faixa do próprio veículo escolhido — normalmente é
+    # zero, porque o veículo já foi escolhido pra cobrir esse peso
+    # (buscar_veiculo_por_peso). Só fica positivo quando a carga
+    # ultrapassa até o maior veículo cadastrado: nesse caso
+    # buscar_veiculo_por_peso já devolve esse maior veículo mesmo assim
+    # (fallback), e valor_tonelada_excedente funciona como sobretaxa de
+    # sobrepeso pelas toneladas que passaram da capacidade máxima
+    # disponível (valor cadastrado é por TONELADA, não por kg).
+    peso_excedente = max(peso_considerado - v.ate, 0)
+    custo_peso_excedente = (peso_excedente / 1000) * v.valor_tonelada_excedente
 
     frete_base = custo_km + custo_peso_excedente
     frete_ajustado = frete_base * cat.multiplicador * transp.multiplicador * s.multiplicador
@@ -745,9 +760,8 @@ def calcular_orcamento(
             "tarifa_km_veiculo": tarifa_km_usada,
             "faixa_km_aplicada": faixa_km_aplicada,
             "custo_km": round(custo_km, 2),
-            "peso_incluso_veiculo_kg": v.peso_incluso_kg,
             "peso_excedente_kg": round(peso_excedente, 3),
-            "valor_kg_excedente": v.valor_kg_excedente,
+            "valor_tonelada_excedente": v.valor_tonelada_excedente,
             "custo_peso_excedente": round(custo_peso_excedente, 2),
             "frete_base": round(frete_base, 2),
             "multiplicador_categoria": cat.multiplicador,
