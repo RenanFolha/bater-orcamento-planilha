@@ -32,7 +32,7 @@ async def distancia_por_endereco(payload: DistanciaRequest):
     try:
         return await geo.calcular_distancia(payload.origem, payload.destino, veiculo=veiculo_nome)
     except geo.GeoError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
 
 
 @router.post("/resolver-retirada")
@@ -43,7 +43,7 @@ async def resolver_retirada(payload: RetiradaRequest):
         filiais = list(fs.parametros.filiais.values())
         return await geo.resolver_retirada(payload.endereco_retirada, filiais)
     except geo.GeoError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
 
 
 @router.post("/resolver-entrega")
@@ -56,7 +56,7 @@ async def resolver_entrega(payload: EntregaRequest):
         filiais = list(fs.parametros.filiais.values())
         return await geo.resolver_retirada(payload.endereco_entrega, filiais)
     except geo.GeoError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
 
 
 @router.post("/resolver-retorno")
@@ -70,4 +70,4 @@ async def resolver_retorno(payload: RetornoRequest):
         filiais = list(fs.parametros.filiais.values())
         return await geo.resolver_retirada(payload.endereco_destino, filiais)
     except geo.GeoError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e

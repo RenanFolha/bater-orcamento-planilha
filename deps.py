@@ -48,8 +48,8 @@ def exigir_admin(usuario: dict = Depends(exigir_login)) -> dict:
 def admin_criar(inserir_fn, payload: BaseModel, msg_conflito: str, reload: bool = True) -> dict:
     try:
         novo_id = inserir_fn(**payload.model_dump())
-    except sqlite3.IntegrityError:
-        raise HTTPException(status_code=409, detail=msg_conflito)
+    except sqlite3.IntegrityError as exc:
+        raise HTTPException(status_code=409, detail=msg_conflito) from exc
     if reload:
         fs.carregar_parametros()
     return {"id": novo_id}
@@ -58,8 +58,8 @@ def admin_criar(inserir_fn, payload: BaseModel, msg_conflito: str, reload: bool 
 def admin_atualizar(atualizar_fn, id_: int, payload: BaseModel, msg_conflito: str, reload: bool = True) -> dict:
     try:
         atualizar_fn(id_, **payload.model_dump())
-    except sqlite3.IntegrityError:
-        raise HTTPException(status_code=409, detail=msg_conflito)
+    except sqlite3.IntegrityError as exc:
+        raise HTTPException(status_code=409, detail=msg_conflito) from exc
     if reload:
         fs.carregar_parametros()
     return {"status": "ok"}

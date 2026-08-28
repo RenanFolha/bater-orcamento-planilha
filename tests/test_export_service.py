@@ -2,9 +2,10 @@
 histórico simulado (mesmo formato devolvido por GET /historico/{codigo})
 e confere que o resultado é um .xlsx válido e não vazio."""
 
+from io import BytesIO
+
 import openpyxl
 import pytest
-from io import BytesIO
 
 import export_service as export
 

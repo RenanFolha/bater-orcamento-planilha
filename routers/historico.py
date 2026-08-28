@@ -82,7 +82,7 @@ def exportar_historico_planilha(codigo: str, usuario: dict = Depends(exigir_logi
     try:
         conteudo = export.gerar_planilha_orcamento(registro)
     except export.ExportacaoError as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
     return Response(
         content=conteudo,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

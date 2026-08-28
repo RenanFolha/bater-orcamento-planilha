@@ -30,8 +30,9 @@ import auth_service as auth
 import frete_db as db
 import frete_service as fs
 import geo_service as geo
-from routers import admin_precos, admin_usuarios, auth as auth_router, geo as geo_router, historico, orcamento, parametros
-
+from routers import admin_precos, admin_usuarios, historico, orcamento, parametros
+from routers import auth as auth_router
+from routers import geo as geo_router
 
 BASE_DIR = Path(__file__).resolve().parent
 INDEX_PATH = BASE_DIR / "index.html"
@@ -128,6 +129,7 @@ _HOSTS_LOCAIS = {"127.0.0.1", "localhost", "::1"}
 
 if __name__ == "__main__":
     import sys
+
     import uvicorn
 
     # Por padrão só escuta em localhost — evita expor a API (e o login) pra

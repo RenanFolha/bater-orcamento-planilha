@@ -36,7 +36,7 @@ def reload_parametros(usuario: dict = Depends(exigir_admin)):
         fs.carregar_parametros()
         return {"status": "ok", "mensagem": "Parâmetros recarregados a partir do banco."}
     except fs.FreteConfigError as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/filiais")
@@ -139,7 +139,7 @@ def admin_criar_coleta_cidade_fixa(payload: ColetaCidadeFixaIn, usuario: dict = 
     try:
         novo_id = db.inserir_coleta_cidade_fixa(**payload.model_dump())
     except sqlite3.IntegrityError as e:
-        raise HTTPException(status_code=409, detail=str(e))
+        raise HTTPException(status_code=409, detail=str(e)) from e
     fs.carregar_parametros()
     return {"id": novo_id}
 
@@ -149,7 +149,7 @@ def admin_atualizar_coleta_cidade_fixa(id_: int, payload: ColetaCidadeFixaIn, us
     try:
         db.atualizar_coleta_cidade_fixa(id_, **payload.model_dump())
     except sqlite3.IntegrityError as e:
-        raise HTTPException(status_code=409, detail=str(e))
+        raise HTTPException(status_code=409, detail=str(e)) from e
     fs.carregar_parametros()
     return {"status": "ok"}
 
@@ -174,7 +174,7 @@ def admin_criar_taxa_regional(payload: TaxaRegionalIn, usuario: dict = Depends(e
     try:
         novo_id = db.inserir_taxa_regional(**payload.model_dump())
     except sqlite3.IntegrityError as e:
-        raise HTTPException(status_code=409, detail=str(e))
+        raise HTTPException(status_code=409, detail=str(e)) from e
     fs.carregar_parametros()
     return {"id": novo_id}
 
@@ -184,7 +184,7 @@ def admin_atualizar_taxa_regional(id_: int, payload: TaxaRegionalIn, usuario: di
     try:
         db.atualizar_taxa_regional(id_, **payload.model_dump())
     except sqlite3.IntegrityError as e:
-        raise HTTPException(status_code=409, detail=str(e))
+        raise HTTPException(status_code=409, detail=str(e)) from e
     fs.carregar_parametros()
     return {"status": "ok"}
 

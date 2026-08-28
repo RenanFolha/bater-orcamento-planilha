@@ -5,7 +5,6 @@ Usam o fixture `banco_temporario` (ver conftest.py) — nada aqui toca no
 frete.db real.
 """
 
-import pytest
 
 import auth_service as auth
 import frete_db as db

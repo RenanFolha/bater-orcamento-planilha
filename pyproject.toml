@@ -1,0 +1,17 @@
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+exclude = [".venv"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+]
+ignore = [
+    "E501",  # linha longa — o projeto já formata manualmente, sem forçar quebra
+    "B008",  # Depends(...) como default de parâmetro é o padrão idiomático do FastAPI
+]

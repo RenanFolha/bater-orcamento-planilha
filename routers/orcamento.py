@@ -33,6 +33,6 @@ def orcamento(payload: OrcamentoRequest):
             distancia_retorno=payload.distancia_retorno,
         )
     except fs.FreteInputError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
     except fs.FreteConfigError as e:
-        raise HTTPException(status_code=500, detail=f"Erro de configuração: {e}")
+        raise HTTPException(status_code=500, detail=f"Erro de configuração: {e}") from e
