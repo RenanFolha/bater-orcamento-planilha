@@ -164,7 +164,8 @@ CREATE TABLE IF NOT EXISTS transportadoras_terceirizadas (
     cidade TEXT NOT NULL,
     tipo TEXT NOT NULL DEFAULT 'ambos' CHECK (tipo IN ('coleta', 'entrega', 'ambos')),
     valor REAL NOT NULL,
-    observacao TEXT DEFAULT ''
+    observacao TEXT DEFAULT '',
+    UNIQUE(nome, cidade)
 );
 
 CREATE TABLE IF NOT EXISTS taxas_regionais (
@@ -445,6 +446,40 @@ def _migrar_taxas_regionais_lista(conn: sqlite3.Connection):
     conn.execute("DROP TABLE taxas_regionais_old")
 
 
+def _migrar_transportadoras_terceirizadas_unique(conn: sqlite3.Connection):
+    """transportadoras_terceirizadas não tinha nenhuma constraint UNIQUE
+    (nome+cidade podiam se repetir sem erro, mesmo a mensagem de conflito
+    do router prometendo o contrário — ver
+    routers/admin_precos.py:admin_criar_transportadora_terceirizada).
+    Adiciona UNIQUE(nome, cidade), recriando a tabela (SQLite não tem
+    ALTER TABLE ADD CONSTRAINT). Linhas com nome+cidade duplicados: fica
+    a de menor id (INSERT OR IGNORE, ordenado por id) — se isso
+    acontecer, quem cadastrou precisa conferir manualmente qual valor
+    prevaleceu."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='transportadoras_terceirizadas'"
+    ).fetchone()
+    if not row or "UNIQUE(nome, cidade)" in (row["sql"] or ""):
+        return  # tabela nova (já criada com a constraint) ou já migrada
+    conn.execute("ALTER TABLE transportadoras_terceirizadas RENAME TO transportadoras_terceirizadas_old")
+    conn.execute("""
+        CREATE TABLE transportadoras_terceirizadas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome TEXT NOT NULL,
+            cidade TEXT NOT NULL,
+            tipo TEXT NOT NULL DEFAULT 'ambos' CHECK (tipo IN ('coleta', 'entrega', 'ambos')),
+            valor REAL NOT NULL,
+            observacao TEXT DEFAULT '',
+            UNIQUE(nome, cidade)
+        )
+    """)
+    conn.execute("""
+        INSERT OR IGNORE INTO transportadoras_terceirizadas (id, nome, cidade, tipo, valor, observacao)
+        SELECT id, nome, cidade, tipo, valor, observacao FROM transportadoras_terceirizadas_old ORDER BY id
+    """)
+    conn.execute("DROP TABLE transportadoras_terceirizadas_old")
+
+
 def _migrar_colunas(conn: sqlite3.Connection):
     """Para bancos criados antes de existir a coluna tipo_frete:
     adiciona a coluna sem apagar nada do que já estava lá. Também remove
@@ -475,6 +510,7 @@ def _migrar_colunas(conn: sqlite3.Connection):
     else:
         _migrar_coleta_cidades_fixas_lista(conn)
     _migrar_taxas_regionais_lista(conn)
+    _migrar_transportadoras_terceirizadas_unique(conn)
     if not _coluna_existe(conn, "veiculos", "de"):
         conn.execute("ALTER TABLE veiculos ADD COLUMN de REAL NOT NULL DEFAULT 0")
     if not _coluna_existe(conn, "veiculos", "ate"):
