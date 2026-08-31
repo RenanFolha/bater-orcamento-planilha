@@ -1,3 +1,5 @@
+# Desenvolvedor Chefe: RenanFolha
+
 """
 Testes de auth_service.py: hash/verificação de senha, bloqueio de login
 por tentativas falhas e ciclo de vida da sessão (criar/validar/expirar).

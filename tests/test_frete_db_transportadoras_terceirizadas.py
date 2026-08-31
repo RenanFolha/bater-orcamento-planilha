@@ -1,3 +1,5 @@
+# Desenvolvedor Chefe: RenanFolha
+
 """
 Testes de transportadoras_terceirizadas (frete_db.py): tabela começa
 vazia (não tem seed — ver comentário em _seed_se_vazio), `tipo` tem

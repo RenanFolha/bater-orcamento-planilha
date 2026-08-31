@@ -1,3 +1,5 @@
+# Desenvolvedor Chefe: RenanFolha
+
 """
 Testes da lógica de cálculo de frete (frete_service.py). Não tocam no
 banco de verdade: montam um ParametrosFrete em memória e substituem o

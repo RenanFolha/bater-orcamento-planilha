@@ -1,3 +1,5 @@
+# Desenvolvedor Chefe: RenanFolha
+
 """
 Exportação de um orçamento do histórico para o formato da planilha
 "Modelo de Orçamento.xlsx" (usada pelo time comercial pra mandar cotação

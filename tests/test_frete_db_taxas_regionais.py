@@ -1,3 +1,5 @@
+# Desenvolvedor Chefe: RenanFolha
+
 """
 Testes de taxas_regionais (frete_db.py): `cidade` guarda uma ou mais
 cidades separadas por vírgula numa linha só (mesmo padrão de

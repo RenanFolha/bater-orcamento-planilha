@@ -1,3 +1,5 @@
+# Desenvolvedor Chefe: RenanFolha
+
 """
 Testes de slas (frete_db.py): `nome` é UNIQUE (case-sensitive).
 `init_db()` já popula o banco com SLAs de exemplo (ver

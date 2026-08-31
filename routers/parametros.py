@@ -1,3 +1,5 @@
+# Desenvolvedor Chefe: RenanFolha
+
 """Rotas públicas de leitura dos parâmetros cadastrados (sem exigir login) —
 usadas para montar os campos de seleção da tela de orçamento."""
 

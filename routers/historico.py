@@ -1,3 +1,5 @@
+# Desenvolvedor Chefe: RenanFolha
+
 """Rotas do histórico de orçamentos salvos — todas exigem login."""
 
 import json

@@ -1,3 +1,5 @@
+# Desenvolvedor Chefe: RenanFolha
+
 """Teste de export_service.py: gera a planilha a partir de um registro de
 histórico simulado (mesmo formato devolvido por GET /historico/{codigo})
 e confere que o resultado é um .xlsx válido e não vazio."""

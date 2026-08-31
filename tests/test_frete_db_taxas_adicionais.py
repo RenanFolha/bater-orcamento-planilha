@@ -1,3 +1,5 @@
+# Desenvolvedor Chefe: RenanFolha
+
 """
 Testes de taxas_adicionais (frete_db.py): `nome` é UNIQUE
 (case-sensitive) e `tipo` tem CHECK ('fixo' ou 'percentual').

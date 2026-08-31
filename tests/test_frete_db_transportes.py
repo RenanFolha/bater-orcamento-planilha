@@ -1,3 +1,5 @@
+# Desenvolvedor Chefe: RenanFolha
+
 """
 Testes de transportes (frete_db.py): `nome` é UNIQUE (case-sensitive).
 `init_db()` já popula o banco com transportes de exemplo (ver

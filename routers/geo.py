@@ -1,3 +1,5 @@
+# Desenvolvedor Chefe: RenanFolha
+
 """Rotas de geolocalização: distância entre endereços e filial mais próxima."""
 
 from fastapi import APIRouter, HTTPException

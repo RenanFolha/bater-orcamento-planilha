@@ -1,3 +1,5 @@
+# Desenvolvedor Chefe: RenanFolha
+
 """
 Testes de integração da API (main.py + routers/*) usando o TestClient do
 FastAPI, com um banco SQLite temporário e isolado por teste (fixture

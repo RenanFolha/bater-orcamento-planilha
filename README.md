@@ -1,5 +1,7 @@
 # Sistema de Orçamento de Frete
 
+**Desenvolvedor Chefe:** RenanFolha
+
 Aplicação local que calcula o frete a partir de regras cadastradas num
 banco SQLite (`frete.db`) — sem depender de planilha. Inclui filiais
 pré-cadastradas, cálculo automático de distância por endereço e taxa de

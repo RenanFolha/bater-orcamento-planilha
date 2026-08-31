@@ -1,3 +1,5 @@
+# Desenvolvedor Chefe: RenanFolha
+
 """
 Banco de dados SQLite com todos os parâmetros do sistema de frete.
 

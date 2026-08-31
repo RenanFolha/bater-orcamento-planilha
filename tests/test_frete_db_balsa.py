@@ -1,3 +1,5 @@
+# Desenvolvedor Chefe: RenanFolha
+
 """
 Testes de taxas_balsa (frete_db.py): a taxa é direcional
 (cidade_origem -> cidade_destino) e por veículo — duas linhas com a

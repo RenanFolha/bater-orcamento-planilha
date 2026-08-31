@@ -1,3 +1,5 @@
+# Desenvolvedor Chefe: RenanFolha
+
 """
 Testes de geo_service._buscar_rota_no_historico / calcular_distancia:
 antes de chamar o serviço externo de geolocalização, uma rota (por

@@ -1,3 +1,5 @@
+# Desenvolvedor Chefe: RenanFolha
+
 """
 Testes de filiais (frete_db.py): `nome` é UNIQUE (sem COLLATE NOCASE —
 duplicidade só é bloqueada com o nome idêntico, não case-insensitive) e

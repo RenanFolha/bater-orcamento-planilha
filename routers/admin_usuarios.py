@@ -1,3 +1,5 @@
+# Desenvolvedor Chefe: RenanFolha
+
 """CRUD administrativo de usuários — só administrador."""
 
 import sqlite3

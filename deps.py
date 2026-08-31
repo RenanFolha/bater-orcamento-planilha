@@ -1,3 +1,5 @@
+# Desenvolvedor Chefe: RenanFolha
+
 """
 Dependências compartilhadas pelas rotas: usuário logado a partir do cookie
 de sessão, e os helpers genéricos de criar/atualizar/excluir usados pelos

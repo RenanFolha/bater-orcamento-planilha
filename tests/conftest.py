@@ -1,3 +1,5 @@
+# Desenvolvedor Chefe: RenanFolha
+
 import sys
 from pathlib import Path
 

@@ -1,3 +1,5 @@
+# Desenvolvedor Chefe: RenanFolha
+
 """Rotas de autenticação: login, logout, usuário logado e troca de senha."""
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response

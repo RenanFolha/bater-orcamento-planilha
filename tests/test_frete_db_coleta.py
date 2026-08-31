@@ -1,3 +1,5 @@
+# Desenvolvedor Chefe: RenanFolha
+
 """
 Testes de coleta_cidades_fixas (frete_db.py): uma linha agora pode cobrir
 uma lista de cidades (separadas por vírgula) em vez de só uma, e a

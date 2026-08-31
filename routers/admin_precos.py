@@ -1,3 +1,5 @@
+# Desenvolvedor Chefe: RenanFolha
+
 """CRUD administrativo da tela "Tabela de Preços" (filiais, veículos, taxas,
 coleta com preço fixo, categorias, transportes, SLAs, transportadoras
 terceirizadas) e o /admin/reload. Todas as rotas exigem login de admin."""

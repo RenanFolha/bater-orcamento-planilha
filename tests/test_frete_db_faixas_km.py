@@ -1,3 +1,5 @@
+# Desenvolvedor Chefe: RenanFolha
+
 """
 Testes de faixas_km_veiculo (frete_db.py): CRUD básico da tabela usada
 pra escalonar o R$/km por distância, por veículo. Usa o fixture

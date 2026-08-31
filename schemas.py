@@ -1,3 +1,5 @@
+# Desenvolvedor Chefe: RenanFolha
+
 """
 Modelos Pydantic (corpo de requisição) usados pelas rotas da API.
 Centralizados aqui para main.py e os routers não precisarem duplicar

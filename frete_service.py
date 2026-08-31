@@ -1,3 +1,5 @@
+# Desenvolvedor Chefe: RenanFolha
+
 """
 Lógica de cálculo de frete. Os parâmetros (veículos, taxas adicionais,
 coleta por cidade, categorias, transportes, SLAs, filiais) são lidos do

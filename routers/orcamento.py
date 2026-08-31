@@ -1,3 +1,5 @@
+# Desenvolvedor Chefe: RenanFolha
+
 """Rota de cálculo de orçamento — pública, não exige login."""
 
 from fastapi import APIRouter, HTTPException
