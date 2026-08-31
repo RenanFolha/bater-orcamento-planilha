@@ -423,15 +423,16 @@ frete_project/
 ├── export_service.py          # Exportação de orçamento do histórico para planilha
 ├── frete_db.py                # Schema do banco SQLite e dados de exemplo
 ├── frete.db                   # Banco de dados (criado automaticamente)
-├── index.html                 # Interface web
+├── index.html                 # Interface web (HTML) — CSS e JS ficam em assets/
 ├── tests/                     # Testes (pytest) — cálculo de frete, auth, API, exportação
 ├── requirements.txt
 ├── requirements-dev.txt
 ├── README.md
 ├── iniciar_api.bat
 └── assets/
+    ├── app.js                  # JS da interface (index.html)
+    ├── style.css                # CSS da interface (index.html)
     ├── favicon-16x16.png
     ├── favicon-32x32.png
-    ├── supersonic-wordmark.png
     └── supersonic-logo-dark.png
 ```
