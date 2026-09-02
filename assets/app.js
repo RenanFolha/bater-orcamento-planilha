@@ -624,7 +624,12 @@ let cidadeColetaResolvida = '';
 let cidadeOrigemResolvida = '';
 let cidadeDestinoResolvida = '';
 
-btnGeo.addEventListener('click', async () => {
+// Extraído do listener de clique do botão "Calcular distância" pra
+// poder ser chamado também no submit de "Calcular frete", sem exigir
+// que o usuário clique nos dois botões em sequência (ver uso abaixo).
+// Devolve true/false em vez de deixar o erro subir, porque quem chama
+// (o submit do formulário) decide o que fazer com a falha.
+async function calcularDistanciaEEndereco(){
   geoStatus.className = 'geo-status';
   geoStatus.textContent = '';
   cidadeColetaResolvida = '';
@@ -766,15 +771,19 @@ btnGeo.addEventListener('click', async () => {
 
     geoStatus.classList.add('ok');
     geoStatus.textContent = `${mensagemColeta}Distância do frete: ${data2.distancia_km} km (≈ ${tempoTexto}).${mensagemPedagio} Campos preenchidos — edite se precisar.`;
+    return true;
 
   }catch(err){
     geoStatus.classList.add('err');
     geoStatus.textContent = `${err.message} Você pode digitar as distâncias manualmente nos campos abaixo.`;
+    return false;
   }finally{
     btnGeo.disabled = false;
     btnGeo.textContent = 'Calcular distância';
   }
-});
+}
+
+btnGeo.addEventListener('click', () => { calcularDistanciaEEndereco(); });
 
 form.addEventListener('submit', async (ev) => {
   ev.preventDefault();
@@ -783,6 +792,22 @@ form.addEventListener('submit', async (ev) => {
   stamp.classList.remove('show');
   ultimoOrcamento = null;
   document.getElementById('historico-salvar-status').textContent = '';
+
+  // Se "Calcular distância" ainda não rodou pra essa cotação, roda agora
+  // -- assim "Calcular frete" funciona num clique só, sem exigir o passo
+  // manual antes. Se a distância já está preenchida (calculada antes ou
+  // editada à mão), não mexe: não sobrescreve um valor ajustado manualmente.
+  const distanciaAindaNaoCalculada =
+    !distanciaInput.value || parseFloat(distanciaInput.value) <= 0
+    || !cidadeOrigemResolvida || !cidadeDestinoResolvida;
+  if(distanciaAindaNaoCalculada){
+    const ok = await calcularDistanciaEEndereco();
+    if(!ok){
+      errorBox.textContent = 'Não foi possível calcular a distância automaticamente. Confira os endereços informados (ou preencha a distância manualmente) e clique em "Calcular frete" de novo.';
+      errorBox.classList.add('show');
+      return;
+    }
+  }
 
   const origemColetaTerceirizada = origemTipo === 'retirada' && origemModo === 'terceirizada';
   const destinoEntregaTerceirizada = destinoTipo === 'cliente' && destinoModo === 'terceirizada';
