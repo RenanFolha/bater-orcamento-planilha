@@ -548,6 +548,7 @@ configurarToggle('seg-origem', (valor) => {
   origemEnderecoWrap.style.display = valor === 'retirada' ? '' : 'none';
   campoColeta.style.display = (valor === 'retirada' && origemModo === 'propria') ? '' : 'none';
   if(valor === 'filial'){ distanciaColetaInput.value = 0; }
+  invalidarRotaCalculada();
 });
 
 function resetarRetornoVazio(){
@@ -594,18 +595,21 @@ configurarToggle('seg-destino', (valor) => {
   destinoFilialSel.style.display = valor === 'filial' ? '' : 'none';
   destinoEnderecoWrap.style.display = valor === 'cliente' ? '' : 'none';
   resetarRetornoVazio();
+  invalidarRotaCalculada();
 });
 
 configurarToggle('seg-origem-modo', (valor) => {
   origemModo = valor;
   origemTerceirizadaWrap.style.display = valor === 'terceirizada' ? '' : 'none';
   campoColeta.style.display = (origemTipo === 'retirada' && valor === 'propria') ? '' : 'none';
+  invalidarRotaCalculada();
 });
 
 configurarToggle('seg-destino-modo', (valor) => {
   destinoModo = valor;
   destinoTerceirizadaWrap.style.display = valor === 'terceirizada' ? '' : 'none';
   resetarRetornoVazio();
+  invalidarRotaCalculada();
 });
 
 ['peso', 'comprimento', 'largura', 'altura', 'quantidade'].forEach(id => {
@@ -624,6 +628,36 @@ let cidadeColetaResolvida = '';
 let cidadeOrigemResolvida = '';
 let cidadeDestinoResolvida = '';
 
+// Flag (não o valor do campo) que diz se a rota calculada ainda vale --
+// o campo "distancia" é required no HTML, então esvaziá-lo pra marcar
+// "precisa recalcular" faz o navegador bloquear o submit sozinho (antes
+// do JS rodar) com a mensagem nativa de campo obrigatório. Por isso o
+// estado fica só nessa variável; o campo mantém o último número visível
+// (ainda que desatualizado) até um novo cálculo ou edição manual.
+let rotaValida = false;
+
+// Rota calculada fica obsoleta assim que o usuário muda origem, destino
+// ou o endereço digitado -- marca rotaValida=false pra "Calcular frete"
+// saber que precisa recalcular (ver uso de rotaValida no submit, mais
+// abaixo), em vez de reenviar silenciosamente a rota antiga -- ex: manter
+// a taxa de balsa de Belém depois de trocar a origem pra São Paulo.
+function invalidarRotaCalculada(){
+  rotaValida = false;
+  cidadeColetaResolvida = '';
+  cidadeOrigemResolvida = '';
+  cidadeDestinoResolvida = '';
+  geoStatus.className = 'geo-status';
+  geoStatus.textContent = '';
+}
+origemFilialSel.addEventListener('change', invalidarRotaCalculada);
+destinoFilialSel.addEventListener('change', invalidarRotaCalculada);
+document.getElementById('origem-endereco-input').addEventListener('input', invalidarRotaCalculada);
+document.getElementById('destino-endereco-input').addEventListener('input', invalidarRotaCalculada);
+// Edição manual do campo de distância conta como "sei o valor, não
+// precisa recalcular" -- não força uma nova consulta de geocodificação
+// por cima do que a pessoa acabou de digitar.
+distanciaInput.addEventListener('input', () => { rotaValida = true; });
+
 // Extraído do listener de clique do botão "Calcular distância" pra
 // poder ser chamado também no submit de "Calcular frete", sem exigir
 // que o usuário clique nos dois botões em sequência (ver uso abaixo).
@@ -632,6 +666,7 @@ let cidadeDestinoResolvida = '';
 async function calcularDistanciaEEndereco(){
   geoStatus.className = 'geo-status';
   geoStatus.textContent = '';
+  rotaValida = false;
   cidadeColetaResolvida = '';
   cidadeOrigemResolvida = '';
   cidadeDestinoResolvida = '';
@@ -771,6 +806,7 @@ async function calcularDistanciaEEndereco(){
 
     geoStatus.classList.add('ok');
     geoStatus.textContent = `${mensagemColeta}Distância do frete: ${data2.distancia_km} km (≈ ${tempoTexto}).${mensagemPedagio} Campos preenchidos — edite se precisar.`;
+    rotaValida = true;
     return true;
 
   }catch(err){
@@ -793,14 +829,12 @@ form.addEventListener('submit', async (ev) => {
   ultimoOrcamento = null;
   document.getElementById('historico-salvar-status').textContent = '';
 
-  // Se "Calcular distância" ainda não rodou pra essa cotação, roda agora
-  // -- assim "Calcular frete" funciona num clique só, sem exigir o passo
-  // manual antes. Se a distância já está preenchida (calculada antes ou
-  // editada à mão), não mexe: não sobrescreve um valor ajustado manualmente.
-  const distanciaAindaNaoCalculada =
-    !distanciaInput.value || parseFloat(distanciaInput.value) <= 0
-    || !cidadeOrigemResolvida || !cidadeDestinoResolvida;
-  if(distanciaAindaNaoCalculada){
+  // Se "Calcular distância" ainda não rodou pra essa cotação (ou a rota
+  // mudou desde o último cálculo -- ver invalidarRotaCalculada), roda
+  // agora -- assim "Calcular frete" funciona num clique só, sem exigir o
+  // passo manual antes. Se a rota já está válida (calculada antes ou
+  // editada à mão no campo distância), não mexe.
+  if(!rotaValida){
     const ok = await calcularDistanciaEEndereco();
     if(!ok){
       errorBox.textContent = 'Não foi possível calcular a distância automaticamente. Confira os endereços informados (ou preencha a distância manualmente) e clique em "Calcular frete" de novo.';
@@ -1588,9 +1622,13 @@ async function criarEditorTabela({containerId, endpoint, titulo, colunas, campoM
       countTag.textContent = 'erro';
       return;
     }
-    countTag.textContent = `${itens.length} linha${itens.length === 1 ? '' : 's'}`;
+    atualizarContagem();
 
-    itens.forEach(item => {
+    // Uma linha por item, com os botões Salvar/Excluir já ligados --
+    // extraída pra função porque também é usada pra inserir a(s) linha(s)
+    // recém-criada(s) sem precisar recarregar a tabela inteira (ver
+    // btnAdd abaixo).
+    function criarLinhaItem(item){
       const tr = document.createElement('tr');
       const inputs = criarInputs(item);
       inputs.forEach(inp => {
@@ -1604,6 +1642,7 @@ async function criarEditorTabela({containerId, endpoint, titulo, colunas, campoM
 
       const btnSalvar = criarElemento('button', {type: 'button', class: 'btn-icone'}, '💾 Salvar');
       btnSalvar.addEventListener('click', async () => {
+        btnSalvar.disabled = true;
         try{
           const dados = lerValores(inputs);
           const res = await fetch(`${API_BASE}/admin/${endpoint}/${item.id}`, {
@@ -1615,27 +1654,44 @@ async function criarEditorTabela({containerId, endpoint, titulo, colunas, campoM
           if(!res.ok) throw new Error(data.detail || 'Erro ao salvar.');
           mostrarStatus('Linha salva.', true);
         }catch(e){ mostrarStatus(e.message, false); }
+        finally{ btnSalvar.disabled = false; }
       });
 
       const btnExcluir = criarElemento('button', {type: 'button', class: 'btn-icone excluir'}, '🗑 Excluir');
       btnExcluir.addEventListener('click', async () => {
         if(!confirm('Excluir esta linha? Essa ação não pode ser desfeita.')) return;
+        btnSalvar.disabled = true;
+        btnExcluir.disabled = true;
         try{
           const res = await fetch(`${API_BASE}/admin/${endpoint}/${item.id}`, {method: 'DELETE'});
           if(!res.ok){
             const data = await res.json();
             throw new Error(data.detail || 'Erro ao excluir.');
           }
-          await carregar();
+          // Remove só essa linha em vez de recarregar a tabela inteira --
+          // o restante das linhas não mudou.
+          tr.remove();
+          atualizarContagem();
           mostrarStatus('Linha excluída.', true);
-        }catch(e){ mostrarStatus(e.message, false); }
+        }catch(e){
+          mostrarStatus(e.message, false);
+          btnSalvar.disabled = false;
+          btnExcluir.disabled = false;
+        }
       });
 
       tdAcoes.appendChild(btnSalvar);
       tdAcoes.appendChild(btnExcluir);
       tr.appendChild(tdAcoes);
-      tbody.appendChild(tr);
-    });
+      return tr;
+    }
+
+    function atualizarContagem(){
+      const n = tbody.querySelectorAll('tr:not(.linha-nova)').length;
+      countTag.textContent = `${n} linha${n === 1 ? '' : 's'}`;
+    }
+
+    itens.forEach(item => tbody.appendChild(criarLinhaItem(item)));
 
     // Linha para adicionar um novo registro
     const trNova = document.createElement('tr');
@@ -1649,6 +1705,7 @@ async function criarEditorTabela({containerId, endpoint, titulo, colunas, campoM
     const tdAcoesNova = document.createElement('td');
     const btnAdd = criarElemento('button', {type: 'button', class: 'btn-icone'}, '+ Adicionar');
     btnAdd.addEventListener('click', async () => {
+      btnAdd.disabled = true;
       try{
         const dados = lerValores(inputsNovos);
 
@@ -1672,21 +1729,29 @@ async function criarEditorTabela({containerId, endpoint, titulo, colunas, campoM
             });
             const data = await res.json();
             if(!res.ok) throw new Error(data.detail || 'Erro ao adicionar.');
+            // Insere a linha nova direto antes da "linha de adicionar",
+            // sem recarregar a tabela inteira -- data já vem com o id
+            // atribuído pelo backend.
+            tbody.insertBefore(criarLinhaItem(data), trNova);
             sucesso.push(campoMultiplo ? item[campoMultiplo] : '');
           }catch(e){
             falhas.push(`${campoMultiplo ? item[campoMultiplo] : ''}: ${e.message}`.trim());
           }
         }
 
-        await carregar();
+        atualizarContagem();
         if(falhas.length === 0){
           mostrarStatus(alvos.length > 1 ? `${sucesso.length} linhas adicionadas.` : 'Linha adicionada.', true);
+          inputsNovos.forEach((inp, i) => {
+            inp.value = colunas[i].tipo === 'select' ? colunas[i].opcoes[0] : '';
+          });
         }else if(sucesso.length === 0){
           mostrarStatus(`Nada adicionado — ${falhas.join(' | ')}`, false);
         }else{
           mostrarStatus(`${sucesso.length} adicionada(s). Falharam: ${falhas.join(' | ')}`, false);
         }
       }catch(e){ mostrarStatus(e.message, false); }
+      finally{ btnAdd.disabled = false; }
     });
     tdAcoesNova.appendChild(btnAdd);
     trNova.appendChild(tdAcoesNova);
@@ -1779,12 +1844,18 @@ function renderizarHistorico(lista){
     btn.addEventListener('click', async (ev) => {
       ev.stopPropagation();
       if(!confirm('Excluir este orçamento do histórico? Essa ação não pode ser desfeita.')) return;
+      const statusEl = document.getElementById('historico-lista-status');
+      btn.disabled = true;
       try{
         const res = await fetch(`${API_BASE}/historico/${btn.dataset.id}`, {method: 'DELETE'});
         if(!res.ok) throw new Error(`Erro HTTP ${res.status}`);
+        statusEl.className = 'cep-info';
+        statusEl.textContent = '';
         await carregarHistorico();
       }catch(e){
-        alert(`Erro ao excluir: ${e.message}`);
+        statusEl.className = 'cep-info err';
+        statusEl.textContent = `Erro ao excluir: ${e.message}`;
+        btn.disabled = false;
       }
     });
   });
@@ -1804,6 +1875,7 @@ document.getElementById('historico-busca').addEventListener('input', (ev) => {
 let detalheHistoricoCodigo = null;
 
 async function abrirDetalheHistorico(codigo){
+  const statusListaEl = document.getElementById('historico-lista-status');
   try{
     const res = await fetch(`${API_BASE}/historico/${codigo}`);
     if(!res.ok) throw new Error(`Erro HTTP ${res.status}`);
@@ -1830,10 +1902,16 @@ async function abrirDetalheHistorico(codigo){
 
     renderizarMemoriaCalculo(registro.dados?.resultado, 'detalhe-memoria-calculo', false);
 
+    statusListaEl.className = 'cep-info';
+    statusListaEl.textContent = '';
+    const statusDetalheEl = document.getElementById('detalhe-status');
+    statusDetalheEl.className = 'cep-info';
+    statusDetalheEl.textContent = '';
     document.getElementById('view-historico').style.display = 'none';
     document.getElementById('view-historico-detalhe').style.display = 'block';
   }catch(e){
-    alert(`Erro ao abrir o orçamento: ${e.message}`);
+    statusListaEl.className = 'cep-info err';
+    statusListaEl.textContent = `Erro ao abrir o orçamento: ${e.message}`;
   }
 }
 
@@ -1845,9 +1923,12 @@ document.getElementById('btn-voltar-historico').addEventListener('click', () => 
 document.getElementById('btn-exportar-planilha').addEventListener('click', async (ev) => {
   if(!detalheHistoricoCodigo) return;
   const btn = ev.currentTarget;
+  const statusEl = document.getElementById('detalhe-status');
   const textoOriginal = btn.innerHTML;
   btn.disabled = true;
   btn.innerHTML = 'Gerando...';
+  statusEl.className = 'cep-info';
+  statusEl.textContent = '';
   try{
     const res = await fetch(`${API_BASE}/historico/${detalheHistoricoCodigo}/planilha`);
     if(!res.ok){
@@ -1864,7 +1945,8 @@ document.getElementById('btn-exportar-planilha').addEventListener('click', async
     a.remove();
     URL.revokeObjectURL(url);
   }catch(e){
-    alert(`Erro ao exportar planilha: ${e.message}`);
+    statusEl.className = 'cep-info err';
+    statusEl.textContent = `Erro ao exportar planilha: ${e.message}`;
   }finally{
     btn.disabled = false;
     btn.innerHTML = textoOriginal;
