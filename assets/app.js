@@ -266,21 +266,21 @@ function criarLinhaPalete(){
       <div class="idx">+</div>
       <div>
         <label>Comprimento (cm)</label>
-        <input type="number" class="palete-comprimento" min="0.1" step="0.1" value="40" required>
+        <input type="number" class="palete-comprimento" min="0.1" step="0.01" value="40" required>
       </div>
     </div>
     <div class="field">
       <div class="idx">+</div>
       <div>
         <label>Largura (cm)</label>
-        <input type="number" class="palete-largura" min="0.1" step="0.1" value="30" required>
+        <input type="number" class="palete-largura" min="0.1" step="0.01" value="30" required>
       </div>
     </div>
     <div class="field">
       <div class="idx">+</div>
       <div>
         <label>Altura (cm)</label>
-        <input type="number" class="palete-altura" min="0.1" step="0.1" value="25" required>
+        <input type="number" class="palete-altura" min="0.1" step="0.01" value="25" required>
       </div>
     </div>
     <div class="field">
