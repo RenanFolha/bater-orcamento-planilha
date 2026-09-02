@@ -7,6 +7,7 @@ endpoints CRUD de /admin/* (ver routers/admin_precos.py).
 """
 
 import sqlite3
+from typing import Callable
 
 from fastapi import Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -44,24 +45,36 @@ def exigir_admin(usuario: dict = Depends(exigir_login)) -> dict:
 # do OpenAPI e evitar SQL dinâmico a partir de entrada do usuário —
 # só o try/except de conflito e o reload pós-escrita, que eram
 # idênticos em ~40 handlers, foram centralizados aqui.
+#
+# msg_conflito aceita um texto fixo ou uma função (ex: `str`) que recebe a
+# própria exceção — usado pelas tabelas (coleta-cidades-fixas,
+# taxas-regionais) cuja checagem de duplicidade em frete_db.py já monta
+# uma mensagem específica (ex: "cidade X já cadastrada..."), que o texto
+# fixo descartaria.
 # ============================================================
 
 
-def admin_criar(inserir_fn, payload: BaseModel, msg_conflito: str, reload: bool = True) -> dict:
+def admin_criar(
+    inserir_fn, payload: BaseModel, msg_conflito: str | Callable[[Exception], str], reload: bool = True,
+) -> dict:
     try:
         novo_id = inserir_fn(**payload.model_dump())
     except sqlite3.IntegrityError as exc:
-        raise HTTPException(status_code=409, detail=msg_conflito) from exc
+        detail = msg_conflito(exc) if callable(msg_conflito) else msg_conflito
+        raise HTTPException(status_code=409, detail=detail) from exc
     if reload:
         fs.carregar_parametros()
     return {"id": novo_id}
 
 
-def admin_atualizar(atualizar_fn, id_: int, payload: BaseModel, msg_conflito: str, reload: bool = True) -> dict:
+def admin_atualizar(
+    atualizar_fn, id_: int, payload: BaseModel, msg_conflito: str | Callable[[Exception], str], reload: bool = True,
+) -> dict:
     try:
         atualizar_fn(id_, **payload.model_dump())
     except sqlite3.IntegrityError as exc:
-        raise HTTPException(status_code=409, detail=msg_conflito) from exc
+        detail = msg_conflito(exc) if callable(msg_conflito) else msg_conflito
+        raise HTTPException(status_code=409, detail=detail) from exc
     if reload:
         fs.carregar_parametros()
     return {"status": "ok"}

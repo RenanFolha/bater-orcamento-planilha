@@ -67,10 +67,11 @@ def _sem_sufixo_uf(cidade: str) -> str:
     return _SUFIXO_UF_REGEX.sub("", cidade).strip()
 
 
-def _dividir_cidades(texto: str) -> list[str]:
-    """Mesma semântica de frete_db._dividir_cidades: cidade(s) separadas
-    por vírgula numa lista já limpa (sem espaços/entradas vazias)."""
-    return [c.strip() for c in (texto or "").split(",") if c.strip()]
+def _valor_taxa(tipo: str, valor: float, valor_mercadoria: float) -> float:
+    """Aplica uma taxa (adicional, regional ou de balsa) conforme seu tipo
+    cadastrado: 'percentual' incide sobre o valor da mercadoria, 'fixo' é o
+    próprio valor cadastrado em R$."""
+    return valor_mercadoria * (valor / 100) if tipo == "percentual" else valor
 
 
 class FreteConfigError(Exception):
@@ -167,6 +168,14 @@ class TaxaBalsa:
     valor: float
 
 
+@dataclass
+class ColetaCidadeFixa:
+    filial_origem: str
+    cidade_destino: str  # uma ou mais cidades separadas por vírgula
+    veiculo: str
+    valor_fixo: float
+
+
 class ParametrosFrete:
     """Mantém em memória os parâmetros lidos do banco."""
 
@@ -177,6 +186,7 @@ class ParametrosFrete:
         self.taxas_adicionais: list[TaxaAdicional] = []
         self.taxas_regionais: list[TaxaRegional] = []
         self.taxas_balsa: list[TaxaBalsa] = []
+        self.coleta_cidades_fixas: list[ColetaCidadeFixa] = []
         self.faixas_coleta: list[FaixaDistancia] = []
         self.categorias: dict[str, Categoria] = {}
         self.transportes: dict[str, Transporte] = {}
@@ -216,6 +226,10 @@ class ParametrosFrete:
             self.taxas_balsa = [
                 TaxaBalsa(r["cidade_origem"], r["cidade_destino"], r["veiculo"], r["tipo"], r["valor"])
                 for r in conn.execute("SELECT * FROM taxas_balsa")
+            ]
+            self.coleta_cidades_fixas = [
+                ColetaCidadeFixa(r["filial_origem"], r["cidade_destino"], r["veiculo"], r["valor_fixo"])
+                for r in conn.execute("SELECT * FROM coleta_cidades_fixas ORDER BY id")
             ]
             self.faixas_coleta = sorted(
                 (FaixaDistancia(r["de"], r["ate"], r["taxa_fixa"], r["tarifa_km"])
@@ -318,6 +332,44 @@ class ParametrosFrete:
         if not candidatas:
             raise FreteInputError(f"Distância de coleta {distancia}km abaixo da menor faixa configurada.")
         return candidatas[-1]
+
+    def buscar_coleta_cidade_fixa(
+        self, filial_origem: str, cidade_destino: str, veiculo: str
+    ) -> ColetaCidadeFixa | None:
+        """Preço fixo de coleta pra rota filial_origem -> cidade_destino +
+        veículo, se cadastrado — mesma semântica de
+        frete_db.buscar_coleta_cidade_fixa, mas em memória (já carregado em
+        self.coleta_cidades_fixas, em vez de reabrir o banco a cada
+        orçamento). A cidade pode estar em qualquer posição da lista
+        guardada na linha."""
+        filial_alvo = db.normalizar_texto(filial_origem)
+        veic_alvo = db.normalizar_texto(veiculo)
+        alvo = db.normalizar_texto(cidade_destino)
+        for c in self.coleta_cidades_fixas:
+            if db.normalizar_texto(c.filial_origem) != filial_alvo or db.normalizar_texto(c.veiculo) != veic_alvo:
+                continue
+            if alvo in {db.normalizar_texto(x) for x in db._dividir_cidades(c.cidade_destino)}:
+                return c
+        return None
+
+    def buscar_coleta_cidade_fixa_outros_veiculos(
+        self, filial_origem: str, cidade_destino: str, veiculo_atual: str
+    ) -> list[str]:
+        """Veículos (diferentes do informado) que têm preço fixo de coleta
+        cadastrado pra essa mesma filial+cidade — mesma semântica de
+        frete_db.buscar_coleta_cidade_fixa_outros_veiculos, em memória."""
+        filial_alvo = db.normalizar_texto(filial_origem)
+        alvo = db.normalizar_texto(cidade_destino)
+        veic_atual = db.normalizar_texto(veiculo_atual)
+        encontrados = set()
+        for c in self.coleta_cidades_fixas:
+            if db.normalizar_texto(c.filial_origem) != filial_alvo:
+                continue
+            if db.normalizar_texto(c.veiculo) == veic_atual:
+                continue
+            if alvo in {db.normalizar_texto(x) for x in db._dividir_cidades(c.cidade_destino)}:
+                encontrados.add(c.veiculo)
+        return sorted(encontrados)
 
     def tarifa_km_efetiva(self, veiculo: Veiculo, distancia: float) -> tuple[float, bool]:
         """R$/km a usar no frete principal: se o veículo tiver faixas de km
@@ -464,7 +516,7 @@ def _taxas_regionais_aplicaveis(
         return []
     aplicaveis = []
     for t in p.taxas_regionais:
-        cidades_taxa = {db.normalizar_texto(c) for c in _dividir_cidades(t.cidade)}
+        cidades_taxa = {db.normalizar_texto(c) for c in db._dividir_cidades(t.cidade)}
         if cidades_da_rota & cidades_taxa:
             aplicaveis.append(t)
     return aplicaveis
@@ -475,6 +527,20 @@ TAXA_BALSA_CORINGA = "*"  # cidade_origem/cidade_destino/veiculo cadastrado como
 
 def _taxa_balsa_bate_campo(cadastrado: str, valor: str) -> bool:
     return cadastrado == TAXA_BALSA_CORINGA or cadastrado == valor
+
+
+def _normalizar_par_cidades(cidade_origem: str | None, cidade_destino: str | None) -> tuple[str, str] | None:
+    """Extrai e normaliza (minúsculas, sem acento) a cidade de origem e
+    destino de dois textos de endereço/filial — usado pelas checagens de
+    taxa de balsa direcionais. Devolve None se alguma das duas não puder
+    ser identificada."""
+    if not cidade_origem or not cidade_destino:
+        return None
+    cid_o = _cidade_da_retirada(cidade_origem)
+    cid_d = _cidade_da_retirada(cidade_destino)
+    if not cid_o or not cid_d:
+        return None
+    return db.normalizar_texto(cid_o), db.normalizar_texto(cid_d)
 
 
 def _taxa_balsa_aplicavel(
@@ -494,13 +560,11 @@ def _taxa_balsa_aplicavel(
     (ex: um curinga "*"→Manaus e uma exceção específica cadastrada pra
     uma origem que NÃO usa balsa naquele destino), vence a linha mais
     específica — quem tem mais campos exatos (não-curinga)."""
-    if not cidade_origem or not cidade_destino:
+    par = _normalizar_par_cidades(cidade_origem, cidade_destino)
+    if par is None:
         return None
-    cid_o = _cidade_da_retirada(cidade_origem)
-    cid_d = _cidade_da_retirada(cidade_destino)
-    if not cid_o or not cid_d:
-        return None
-    cid_o, cid_d, veic = db.normalizar_texto(cid_o), db.normalizar_texto(cid_d), db.normalizar_texto(veiculo)
+    cid_o, cid_d = par
+    veic = db.normalizar_texto(veiculo)
     candidatas = []
     for t in p.taxas_balsa:
         t_o, t_d, t_v = db.normalizar_texto(t.cidade_origem), db.normalizar_texto(t.cidade_destino), db.normalizar_texto(t.veiculo)
@@ -519,13 +583,10 @@ def _taxa_balsa_outros_veiculos(
     balsa cadastrada pra essa mesma rota direcional — só um diagnóstico
     pra memória de cálculo avisar quando a rota bateu mas o veículo não,
     em vez de zerar o custo de balsa silenciosamente."""
-    if not cidade_origem or not cidade_destino:
+    par = _normalizar_par_cidades(cidade_origem, cidade_destino)
+    if par is None:
         return []
-    cid_o = _cidade_da_retirada(cidade_origem)
-    cid_d = _cidade_da_retirada(cidade_destino)
-    if not cid_o or not cid_d:
-        return []
-    cid_o, cid_d = db.normalizar_texto(cid_o), db.normalizar_texto(cid_d)
+    cid_o, cid_d = par
     veic_atual = db.normalizar_texto(veiculo_atual)
     encontrados = {
         t.veiculo for t in p.taxas_balsa
@@ -657,10 +718,7 @@ def calcular_orcamento(
     detalhe_taxas = []
     custo_taxas_adicionais = 0.0
     for taxa in p.taxas_adicionais:
-        if taxa.tipo == "percentual":
-            valor_taxa = valor_mercadoria * (taxa.valor / 100)
-        else:
-            valor_taxa = taxa.valor
+        valor_taxa = _valor_taxa(taxa.tipo, taxa.valor, valor_mercadoria)
         custo_taxas_adicionais += valor_taxa
         detalhe_taxas.append({
             "nome": taxa.nome, "tipo": taxa.tipo,
@@ -673,10 +731,7 @@ def calcular_orcamento(
     detalhe_taxas_regionais = []
     custo_taxas_regionais = 0.0
     for taxa in _taxas_regionais_aplicaveis(p, cidade_origem, cidade_destino):
-        if taxa.tipo == "percentual":
-            valor_taxa = valor_mercadoria * (taxa.valor / 100)
-        else:
-            valor_taxa = taxa.valor
+        valor_taxa = _valor_taxa(taxa.tipo, taxa.valor, valor_mercadoria)
         custo_taxas_regionais += valor_taxa
         detalhe_taxas_regionais.append({
             "nome": taxa.nome, "cidade": taxa.cidade, "tipo": taxa.tipo,
@@ -692,10 +747,7 @@ def calcular_orcamento(
     balsa_outro_veiculo = []
     taxa_balsa = _taxa_balsa_aplicavel(p, cidade_origem, cidade_destino, v.nome)
     if taxa_balsa:
-        if taxa_balsa.tipo == "percentual":
-            custo_balsa = valor_mercadoria * (taxa_balsa.valor / 100)
-        else:
-            custo_balsa = taxa_balsa.valor
+        custo_balsa = _valor_taxa(taxa_balsa.tipo, taxa_balsa.valor, valor_mercadoria)
         detalhe_balsa = {
             "cidade_origem": taxa_balsa.cidade_origem, "cidade_destino": taxa_balsa.cidade_destino,
             "veiculo": taxa_balsa.veiculo, "tipo": taxa_balsa.tipo,
@@ -720,17 +772,17 @@ def calcular_orcamento(
         # (ver main.py/index.html), e o veículo já foi escolhido pelo
         # peso alguns passos acima.
         cidade_fixa = (
-            db.buscar_coleta_cidade_fixa(cidade_origem, cidade_normalizada, v.nome)
+            p.buscar_coleta_cidade_fixa(cidade_origem, cidade_normalizada, v.nome)
             if cidade_normalizada and cidade_origem else None
         )
         if cidade_fixa:
-            custo_coleta = cidade_fixa["valor_fixo"]
+            custo_coleta = cidade_fixa.valor_fixo
             coleta_fixa_aplicada = True
         else:
             if cidade_normalizada and cidade_origem:
                 # Cidade+filial bateram, só não pro veículo deste orçamento
                 # — avisa em vez de cair calado pra faixa por km.
-                coleta_fixa_outro_veiculo = db.buscar_coleta_cidade_fixa_outros_veiculos(
+                coleta_fixa_outro_veiculo = p.buscar_coleta_cidade_fixa_outros_veiculos(
                     cidade_origem, cidade_normalizada, v.nome
                 )
             if distancia_coleta > 0:

@@ -97,14 +97,8 @@ def favicon():
 
 
 @app.get("/", include_in_schema=False)
-def raiz():
-    if not INDEX_PATH.exists():
-        raise HTTPException(status_code=500, detail="Arquivo index.html não encontrado.")
-    return FileResponse(INDEX_PATH)
-
-
 @app.get("/orçamentos", include_in_schema=False)
-def orcamentos_web():
+def raiz():
     if not INDEX_PATH.exists():
         raise HTTPException(status_code=500, detail="Arquivo index.html não encontrado.")
     return FileResponse(INDEX_PATH)

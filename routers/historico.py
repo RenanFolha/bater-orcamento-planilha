@@ -45,13 +45,20 @@ def listar_historico(usuario: dict = Depends(exigir_login)):
     return registros
 
 
-@router.get("/{codigo}")
-def obter_historico(codigo: str, usuario: dict = Depends(exigir_login)):
+def _buscar_historico_com_dados(codigo: str) -> dict:
+    """Busca o registro do histórico por código e já desserializa o
+    snapshot completo do orçamento (dados_json) — usado tanto pra exibir
+    o detalhe quanto pra gerar a planilha exportada."""
     registro = db.buscar_orcamento_historico(codigo)
     if not registro:
         raise HTTPException(status_code=404, detail=f"Orçamento '{codigo}' não encontrado no histórico.")
     registro["dados"] = json.loads(registro.pop("dados_json") or "{}")
     return registro
+
+
+@router.get("/{codigo}")
+def obter_historico(codigo: str, usuario: dict = Depends(exigir_login)):
+    return _buscar_historico_com_dados(codigo)
 
 
 @router.delete("/{id_}")
@@ -77,10 +84,7 @@ def excluir_historico(id_: int, usuario: dict = Depends(exigir_login)):
 def exportar_historico_planilha(codigo: str, usuario: dict = Depends(exigir_login)):
     """Gera a planilha de orçamento (formato 'Modelo de Orçamento.xlsx')
     preenchida com os dados desse orçamento do histórico."""
-    registro = db.buscar_orcamento_historico(codigo)
-    if not registro:
-        raise HTTPException(status_code=404, detail=f"Orçamento '{codigo}' não encontrado no histórico.")
-    registro["dados"] = json.loads(registro.pop("dados_json") or "{}")
+    registro = _buscar_historico_com_dados(codigo)
     try:
         conteudo = export.gerar_planilha_orcamento(registro)
     except export.ExportacaoError as e:

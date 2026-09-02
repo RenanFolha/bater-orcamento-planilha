@@ -948,6 +948,25 @@ def _dividir_cidades(texto: str) -> list[str]:
     return [c.strip() for c in (texto or "").split(",") if c.strip()]
 
 
+def _cidades_em_conflito(
+    conn: sqlite3.Connection, query: str, params: list, coluna_cidades: str, cidades: list[str],
+) -> list[str]:
+    """Cidades da lista que já aparecem em alguma linha retornada por
+    `query`/`params` (comparação case-insensitive) — helper compartilhado
+    pelas checagens de duplicidade de coleta_cidades_fixas e
+    taxas_regionais, que só diferem na query (chave de agrupamento) e na
+    coluna que guarda a lista de cidades separadas por vírgula. Guarda a
+    grafia já cadastrada na outra linha (não a do payload atual) pra
+    mensagem de erro apontar exatamente o que está no banco."""
+    alvo_lower = {c.lower() for c in cidades}
+    conflitos: dict[str, str] = {}
+    for row in conn.execute(query, params):
+        for cidade in _dividir_cidades(row[coluna_cidades]):
+            if cidade.lower() in alvo_lower:
+                conflitos[cidade.lower()] = cidade
+    return sorted(conflitos.values())
+
+
 def _cidades_coleta_conflitantes(
     conn: sqlite3.Connection, filial_origem: str, veiculo: str, cidades: list[str],
     ignorar_id: int | None = None,
@@ -965,15 +984,7 @@ def _cidades_coleta_conflitantes(
     if ignorar_id is not None:
         query += " AND id != ?"
         params.append(ignorar_id)
-    alvo_lower = {c.lower() for c in cidades}
-    # guarda a grafia já cadastrada na outra linha (não a do payload atual)
-    # pra mensagem de erro apontar exatamente o que está no banco
-    conflitos: dict[str, str] = {}
-    for row in conn.execute(query, params):
-        for cidade in _dividir_cidades(row["cidade_destino"]):
-            if cidade.lower() in alvo_lower:
-                conflitos[cidade.lower()] = cidade
-    return sorted(conflitos.values())
+    return _cidades_em_conflito(conn, query, params, "cidade_destino", cidades)
 
 
 def inserir_coleta_cidade_fixa(filial_origem, cidade_destino, veiculo, valor_fixo, observacao=""):
@@ -1110,13 +1121,7 @@ def _cidades_regionais_conflitantes(
     if ignorar_id is not None:
         query += " AND id != ?"
         params.append(ignorar_id)
-    alvo_lower = {c.lower() for c in cidades}
-    conflitos: dict[str, str] = {}
-    for row in conn.execute(query, params):
-        for cidade in _dividir_cidades(row["cidade"]):
-            if cidade.lower() in alvo_lower:
-                conflitos[cidade.lower()] = cidade
-    return sorted(conflitos.values())
+    return _cidades_em_conflito(conn, query, params, "cidade", cidades)
 
 
 def inserir_taxa_regional(cidade, nome, tipo, valor, observacao=""):

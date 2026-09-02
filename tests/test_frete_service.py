@@ -188,9 +188,7 @@ def test_manutencao_incide_tambem_sobre_retorno_vazio(parametros):
     assert calc["custo_retorno"] == pytest.approx(20.0)  # só o retorno: 40km * 0.5
 
 
-def test_manutencao_incide_sobre_coleta_com_frota_propria(parametros, monkeypatch):
-    monkeypatch.setattr(fs.db, "buscar_coleta_cidade_fixa", lambda *a, **k: None)
-    monkeypatch.setattr(fs.db, "buscar_coleta_cidade_fixa_outros_veiculos", lambda *a, **k: [])
+def test_manutencao_incide_sobre_coleta_com_frota_propria(parametros):
     resultado = fs.calcular_orcamento(
         peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
         categoria="Geral", transporte="Rodoviário", sla="Padrão",
@@ -322,11 +320,10 @@ def test_volume_excede_todos_os_veiculos_disponiveis(parametros):
         )
 
 
-def test_coleta_fixa_por_cidade_sobrepoe_faixa_por_km(parametros, monkeypatch):
-    monkeypatch.setattr(
-        fs.db, "buscar_coleta_cidade_fixa",
-        lambda filial_origem, cidade_destino, veiculo: {"valor_fixo": 99.0},
-    )
+def test_coleta_fixa_por_cidade_sobrepoe_faixa_por_km(parametros):
+    parametros.coleta_cidades_fixas = [
+        fs.ColetaCidadeFixa(filial_origem="SP", cidade_destino="Alguma Cidade", veiculo="VUC", valor_fixo=99.0),
+    ]
     resultado = fs.calcular_orcamento(
         peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=100,
         categoria="Geral", transporte="Rodoviário", sla="Padrão",
@@ -337,9 +334,7 @@ def test_coleta_fixa_por_cidade_sobrepoe_faixa_por_km(parametros, monkeypatch):
     assert calc["custo_coleta"] == pytest.approx(99.0)
 
 
-def test_coleta_usa_faixa_por_km_quando_nao_ha_preco_fixo(parametros, monkeypatch):
-    monkeypatch.setattr(fs.db, "buscar_coleta_cidade_fixa", lambda *a, **k: None)
-    monkeypatch.setattr(fs.db, "buscar_coleta_cidade_fixa_outros_veiculos", lambda *a, **k: [])
+def test_coleta_usa_faixa_por_km_quando_nao_ha_preco_fixo(parametros):
     resultado = fs.calcular_orcamento(
         peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=100,
         categoria="Geral", transporte="Rodoviário", sla="Padrão",
@@ -478,12 +473,11 @@ def test_taxa_balsa_linha_especifica_vence_curinga(parametros):
     assert resultado["calculos_intermediarios"]["custo_balsa"] == pytest.approx(0.0)
 
 
-def test_coleta_fixa_avisa_outro_veiculo_quando_nao_bate(parametros, monkeypatch):
-    monkeypatch.setattr(fs.db, "buscar_coleta_cidade_fixa", lambda *a, **k: None)
-    monkeypatch.setattr(
-        fs.db, "buscar_coleta_cidade_fixa_outros_veiculos",
-        lambda filial_origem, cidade_destino, veiculo_atual: ["Carreta", "Truck"],
-    )
+def test_coleta_fixa_avisa_outro_veiculo_quando_nao_bate(parametros):
+    parametros.coleta_cidades_fixas = [
+        fs.ColetaCidadeFixa(filial_origem="SP", cidade_destino="Alguma Cidade", veiculo="Carreta", valor_fixo=50.0),
+        fs.ColetaCidadeFixa(filial_origem="SP", cidade_destino="Alguma Cidade", veiculo="Truck", valor_fixo=60.0),
+    ]
     resultado = fs.calcular_orcamento(
         peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=100,
         categoria="Geral", transporte="Rodoviário", sla="Padrão",
@@ -496,11 +490,10 @@ def test_coleta_fixa_avisa_outro_veiculo_quando_nao_bate(parametros, monkeypatch
     assert calc["custo_coleta"] == pytest.approx(10 + 20 * 0.5)
 
 
-def test_coleta_fixa_sem_aviso_quando_ja_aplicou(parametros, monkeypatch):
-    monkeypatch.setattr(
-        fs.db, "buscar_coleta_cidade_fixa",
-        lambda filial_origem, cidade_destino, veiculo: {"valor_fixo": 99.0},
-    )
+def test_coleta_fixa_sem_aviso_quando_ja_aplicou(parametros):
+    parametros.coleta_cidades_fixas = [
+        fs.ColetaCidadeFixa(filial_origem="SP", cidade_destino="Alguma Cidade", veiculo="VUC", valor_fixo=99.0),
+    ]
     resultado = fs.calcular_orcamento(
         peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=100,
         categoria="Geral", transporte="Rodoviário", sla="Padrão",

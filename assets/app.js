@@ -162,12 +162,10 @@ function formatarPesoDigitando(el){
   const decimal = resto.length ? resto.join('').slice(0, 2) : null;
   el.value = decimal !== null ? `${inteiroFormatado},${decimal}` : inteiroFormatado;
 }
-function pesoParaNumero(str){
-  if(str == null || str === '') return 0;
-  const limpo = String(str).replace(/\./g, '').replace(',', '.');
-  const n = parseFloat(limpo);
-  return isNaN(n) ? 0 : n;
-}
+// Mesmo parser de número pt-BR de valorMoedaParaNumero (troca . e , de
+// lugar) — nome próprio só pra deixar claro o uso (peso, não R$) nos
+// pontos que chamam.
+const pesoParaNumero = valorMoedaParaNumero;
 
 function preencherOpcoes(selectEl, data, labelKey='nome'){
   selectEl.replaceChildren();
@@ -215,11 +213,10 @@ async function inicializarFormulario(){
   try{
     await Promise.all([
       carregarOpcoes('categorias', document.getElementById('categoria')),
-      carregarOpcoes('transportes', document.getElementById('transporte')),
+      carregarTransportes(document.getElementById('transporte')),
       carregarOpcoes('slas', document.getElementById('sla')),
       carregarFiliais(),
       carregarTransportadoras(),
-      carregarTransportesCache(),
     ]);
     carregouParametros = true;
     statusTag.textContent = 'Aguardando';
@@ -238,10 +235,24 @@ let filiaisCache = [];
 let transportadorasCache = [];
 let transportesCache = [];
 
-async function carregarTransportesCache(){
-  const res = await fetch(`${API_BASE}/parametros/transportes`);
-  if(!res.ok) throw new Error(`Erro HTTP ${res.status}`);
-  transportesCache = await res.json();
+// Igual carregarOpcoes (mesmo fallback de erro no select), mas guarda a
+// resposta inteira em transportesCache também -- usado por
+// atualizarCubagem() pra achar o fator_cubagem do transporte escolhido,
+// sem precisar de um segundo fetch no mesmo endpoint.
+async function carregarTransportes(selectEl){
+  try{
+    const res = await fetch(`${API_BASE}/parametros/transportes`);
+    if(!res.ok) throw new Error(`Erro HTTP ${res.status}`);
+    transportesCache = await res.json();
+    preencherOpcoes(selectEl, transportesCache);
+  }catch(e){
+    selectEl.replaceChildren();
+    const option = document.createElement('option');
+    option.value = '';
+    option.textContent = 'Erro ao carregar';
+    selectEl.appendChild(option);
+    throw e;
+  }
 }
 
 function coletarPaletes(){
@@ -1319,11 +1330,7 @@ async function carregarUsuarios(){
   const statusEl = container.querySelector('.precos-status');
   const countTag = document.getElementById('precos-usuarios-count');
 
-  function mostrarStatus(msg, ok){
-    statusEl.textContent = msg;
-    statusEl.className = 'precos-status ' + (ok ? 'ok' : 'err');
-    if(ok) setTimeout(() => { statusEl.textContent = ''; statusEl.className = 'precos-status'; }, 3000);
-  }
+  const mostrarStatus = (msg, ok) => mostrarStatusPrecos(statusEl, msg, ok);
 
   function criarSelect(opcoes, valorAtual){
     const sel = document.createElement('select');
@@ -1524,6 +1531,17 @@ btnThemeToggle.addEventListener('click', () => {
 // tabela de preço: cria linha, edita, salva, exclui)
 // ============================================================
 
+// Mensagem de status (sucesso some sozinha em 3s, erro fica) usada tanto
+// por carregarUsuarios quanto por criarEditorTabela -- cada um chama com
+// o próprio elemento `.precos-status`.
+function mostrarStatusPrecos(statusEl, msg, ok){
+  statusEl.textContent = msg;
+  statusEl.className = 'precos-status ' + (ok ? 'ok' : 'err');
+  if(ok){
+    setTimeout(() => { statusEl.textContent = ''; statusEl.className = 'precos-status'; }, 3000);
+  }
+}
+
 function criarElemento(tag, attrs = {}, texto){
   const e = document.createElement(tag);
   for(const [k, v] of Object.entries(attrs)){
@@ -1551,13 +1569,7 @@ async function criarEditorTabela({containerId, endpoint, titulo, colunas, campoM
   headRow.appendChild(criarElemento('th', {}, 'Ações'));
   thead.appendChild(headRow);
 
-  function mostrarStatus(msg, ok){
-    statusEl.textContent = msg;
-    statusEl.className = 'precos-status ' + (ok ? 'ok' : 'err');
-    if(ok){
-      setTimeout(() => { statusEl.textContent = ''; statusEl.className = 'precos-status'; }, 3000);
-    }
-  }
+  const mostrarStatus = (msg, ok) => mostrarStatusPrecos(statusEl, msg, ok);
 
   function criarInputs(dados = {}, opts = {}){
     return colunas.map(c => {
@@ -1957,154 +1969,169 @@ async function carregarTabelaPrecos(){
   if(precosCarregado) return;
   precosCarregado = true;
 
-  await criarEditorTabela({
-    containerId: 'precos-filiais', endpoint: 'filiais',
-    titulo: 'Filiais (editar o endereço já força nova geocodificação)',
-    colunas: [
-      {campo: 'nome', label: 'Nome (usado como cidade de referência)', tipo: 'text'},
-      {campo: 'endereco', label: 'Endereço completo (rua, número, bairro, cidade, UF, CEP)', tipo: 'text'},
-    ],
-  });
-
-  await criarEditorTabela({
-    containerId: 'precos-veiculos', endpoint: 'veiculos', titulo: 'Veículos (escolhidos automaticamente pelo peso)',
-    colunas: [
-      {campo: 'nome', label: 'Nome', tipo: 'text'},
-      {campo: 'de', label: 'De (kg)', tipo: 'number', step: '1'},
-      {campo: 'ate', label: 'Até (kg)', tipo: 'number', step: '1'},
-      {campo: 'tarifa_km', label: 'Tarifa/km (R$)', tipo: 'moeda'},
-      {campo: 'valor_tonelada_excedente', label: 'Valor/tonelada excedente (R$)', tipo: 'moeda'},
-      {campo: 'tarifa_km_retorno', label: 'Retorno vazio (R$/km)', tipo: 'moeda'},
-      {campo: 'tarifa_km_manutencao', label: 'Manutenção (R$/km, ida + coleta própria + retorno vazio)', tipo: 'moeda'},
-      {campo: 'capacidade_m3', label: 'Capacidade útil (m³)', tipo: 'number', step: '0.01'},
-      {campo: 'percentual_capacidade_util', label: '% da capacidade que pode ocupar', tipo: 'number', step: '1'},
-      {campo: 'observacao', label: 'Observação', tipo: 'text'},
-    ],
-  });
-
-  await criarEditorTabela({
-    containerId: 'precos-taxas-adicionais', endpoint: 'taxas-adicionais', titulo: 'Taxas Adicionais',
-    colunas: [
-      {campo: 'nome', label: 'Nome', tipo: 'text'},
-      {campo: 'tipo', label: 'Tipo', tipo: 'select', opcoes: ['fixo', 'percentual']},
-      {campo: 'valor', label: 'Valor (R$ se fixo, % se percentual)', tipo: 'number', step: '0.01'},
-      {campo: 'observacao', label: 'Observação', tipo: 'text'},
-    ],
-  });
-
-  const [filiaisParaColeta, veiculosParaColeta] = await Promise.all([
+  // Listas cruas de filiais/veículos pras colunas <select> das tabelas
+  // que dependem delas (faixas-km-veiculo, coleta-cidades-fixas,
+  // taxas-balsa) -- buscadas em paralelo com as tabelas independentes
+  // abaixo, já que não têm relação nenhuma com elas.
+  const filiaisVeiculosPromise = Promise.all([
     fetch(`${API_BASE}/admin/filiais`).then(r => r.json()).catch(() => []),
     fetch(`${API_BASE}/admin/veiculos`).then(r => r.json()).catch(() => []),
   ]);
 
-  await criarEditorTabela({
-    containerId: 'precos-faixas-km-veiculo', endpoint: 'faixas-km-veiculo',
-    titulo: 'Faixas de KM por Veículo (R$/km escalonado por distância — substitui a tarifa fixa do veículo quando cadastrada)',
-    colunas: [
-      {campo: 'veiculo', label: 'Veículo', tipo: 'select', opcoes: veiculosParaColeta.map(v => v.nome)},
-      {campo: 'de', label: 'De (km)', tipo: 'number', step: '1'},
-      {campo: 'ate', label: 'Até (km)', tipo: 'number', step: '1'},
-      {campo: 'tarifa_km', label: 'Tarifa/km (R$)', tipo: 'moeda'},
-      {campo: 'observacao', label: 'Observação', tipo: 'text'},
-    ],
-  });
+  // Tabelas sem dependência entre si -- rodam em paralelo em vez de
+  // esperar uma terminar pra começar a próxima (eram ~9 idas e voltas
+  // sequenciais ao servidor; agora é só a mais lenta delas).
+  await Promise.all([
+    criarEditorTabela({
+      containerId: 'precos-filiais', endpoint: 'filiais',
+      titulo: 'Filiais (editar o endereço já força nova geocodificação)',
+      colunas: [
+        {campo: 'nome', label: 'Nome (usado como cidade de referência)', tipo: 'text'},
+        {campo: 'endereco', label: 'Endereço completo (rua, número, bairro, cidade, UF, CEP)', tipo: 'text'},
+      ],
+    }),
 
-  await criarEditorTabela({
-    containerId: 'precos-coleta-cidades-fixas', endpoint: 'coleta-cidades-fixas',
-    titulo: 'Coleta com Preço Fixo por Cidade (rota filial de origem → cidade(s) do cliente + veículo)',
-    // Sem campoMultiplo aqui de propósito: nessa tabela vírgula NÃO cria
-    // uma linha por cidade (como em Taxas Regionais) — uma linha só cobre
-    // várias cidades ao mesmo tempo, todas com o mesmo preço fixo.
-    colunas: [
-      {campo: 'filial_origem', label: 'Filial de origem (de onde o veículo sai)', tipo: 'select', opcoes: filiaisParaColeta.map(f => f.nome)},
-      {campo: 'cidade_destino', label: 'Cidade(s) do cliente — separe por vírgula', tipo: 'text'},
-      {campo: 'veiculo', label: 'Veículo', tipo: 'select', opcoes: veiculosParaColeta.map(v => v.nome)},
-      {campo: 'valor_fixo', label: 'Valor fixo de coleta (R$)', tipo: 'moeda'},
-      {campo: 'observacao', label: 'Observação', tipo: 'text'},
-    ],
-  });
+    criarEditorTabela({
+      containerId: 'precos-veiculos', endpoint: 'veiculos', titulo: 'Veículos (escolhidos automaticamente pelo peso)',
+      colunas: [
+        {campo: 'nome', label: 'Nome', tipo: 'text'},
+        {campo: 'de', label: 'De (kg)', tipo: 'number', step: '1'},
+        {campo: 'ate', label: 'Até (kg)', tipo: 'number', step: '1'},
+        {campo: 'tarifa_km', label: 'Tarifa/km (R$)', tipo: 'moeda'},
+        {campo: 'valor_tonelada_excedente', label: 'Valor/tonelada excedente (R$)', tipo: 'moeda'},
+        {campo: 'tarifa_km_retorno', label: 'Retorno vazio (R$/km)', tipo: 'moeda'},
+        {campo: 'tarifa_km_manutencao', label: 'Manutenção (R$/km, ida + coleta própria + retorno vazio)', tipo: 'moeda'},
+        {campo: 'capacidade_m3', label: 'Capacidade útil (m³)', tipo: 'number', step: '0.01'},
+        {campo: 'percentual_capacidade_util', label: '% da capacidade que pode ocupar', tipo: 'number', step: '1'},
+        {campo: 'observacao', label: 'Observação', tipo: 'text'},
+      ],
+    }),
 
-  await criarEditorTabela({
-    containerId: 'precos-taxas-regionais', endpoint: 'taxas-regionais',
-    titulo: 'Taxas Regionais (só cobradas se origem OU destino for a cidade)',
-    // Sem campoMultiplo aqui de propósito (mesma mudança feita em Coleta
-    // com Preço Fixo): vírgula não cria mais uma linha por cidade, uma
-    // linha só cobre várias cidades com o mesmo valor.
-    colunas: [
-      {campo: 'cidade', label: 'Cidade(s) — separe por vírgula', tipo: 'text'},
-      {campo: 'nome', label: 'Nome da taxa', tipo: 'text'},
-      {campo: 'tipo', label: 'Tipo', tipo: 'select', opcoes: ['fixo', 'percentual']},
-      {campo: 'valor', label: 'Valor (R$ ou %)', tipo: 'number', step: '0.01'},
-      {campo: 'observacao', label: 'Observação', tipo: 'text'},
-    ],
-  });
+    criarEditorTabela({
+      containerId: 'precos-taxas-adicionais', endpoint: 'taxas-adicionais', titulo: 'Taxas Adicionais',
+      colunas: [
+        {campo: 'nome', label: 'Nome', tipo: 'text'},
+        {campo: 'tipo', label: 'Tipo', tipo: 'select', opcoes: ['fixo', 'percentual']},
+        {campo: 'valor', label: 'Valor (R$ se fixo, % se percentual)', tipo: 'number', step: '0.01'},
+        {campo: 'observacao', label: 'Observação', tipo: 'text'},
+      ],
+    }),
 
-  await criarEditorTabela({
-    containerId: 'precos-taxas-balsa', endpoint: 'taxas-balsa',
-    titulo: 'Taxas de Balsa (travessia origem → destino, direcional — ida e volta podem ter valores diferentes. ' +
-      'Use "*" em origem, destino ou veículo pra valer de qualquer um — ex: corredor fluvial Belém→Manaus vale ' +
-      'pra praticamente qualquer origem: cadastre "*" → "Manaus". Quando mais de uma linha bate na mesma rota, ' +
-      'vence a mais específica — cadastre uma linha exata pra abrir exceção a um curinga, ex: "Boa Vista" → ' +
-      '"Manaus" com valor 0 pra excluir essa rota de um curinga "*" → "Manaus")',
-    colunas: [
-      {campo: 'cidade_origem', label: 'Cidade de origem (ou "*")', tipo: 'text'},
-      {campo: 'cidade_destino', label: 'Cidade de destino (ou "*")', tipo: 'text'},
-      {campo: 'veiculo', label: 'Veículo (ou "*")', tipo: 'select', opcoes: ['*', ...veiculosParaColeta.map(v => v.nome)]},
-      {campo: 'tipo', label: 'Tipo', tipo: 'select', opcoes: ['fixo', 'percentual']},
-      {campo: 'valor', label: 'Valor (R$ ou %)', tipo: 'number', step: '0.01'},
-      {campo: 'observacao', label: 'Observação', tipo: 'text'},
-    ],
-  });
+    criarEditorTabela({
+      containerId: 'precos-taxas-regionais', endpoint: 'taxas-regionais',
+      titulo: 'Taxas Regionais (só cobradas se origem OU destino for a cidade)',
+      // Sem campoMultiplo aqui de propósito (mesma mudança feita em Coleta
+      // com Preço Fixo): vírgula não cria mais uma linha por cidade, uma
+      // linha só cobre várias cidades com o mesmo valor.
+      colunas: [
+        {campo: 'cidade', label: 'Cidade(s) — separe por vírgula', tipo: 'text'},
+        {campo: 'nome', label: 'Nome da taxa', tipo: 'text'},
+        {campo: 'tipo', label: 'Tipo', tipo: 'select', opcoes: ['fixo', 'percentual']},
+        {campo: 'valor', label: 'Valor (R$ ou %)', tipo: 'number', step: '0.01'},
+        {campo: 'observacao', label: 'Observação', tipo: 'text'},
+      ],
+    }),
 
-  await criarEditorTabela({
-    containerId: 'precos-transportadoras-terceirizadas', endpoint: 'transportadoras-terceirizadas',
-    titulo: 'Transportadoras Terceirizadas (coleta/entrega)',
-    colunas: [
-      {campo: 'nome', label: 'Nome da transportadora', tipo: 'text'},
-      {campo: 'cidade', label: 'Cidade atendida', tipo: 'text'},
-      {campo: 'tipo', label: 'Tipo', tipo: 'select', opcoes: ['coleta', 'entrega', 'ambos']},
-      {campo: 'valor', label: 'Valor combinado (R$)', tipo: 'moeda'},
-      {campo: 'observacao', label: 'Observação', tipo: 'text'},
-    ],
-  });
+    criarEditorTabela({
+      containerId: 'precos-transportadoras-terceirizadas', endpoint: 'transportadoras-terceirizadas',
+      titulo: 'Transportadoras Terceirizadas (coleta/entrega)',
+      colunas: [
+        {campo: 'nome', label: 'Nome da transportadora', tipo: 'text'},
+        {campo: 'cidade', label: 'Cidade atendida', tipo: 'text'},
+        {campo: 'tipo', label: 'Tipo', tipo: 'select', opcoes: ['coleta', 'entrega', 'ambos']},
+        {campo: 'valor', label: 'Valor combinado (R$)', tipo: 'moeda'},
+        {campo: 'observacao', label: 'Observação', tipo: 'text'},
+      ],
+    }),
 
-  await criarEditorTabela({
-    containerId: 'precos-faixas-coleta', endpoint: 'faixas-coleta', titulo: 'Faixas de Coleta por km (cidades sem preço fixo)',
-    colunas: [
-      {campo: 'de', label: 'De (km)', tipo: 'number'},
-      {campo: 'ate', label: 'Até (km)', tipo: 'number'},
-      {campo: 'taxa_fixa', label: 'Taxa fixa (R$)', tipo: 'moeda'},
-      {campo: 'tarifa_km', label: 'Tarifa/km (R$)', tipo: 'moeda'},
-      {campo: 'observacao', label: 'Observação', tipo: 'text'},
-    ],
-  });
+    criarEditorTabela({
+      containerId: 'precos-faixas-coleta', endpoint: 'faixas-coleta', titulo: 'Faixas de Coleta por km (cidades sem preço fixo)',
+      colunas: [
+        {campo: 'de', label: 'De (km)', tipo: 'number'},
+        {campo: 'ate', label: 'Até (km)', tipo: 'number'},
+        {campo: 'taxa_fixa', label: 'Taxa fixa (R$)', tipo: 'moeda'},
+        {campo: 'tarifa_km', label: 'Tarifa/km (R$)', tipo: 'moeda'},
+        {campo: 'observacao', label: 'Observação', tipo: 'text'},
+      ],
+    }),
 
-  await criarEditorTabela({
-    containerId: 'precos-categorias', endpoint: 'categorias', titulo: 'Categorias de Produto',
-    colunas: [
-      {campo: 'nome', label: 'Nome', tipo: 'text'},
-      {campo: 'multiplicador', label: 'Multiplicador', tipo: 'number', step: '0.01'},
-      {campo: 'observacao', label: 'Observação', tipo: 'text'},
-    ],
-  });
+    criarEditorTabela({
+      containerId: 'precos-categorias', endpoint: 'categorias', titulo: 'Categorias de Produto',
+      colunas: [
+        {campo: 'nome', label: 'Nome', tipo: 'text'},
+        {campo: 'multiplicador', label: 'Multiplicador', tipo: 'number', step: '0.01'},
+        {campo: 'observacao', label: 'Observação', tipo: 'text'},
+      ],
+    }),
 
-  await criarEditorTabela({
-    containerId: 'precos-transportes', endpoint: 'transportes', titulo: 'Métodos de Transporte',
-    colunas: [
-      {campo: 'nome', label: 'Nome', tipo: 'text'},
-      {campo: 'multiplicador', label: 'Multiplicador', tipo: 'number', step: '0.01'},
-      {campo: 'fator_cubagem', label: 'Fator de cubagem', tipo: 'number', step: '1'},
-      {campo: 'observacao', label: 'Observação', tipo: 'text'},
-    ],
-  });
+    criarEditorTabela({
+      containerId: 'precos-transportes', endpoint: 'transportes', titulo: 'Métodos de Transporte',
+      colunas: [
+        {campo: 'nome', label: 'Nome', tipo: 'text'},
+        {campo: 'multiplicador', label: 'Multiplicador', tipo: 'number', step: '0.01'},
+        {campo: 'fator_cubagem', label: 'Fator de cubagem', tipo: 'number', step: '1'},
+        {campo: 'observacao', label: 'Observação', tipo: 'text'},
+      ],
+    }),
 
-  await criarEditorTabela({
-    containerId: 'precos-slas', endpoint: 'slas', titulo: 'Níveis de Serviço (SLA)',
-    colunas: [
-      {campo: 'nome', label: 'Nome', tipo: 'text'},
-      {campo: 'multiplicador', label: 'Multiplicador', tipo: 'number', step: '0.01'},
-      {campo: 'prazo_dias', label: 'Prazo (dias)', tipo: 'number', step: '1'},
-      {campo: 'observacao', label: 'Observação', tipo: 'text'},
-    ],
-  });
+    criarEditorTabela({
+      containerId: 'precos-slas', endpoint: 'slas', titulo: 'Níveis de Serviço (SLA)',
+      colunas: [
+        {campo: 'nome', label: 'Nome', tipo: 'text'},
+        {campo: 'multiplicador', label: 'Multiplicador', tipo: 'number', step: '0.01'},
+        {campo: 'prazo_dias', label: 'Prazo (dias)', tipo: 'number', step: '1'},
+        {campo: 'observacao', label: 'Observação', tipo: 'text'},
+      ],
+    }),
+  ]);
+
+  const [filiaisParaColeta, veiculosParaColeta] = await filiaisVeiculosPromise;
+
+  // Estas dependem das opções de filial/veículo acima pros <select> das
+  // colunas -- rodam em paralelo entre si também.
+  await Promise.all([
+    criarEditorTabela({
+      containerId: 'precos-faixas-km-veiculo', endpoint: 'faixas-km-veiculo',
+      titulo: 'Faixas de KM por Veículo (R$/km escalonado por distância — substitui a tarifa fixa do veículo quando cadastrada)',
+      colunas: [
+        {campo: 'veiculo', label: 'Veículo', tipo: 'select', opcoes: veiculosParaColeta.map(v => v.nome)},
+        {campo: 'de', label: 'De (km)', tipo: 'number', step: '1'},
+        {campo: 'ate', label: 'Até (km)', tipo: 'number', step: '1'},
+        {campo: 'tarifa_km', label: 'Tarifa/km (R$)', tipo: 'moeda'},
+        {campo: 'observacao', label: 'Observação', tipo: 'text'},
+      ],
+    }),
+
+    criarEditorTabela({
+      containerId: 'precos-coleta-cidades-fixas', endpoint: 'coleta-cidades-fixas',
+      titulo: 'Coleta com Preço Fixo por Cidade (rota filial de origem → cidade(s) do cliente + veículo)',
+      // Sem campoMultiplo aqui de propósito: nessa tabela vírgula NÃO cria
+      // uma linha por cidade (como em Taxas Regionais) — uma linha só cobre
+      // várias cidades ao mesmo tempo, todas com o mesmo preço fixo.
+      colunas: [
+        {campo: 'filial_origem', label: 'Filial de origem (de onde o veículo sai)', tipo: 'select', opcoes: filiaisParaColeta.map(f => f.nome)},
+        {campo: 'cidade_destino', label: 'Cidade(s) do cliente — separe por vírgula', tipo: 'text'},
+        {campo: 'veiculo', label: 'Veículo', tipo: 'select', opcoes: veiculosParaColeta.map(v => v.nome)},
+        {campo: 'valor_fixo', label: 'Valor fixo de coleta (R$)', tipo: 'moeda'},
+        {campo: 'observacao', label: 'Observação', tipo: 'text'},
+      ],
+    }),
+
+    criarEditorTabela({
+      containerId: 'precos-taxas-balsa', endpoint: 'taxas-balsa',
+      titulo: 'Taxas de Balsa (travessia origem → destino, direcional — ida e volta podem ter valores diferentes. ' +
+        'Use "*" em origem, destino ou veículo pra valer de qualquer um — ex: corredor fluvial Belém→Manaus vale ' +
+        'pra praticamente qualquer origem: cadastre "*" → "Manaus". Quando mais de uma linha bate na mesma rota, ' +
+        'vence a mais específica — cadastre uma linha exata pra abrir exceção a um curinga, ex: "Boa Vista" → ' +
+        '"Manaus" com valor 0 pra excluir essa rota de um curinga "*" → "Manaus")',
+      colunas: [
+        {campo: 'cidade_origem', label: 'Cidade de origem (ou "*")', tipo: 'text'},
+        {campo: 'cidade_destino', label: 'Cidade de destino (ou "*")', tipo: 'text'},
+        {campo: 'veiculo', label: 'Veículo (ou "*")', tipo: 'select', opcoes: ['*', ...veiculosParaColeta.map(v => v.nome)]},
+        {campo: 'tipo', label: 'Tipo', tipo: 'select', opcoes: ['fixo', 'percentual']},
+        {campo: 'valor', label: 'Valor (R$ ou %)', tipo: 'number', step: '0.01'},
+        {campo: 'observacao', label: 'Observação', tipo: 'text'},
+      ],
+    }),
+  ]);
 }
