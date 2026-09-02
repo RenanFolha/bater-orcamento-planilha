@@ -158,9 +158,9 @@ class TaxaRegionalIn(BaseModel):
 
 
 class TaxaBalsaIn(BaseModel):
-    cidade_origem: str = Field(..., min_length=1, description="Cidade de origem da travessia")
-    cidade_destino: str = Field(..., min_length=1, description="Cidade de destino da travessia — direcional: só se aplica nesse sentido (cadastre outra linha pra volta, se o valor for diferente)")
-    veiculo: str = Field(..., min_length=1, description="Veículo ao qual esse valor se aplica (ver /parametros/veiculos) — a balsa pode cobrar diferente por categoria de veículo")
+    cidade_origem: str = Field(..., min_length=1, description="Cidade de origem da travessia, ou '*' pra valer de qualquer origem (corredor fluvial, ex: qualquer UF → Manaus)")
+    cidade_destino: str = Field(..., min_length=1, description="Cidade de destino da travessia — direcional: só se aplica nesse sentido (cadastre outra linha pra volta, se o valor for diferente). Também aceita '*'")
+    veiculo: str = Field(..., min_length=1, description="Veículo ao qual esse valor se aplica (ver /parametros/veiculos) — a balsa pode cobrar diferente por categoria de veículo. Também aceita '*' pra valer de qualquer veículo. Quando mais de uma linha bate na mesma rota, vence a mais específica (menos curingas)")
     tipo: str = Field("fixo", pattern="^(fixo|percentual)$", description="'fixo' (R$) ou 'percentual' (% do valor da mercadoria)")
     valor: float = Field(..., ge=0)
     observacao: str = ""

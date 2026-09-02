@@ -470,6 +470,13 @@ def _taxas_regionais_aplicaveis(
     return aplicaveis
 
 
+TAXA_BALSA_CORINGA = "*"  # cidade_origem/cidade_destino/veiculo cadastrado como "*" casa com qualquer valor
+
+
+def _taxa_balsa_bate_campo(cadastrado: str, valor: str) -> bool:
+    return cadastrado == TAXA_BALSA_CORINGA or cadastrado == valor
+
+
 def _taxa_balsa_aplicavel(
     p: "ParametrosFrete", cidade_origem: str | None, cidade_destino: str | None, veiculo: str
 ) -> TaxaBalsa | None:
@@ -478,7 +485,15 @@ def _taxa_balsa_aplicavel(
     exata): ida e volta são cotações independentes, então uma taxa
     cadastrada só pra A->B não se aplica automaticamente à rota B->A. O
     valor também pode variar por veículo (balsa cobra por categoria do
-    veículo embarcado), então precisa bater o veículo escolhido também."""
+    veículo embarcado), então precisa bater o veículo escolhido também.
+
+    Cada um dos três campos (cidade_origem, cidade_destino, veiculo)
+    aceita "*" como curinga — ex: uma travessia por corredor fluvial
+    (Belém↔Manaus) vale pra praticamente qualquer origem no Brasil, sem
+    precisar cadastrar uma linha por UF. Quando mais de uma linha bate
+    (ex: um curinga "*"→Manaus e uma exceção específica cadastrada pra
+    uma origem que NÃO usa balsa naquele destino), vence a linha mais
+    específica — quem tem mais campos exatos (não-curinga)."""
     if not cidade_origem or not cidade_destino:
         return None
     cid_o = _cidade_da_retirada(cidade_origem)
@@ -486,14 +501,15 @@ def _taxa_balsa_aplicavel(
     if not cid_o or not cid_d:
         return None
     cid_o, cid_d, veic = db.normalizar_texto(cid_o), db.normalizar_texto(cid_d), db.normalizar_texto(veiculo)
+    candidatas = []
     for t in p.taxas_balsa:
-        if (
-            db.normalizar_texto(t.cidade_origem) == cid_o
-            and db.normalizar_texto(t.cidade_destino) == cid_d
-            and db.normalizar_texto(t.veiculo) == veic
-        ):
-            return t
-    return None
+        t_o, t_d, t_v = db.normalizar_texto(t.cidade_origem), db.normalizar_texto(t.cidade_destino), db.normalizar_texto(t.veiculo)
+        if _taxa_balsa_bate_campo(t_o, cid_o) and _taxa_balsa_bate_campo(t_d, cid_d) and _taxa_balsa_bate_campo(t_v, veic):
+            especificidade = (t_o != TAXA_BALSA_CORINGA) + (t_d != TAXA_BALSA_CORINGA) + (t_v != TAXA_BALSA_CORINGA)
+            candidatas.append((especificidade, t))
+    if not candidatas:
+        return None
+    return max(candidatas, key=lambda par: par[0])[1]
 
 
 def _taxa_balsa_outros_veiculos(
@@ -513,8 +529,8 @@ def _taxa_balsa_outros_veiculos(
     veic_atual = db.normalizar_texto(veiculo_atual)
     encontrados = {
         t.veiculo for t in p.taxas_balsa
-        if db.normalizar_texto(t.cidade_origem) == cid_o
-        and db.normalizar_texto(t.cidade_destino) == cid_d
+        if _taxa_balsa_bate_campo(db.normalizar_texto(t.cidade_origem), cid_o)
+        and _taxa_balsa_bate_campo(db.normalizar_texto(t.cidade_destino), cid_d)
         and db.normalizar_texto(t.veiculo) != veic_atual
     }
     return sorted(encontrados)

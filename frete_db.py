@@ -191,7 +191,11 @@ CREATE TABLE IF NOT EXISTS taxas_balsa (
     -- travessia pode ser diferente na ida e na volta, então cada linha só
     -- vale naquela direção específica — cadastre 2 linhas se ida e volta
     -- tiverem valores diferentes. O valor também pode mudar por veículo
-    -- (balsa cobra por categoria do veículo embarcado).
+    -- (balsa cobra por categoria do veículo embarcado). cidade_origem,
+    -- cidade_destino e veiculo aceitam "*" como curinga (ver
+    -- frete_service._taxa_balsa_aplicavel) — usado pra modelar corredor
+    -- fluvial (ex: "*" -> "Manaus" vale de qualquer origem); quando mais
+    -- de uma linha bate na mesma rota, vence a mais específica.
     cidade_origem TEXT NOT NULL,
     cidade_destino TEXT NOT NULL,
     veiculo TEXT NOT NULL,

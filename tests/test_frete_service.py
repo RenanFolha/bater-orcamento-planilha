@@ -447,6 +447,37 @@ def test_taxa_balsa_sem_aviso_quando_rota_nem_existe(parametros):
     assert resultado["calculos_intermediarios"]["balsa_outro_veiculo"] is None
 
 
+def test_taxa_balsa_curinga_origem_vale_para_qualquer_cidade(parametros):
+    # corredor fluvial: "*" -> "Manaus" precisa valer pra qualquer origem,
+    # sem cadastrar uma linha por UF
+    parametros.taxas_balsa.append(
+        fs.TaxaBalsa(cidade_origem="*", cidade_destino="Manaus", veiculo="VUC", tipo="fixo", valor=7110.58)
+    )
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        cidade_origem="São Paulo, SP, Brasil", cidade_destino="Manaus, Amazonas, Brasil",
+    )
+    assert resultado["calculos_intermediarios"]["custo_balsa"] == pytest.approx(7110.58)
+
+
+def test_taxa_balsa_linha_especifica_vence_curinga(parametros):
+    # Boa Vista -> Manaus é feito 100% por rodovia (BR-174), então uma
+    # linha específica com valor 0 precisa sobrepor o curinga "*" -> Manaus
+    parametros.taxas_balsa.append(
+        fs.TaxaBalsa(cidade_origem="*", cidade_destino="Manaus", veiculo="VUC", tipo="fixo", valor=7110.58)
+    )
+    parametros.taxas_balsa.append(
+        fs.TaxaBalsa(cidade_origem="Boa Vista", cidade_destino="Manaus", veiculo="VUC", tipo="fixo", valor=0.0)
+    )
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        cidade_origem="Boa Vista, Roraima, Brasil", cidade_destino="Manaus, Amazonas, Brasil",
+    )
+    assert resultado["calculos_intermediarios"]["custo_balsa"] == pytest.approx(0.0)
+
+
 def test_coleta_fixa_avisa_outro_veiculo_quando_nao_bate(parametros, monkeypatch):
     monkeypatch.setattr(fs.db, "buscar_coleta_cidade_fixa", lambda *a, **k: None)
     monkeypatch.setattr(

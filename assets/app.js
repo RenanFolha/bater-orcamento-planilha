@@ -1934,11 +1934,15 @@ async function carregarTabelaPrecos(){
 
   await criarEditorTabela({
     containerId: 'precos-taxas-balsa', endpoint: 'taxas-balsa',
-    titulo: 'Taxas de Balsa (travessia origem → destino, direcional — ida e volta podem ter valores diferentes)',
+    titulo: 'Taxas de Balsa (travessia origem → destino, direcional — ida e volta podem ter valores diferentes. ' +
+      'Use "*" em origem, destino ou veículo pra valer de qualquer um — ex: corredor fluvial Belém→Manaus vale ' +
+      'pra praticamente qualquer origem: cadastre "*" → "Manaus". Quando mais de uma linha bate na mesma rota, ' +
+      'vence a mais específica — cadastre uma linha exata pra abrir exceção a um curinga, ex: "Boa Vista" → ' +
+      '"Manaus" com valor 0 pra excluir essa rota de um curinga "*" → "Manaus")',
     colunas: [
-      {campo: 'cidade_origem', label: 'Cidade de origem', tipo: 'text'},
-      {campo: 'cidade_destino', label: 'Cidade de destino', tipo: 'text'},
-      {campo: 'veiculo', label: 'Veículo', tipo: 'select', opcoes: veiculosParaColeta.map(v => v.nome)},
+      {campo: 'cidade_origem', label: 'Cidade de origem (ou "*")', tipo: 'text'},
+      {campo: 'cidade_destino', label: 'Cidade de destino (ou "*")', tipo: 'text'},
+      {campo: 'veiculo', label: 'Veículo (ou "*")', tipo: 'select', opcoes: ['*', ...veiculosParaColeta.map(v => v.nome)]},
       {campo: 'tipo', label: 'Tipo', tipo: 'select', opcoes: ['fixo', 'percentual']},
       {campo: 'valor', label: 'Valor (R$ ou %)', tipo: 'number', step: '0.01'},
       {campo: 'observacao', label: 'Observação', tipo: 'text'},
