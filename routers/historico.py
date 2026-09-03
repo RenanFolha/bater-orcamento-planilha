@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 import export_service as export
 import frete_db as db
 from deps import exigir_login
-from schemas import HistoricoSalvarRequest
+from schemas import AtualizarPedagioHistoricoRequest, HistoricoSalvarRequest
 
 router = APIRouter(prefix="/historico", tags=["Histórico"])
 
@@ -61,23 +61,57 @@ def obter_historico(codigo: str, usuario: dict = Depends(exigir_login)):
     return _buscar_historico_com_dados(codigo)
 
 
+def _exigir_dono_ou_admin(registro: dict, usuario: dict, acao: str) -> None:
+    """Só quem salvou o registro (mesma conta logada) ou um administrador
+    pode excluir/editar — registros de bancos antigos (sem criado_por
+    preenchido) só são alterados por um admin."""
+    dono = registro.get("criado_por") or ""
+    if usuario["role"] != "admin" and dono != usuario["username"]:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Só o administrador ou quem salvou este orçamento pode {acao}.",
+        )
+
+
 @router.delete("/{id_}")
 def excluir_historico(id_: int, usuario: dict = Depends(exigir_login)):
     registro = db.buscar_orcamento_historico_por_id(id_)
     if not registro:
         raise HTTPException(status_code=404, detail="Orçamento não encontrado no histórico.")
-    # Só quem salvou o registro (mesma conta logada) ou um administrador
-    # pode excluir — antes, qualquer usuário logado podia apagar o
-    # histórico de qualquer outro. Registros de bancos antigos (sem
-    # criado_por preenchido) só saem pela mão de um admin.
-    dono = registro.get("criado_por") or ""
-    if usuario["role"] != "admin" and dono != usuario["username"]:
-        raise HTTPException(
-            status_code=403,
-            detail="Só o administrador ou quem salvou este orçamento pode excluí-lo.",
-        )
+    _exigir_dono_ou_admin(registro, usuario, "excluí-lo")
     db.excluir_orcamento_historico(id_)
     return {"status": "ok"}
+
+
+@router.put("/{id_}/pedagio")
+def atualizar_pedagio(id_: int, payload: AtualizarPedagioHistoricoRequest, usuario: dict = Depends(exigir_login)):
+    """Corrige o valor do pedágio de um orçamento já salvo (ex: o valor
+    estimado pelo Google Maps na hora da cotação estava errado). Recalcula
+    o frete total só pela diferença entre o pedágio antigo e o novo — o
+    resto do orçamento continua refletindo os parâmetros de quando foi
+    cotado, não a tabela de preços atual."""
+    registro = db.buscar_orcamento_historico_por_id(id_)
+    if not registro:
+        raise HTTPException(status_code=404, detail="Orçamento não encontrado no histórico.")
+    _exigir_dono_ou_admin(registro, usuario, "editá-lo")
+
+    dados = json.loads(registro["dados_json"] or "{}")
+    resultado = dados.setdefault("resultado", {})
+    calc = resultado.setdefault("calculos_intermediarios", {})
+    pedagio_antigo = calc.get("pedagio") or 0
+    novo_pedagio = round(payload.pedagio, 2)
+    calc["pedagio"] = novo_pedagio
+
+    res_final = resultado.setdefault("resultado", {})
+    frete_total_antigo = res_final.get("frete_total", registro["frete_total"]) or 0
+    frete_total_novo = round(frete_total_antigo - pedagio_antigo + novo_pedagio, 2)
+    res_final["frete_total"] = frete_total_novo
+
+    if isinstance(dados.get("payload"), dict):
+        dados["payload"]["pedagio"] = novo_pedagio
+
+    db.atualizar_pedagio_historico(id_, frete_total_novo, json.dumps(dados, ensure_ascii=False))
+    return {"status": "ok", "pedagio": novo_pedagio, "frete_total": frete_total_novo}
 
 
 @router.get("/{codigo}/planilha")

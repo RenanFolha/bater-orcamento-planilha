@@ -432,6 +432,14 @@
           </div>
           <div id="detalhe-status" class="cep-info" style="margin:0 20px;"></div>
           <div class="card-body" id="detalhe-conteudo"></div>
+          <div class="field" id="detalhe-editar-pedagio" style="margin:0 20px 20px;display:none;">
+            <label for="detalhe-pedagio">Pedágio (R$) — editável</label>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <input type="text" inputmode="decimal" id="detalhe-pedagio" value="0,00" oninput="formatarMoedaDigitando(this)" style="max-width:160px;">
+              <button type="button" id="btn-salvar-pedagio-historico" class="calc" style="padding:7px 14px;font-size:12px;">Salvar pedágio</button>
+            </div>
+            <div id="detalhe-pedagio-status" class="cep-info" style="margin-top:6px;"></div>
+          </div>
         </div>
         <div class="card" id="detalhe-memoria-card" style="margin-top:14px;">
           <div class="card-head">

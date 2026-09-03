@@ -376,9 +376,12 @@ no mínimo 8 caracteres.
 > exige login (qualquer papel) para listar/salvar/ver — mas só quem
 > salvou o orçamento (a conta logada, não o texto livre do campo
 > "Responsável") ou um administrador pode excluir um registro do
-> histórico (`DELETE /historico/{id}`, `403` caso contrário). `/orcamento`,
-> `/geo/*` e `/parametros/*` continuam públicos — gerar um orçamento não
-> exige login.
+> histórico (`DELETE /historico/{id}`, `403` caso contrário) ou corrigir
+> o pedágio de um orçamento já salvo (`PUT /historico/{id}/pedagio`,
+> mesma regra de dono/admin — recalcula o `frete_total` só pela diferença
+> entre o pedágio antigo e o novo, sem reprocessar o resto do orçamento).
+> `/orcamento`, `/geo/*` e `/parametros/*` continuam públicos — gerar um
+> orçamento não exige login.
 >
 > O login tem limite de tentativas falhas (bloqueio temporário) tanto por
 > IP quanto por usuário — protege contra força bruta mesmo quando várias

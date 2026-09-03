@@ -154,6 +154,73 @@ def test_usuario_comum_pode_excluir_o_proprio_historico(client):
     assert r.status_code == 200
 
 
+def _salvar_historico_com_pedagio(client, pedagio, frete_total, **kwargs):
+    payload = {
+        "cliente": "Cliente Pedágio", "responsavel": "Admin",
+        "frete_total": frete_total,
+        "dados": {
+            "payload": {"pedagio": pedagio},
+            "resultado": {
+                "entrada": {}, "calculos_intermediarios": {"pedagio": pedagio},
+                "resultado": {"frete_total": frete_total},
+            },
+        },
+    }
+    payload.update(kwargs)
+    r = client.post("/historico", json=payload)
+    assert r.status_code == 200, r.text
+    codigo = r.json()["codigo"]
+    hist_id = next(h["id"] for h in client.get("/historico").json() if h["codigo"] == codigo)
+    return codigo, hist_id
+
+
+def test_historico_atualizar_pedagio_recalcula_frete_total(client):
+    _login(client)
+    codigo, hist_id = _salvar_historico_com_pedagio(client, pedagio=10.0, frete_total=100.0)
+
+    r = client.put(f"/historico/{hist_id}/pedagio", json={"pedagio": 25.0})
+    assert r.status_code == 200, r.text
+    assert r.json()["pedagio"] == 25.0
+    assert r.json()["frete_total"] == pytest.approx(115.0)  # 100 - 10 + 25
+
+    detalhe = client.get(f"/historico/{codigo}").json()
+    assert detalhe["frete_total"] == pytest.approx(115.0)
+    assert detalhe["dados"]["resultado"]["calculos_intermediarios"]["pedagio"] == 25.0
+    assert detalhe["dados"]["resultado"]["resultado"]["frete_total"] == pytest.approx(115.0)
+    assert detalhe["dados"]["payload"]["pedagio"] == 25.0
+
+
+def test_historico_atualizar_pedagio_rejeita_valor_negativo(client):
+    _login(client)
+    _codigo, hist_id = _salvar_historico_com_pedagio(client, pedagio=10.0, frete_total=100.0)
+    r = client.put(f"/historico/{hist_id}/pedagio", json={"pedagio": -5.0})
+    assert r.status_code == 422
+
+
+def test_historico_atualizar_pedagio_404_quando_nao_existe(client):
+    _login(client)
+    r = client.put("/historico/99999/pedagio", json={"pedagio": 10.0})
+    assert r.status_code == 404
+
+
+def test_historico_atualizar_pedagio_soh_pode_ser_feito_pelo_dono_ou_admin(client):
+    _login(client)
+    client.post("/admin/usuarios", json={
+        "nome": "Comum", "username": "comum", "senha": "senha1234", "role": "usuario",
+    })
+    _codigo, hist_id = _salvar_historico_com_pedagio(client, pedagio=10.0, frete_total=100.0)
+
+    client.post("/auth/logout")
+    _login(client, username="comum", senha="senha1234")
+    r = client.put(f"/historico/{hist_id}/pedagio", json={"pedagio": 25.0})
+    assert r.status_code == 403
+
+    client.post("/auth/logout")
+    _login(client)
+    r = client.put(f"/historico/{hist_id}/pedagio", json={"pedagio": 25.0})
+    assert r.status_code == 200
+
+
 def test_admin_taxas_balsa_crud(client):
     _login(client)
     veiculo = client.get("/parametros/veiculos").json()[0]["nome"]

@@ -1406,6 +1406,19 @@ def excluir_orcamento_historico(id_: int):
         conn.execute("DELETE FROM orcamentos_historico WHERE id=?", (id_,))
 
 
+def atualizar_pedagio_historico(id_: int, frete_total: float, dados_json: str):
+    """Usado só pra corrigir o pedágio de um orçamento já salvo (ex: o
+    valor estimado pelo Google Maps na hora da cotação estava errado) —
+    ver routers/historico.py, que recalcula frete_total e o dados_json
+    antes de chamar essa função. Não mexe em mais nenhum campo do
+    orçamento salvo."""
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE orcamentos_historico SET frete_total=?, dados_json=? WHERE id=?",
+            (frete_total, dados_json, id_),
+        )
+
+
 # ============================================================
 # Usuários e sessões (login) — as senhas nunca são retornadas
 # pelas funções "_admin"; ver auth_service.py para hash/verificação.

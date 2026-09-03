@@ -1900,6 +1900,42 @@ document.getElementById('historico-busca').addEventListener('input', (ev) => {
 });
 
 let detalheHistoricoCodigo = null;
+let detalheHistoricoRegistro = null;
+
+function renderizarDetalheHistorico(registro){
+  const calc = registro.dados?.resultado?.calculos_intermediarios || {};
+  const entrada = registro.dados?.resultado?.entrada || {};
+
+  document.getElementById('detalhe-titulo').textContent = `${registro.codigo} — ${registro.cliente}`;
+  document.getElementById('detalhe-subtitulo').textContent =
+    `Responsável: ${registro.responsavel} · ${new Date(registro.criado_em).toLocaleString('pt-BR')}`;
+
+  const linhas = [
+    ['Rota', [registro.origem_resumo, registro.destino_resumo].filter(Boolean).join(' → ') || '—'],
+    ['Veículo', registro.veiculo || entrada.veiculo || '—'],
+    ['Distância', `${registro.distancia_km} km`],
+    ['Peso considerado', calc.peso_considerado_kg != null ? `${calc.peso_considerado_kg} kg` : '—'],
+    ['Valor da mercadoria', fmtBRL(registro.valor_mercadoria)],
+    ['Frete total', fmtBRL(registro.frete_total)],
+  ];
+  document.getElementById('detalhe-conteudo').innerHTML = linhas.map(([label, valor]) => `
+    <div class="line"><span>${esc(label)}</span><span>${esc(valor)}</span></div>
+  `).join('');
+
+  // Só quem salvou o registro (mesma conta logada) ou um admin pode editar
+  // o pedágio -- mesma regra usada pra excluir (ver renderizarHistorico).
+  // O backend também recusa (403) quem não pode, isso aqui só evita
+  // mostrar um campo que vai dar erro pro usuário comum.
+  const podeEditar = !!currentUser && (currentUser.role === 'admin' || registro.criado_por === currentUser.username);
+  const blocoEditarPedagio = document.getElementById('detalhe-editar-pedagio');
+  blocoEditarPedagio.style.display = podeEditar ? '' : 'none';
+  if(podeEditar){
+    document.getElementById('detalhe-pedagio').value = formatarValorMoeda(calc.pedagio || 0);
+    document.getElementById('detalhe-pedagio-status').textContent = '';
+  }
+
+  renderizarMemoriaCalculo(registro.dados?.resultado, 'detalhe-memoria-calculo', false);
+}
 
 async function abrirDetalheHistorico(codigo){
   const statusListaEl = document.getElementById('historico-lista-status');
@@ -1908,26 +1944,9 @@ async function abrirDetalheHistorico(codigo){
     if(!res.ok) throw new Error(`Erro HTTP ${res.status}`);
     const registro = await res.json();
     detalheHistoricoCodigo = registro.codigo;
-    const calc = registro.dados?.resultado?.calculos_intermediarios || {};
-    const entrada = registro.dados?.resultado?.entrada || {};
+    detalheHistoricoRegistro = registro;
 
-    document.getElementById('detalhe-titulo').textContent = `${registro.codigo} — ${registro.cliente}`;
-    document.getElementById('detalhe-subtitulo').textContent =
-      `Responsável: ${registro.responsavel} · ${new Date(registro.criado_em).toLocaleString('pt-BR')}`;
-
-    const linhas = [
-      ['Rota', [registro.origem_resumo, registro.destino_resumo].filter(Boolean).join(' → ') || '—'],
-      ['Veículo', registro.veiculo || entrada.veiculo || '—'],
-      ['Distância', `${registro.distancia_km} km`],
-      ['Peso considerado', calc.peso_considerado_kg != null ? `${calc.peso_considerado_kg} kg` : '—'],
-      ['Valor da mercadoria', fmtBRL(registro.valor_mercadoria)],
-      ['Frete total', fmtBRL(registro.frete_total)],
-    ];
-    document.getElementById('detalhe-conteudo').innerHTML = linhas.map(([label, valor]) => `
-      <div class="line"><span>${esc(label)}</span><span>${esc(valor)}</span></div>
-    `).join('');
-
-    renderizarMemoriaCalculo(registro.dados?.resultado, 'detalhe-memoria-calculo', false);
+    renderizarDetalheHistorico(registro);
 
     statusListaEl.className = 'cep-info';
     statusListaEl.textContent = '';
@@ -1941,6 +1960,46 @@ async function abrirDetalheHistorico(codigo){
     statusListaEl.textContent = `Erro ao abrir o orçamento: ${e.message}`;
   }
 }
+
+document.getElementById('btn-salvar-pedagio-historico').addEventListener('click', async () => {
+  if(!detalheHistoricoRegistro) return;
+  const btn = document.getElementById('btn-salvar-pedagio-historico');
+  const statusEl = document.getElementById('detalhe-pedagio-status');
+  const novoPedagio = valorMoedaParaNumero(document.getElementById('detalhe-pedagio').value);
+
+  btn.disabled = true;
+  statusEl.className = 'cep-info';
+  statusEl.textContent = 'Salvando...';
+  try{
+    const res = await fetch(`${API_BASE}/historico/${detalheHistoricoRegistro.id}/pedagio`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({pedagio: novoPedagio}),
+    });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.detail || 'Erro ao salvar o pedágio.');
+
+    // Atualiza o registro em memória com o que o backend recalculou
+    // (frete_total pode ter mudado pela diferença do pedágio) e
+    // re-renderiza o detalhe pra refletir o novo total sem recarregar.
+    detalheHistoricoRegistro.frete_total = data.frete_total;
+    if(detalheHistoricoRegistro.dados?.resultado?.calculos_intermediarios){
+      detalheHistoricoRegistro.dados.resultado.calculos_intermediarios.pedagio = data.pedagio;
+    }
+    if(detalheHistoricoRegistro.dados?.resultado?.resultado){
+      detalheHistoricoRegistro.dados.resultado.resultado.frete_total = data.frete_total;
+    }
+    renderizarDetalheHistorico(detalheHistoricoRegistro);
+
+    statusEl.className = 'cep-info ok';
+    statusEl.textContent = 'Pedágio atualizado.';
+  }catch(e){
+    statusEl.className = 'cep-info err';
+    statusEl.textContent = e.message;
+  }finally{
+    btn.disabled = false;
+  }
+});
 
 document.getElementById('btn-voltar-historico').addEventListener('click', () => {
   document.getElementById('view-historico-detalhe').style.display = 'none';

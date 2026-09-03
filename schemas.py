@@ -73,6 +73,10 @@ class HistoricoSalvarRequest(BaseModel):
     dados: dict = Field(default_factory=dict, description="Snapshot completo do orçamento (entrada + resultado) para consulta posterior")
 
 
+class AtualizarPedagioHistoricoRequest(BaseModel):
+    pedagio: float = Field(..., ge=0, description="Novo valor de pedágio (R$) do orçamento já salvo no histórico")
+
+
 class FaixaColetaIn(BaseModel):
     de: float = Field(..., ge=0)
     ate: float = Field(..., gt=0)
