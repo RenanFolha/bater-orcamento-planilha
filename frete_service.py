@@ -692,6 +692,7 @@ def calcular_orcamento(
     valor_entrega_terceirizada: float = 0,
     pedagio: float = 0,
     distancia_retorno: float = 0,
+    prioridade_rota: str | None = None,
 ) -> dict:
     if peso <= 0:
         raise FreteInputError("Peso deve ser maior que zero.")
@@ -853,6 +854,11 @@ def calcular_orcamento(
             "peso_kg": peso,
             "paletes": paletes,
             "distancia_km": round(distancia),
+            # Nome da filial de escala obrigatória usada pra calcular a
+            # distância acima (ver geo_service.calcular_distancia +
+            # frete_service.prioridade_rota_aplicavel) — só informativo,
+            # não entra em nenhuma conta daqui pra frente.
+            "rota_obrigatoria": prioridade_rota or None,
             "distancia_coleta_km": round(distancia_coleta),
             "valor_mercadoria": round(valor_mercadoria, 2),
             "veiculo": v.nome,

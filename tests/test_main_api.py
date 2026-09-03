@@ -54,6 +54,12 @@ def test_orcamento_e_publico_sem_login(client):
     assert r.json()["resultado"]["frete_total"] > 0
 
 
+def test_orcamento_repassa_prioridade_rota_pra_memoria_de_calculo(client):
+    r = client.post("/orcamento", json=_orcamento_payload(prioridade_rota="Belem"))
+    assert r.status_code == 200
+    assert r.json()["entrada"]["rota_obrigatoria"] == "Belem"
+
+
 def test_login_com_admin_padrao(client):
     r = _login(client)
     assert r.json()["role"] == "admin"

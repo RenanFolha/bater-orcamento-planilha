@@ -33,6 +33,7 @@ def orcamento(payload: OrcamentoRequest):
             valor_entrega_terceirizada=payload.valor_entrega_terceirizada,
             pedagio=payload.pedagio,
             distancia_retorno=payload.distancia_retorno,
+            prioridade_rota=payload.prioridade_rota or None,
         )
     except fs.FreteInputError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e

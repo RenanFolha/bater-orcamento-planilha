@@ -82,6 +82,26 @@ def test_calculo_basico_sem_coleta(parametros):
     assert calc["tarifa_km_veiculo"] == pytest.approx(2.0)  # tarifa_km fixa do VUC, sem faixa cadastrada
 
 
+def test_rota_obrigatoria_ausente_por_padrao(parametros):
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+    )
+    assert resultado["entrada"]["rota_obrigatoria"] is None
+
+
+def test_rota_obrigatoria_aparece_na_memoria_de_calculo(parametros):
+    # Vem de geo_service.calcular_distancia (nome da filial de escala) --
+    # só informativo, não deve mexer em nenhum valor do frete.
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        prioridade_rota="Belem",
+    )
+    assert resultado["entrada"]["rota_obrigatoria"] == "Belem"
+    assert resultado["resultado"]["frete_total"] == pytest.approx(220.0)
+
+
 def test_peso_dentro_da_faixa_do_veiculo_nao_gera_excedente(parametros):
     # peso=1500 fica dentro da faixa do Truck (1000-999999) -- mesmo o
     # Truck tendo valor_tonelada_excedente configurado (800.0), não deve

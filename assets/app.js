@@ -29,6 +29,7 @@ const MEMORIA_CALCULO_CAMPOS = [
   {header: 'Entrada'},
   {chave: 'peso_kg', rotulo: 'Peso informado', tipo: 'kg'},
   {chave: 'distancia_km', rotulo: 'Distância do frete', tipo: 'km'},
+  {chave: 'rota_obrigatoria', rotulo: 'Rota obrigatória (via filial)', tipo: 'texto'},
   {chave: 'distancia_coleta_km', rotulo: 'Distância de coleta', tipo: 'km'},
   {chave: 'valor_mercadoria', rotulo: 'Valor da mercadoria', tipo: 'brl'},
   {chave: 'veiculo', rotulo: 'Veículo escolhido', tipo: 'texto'},
@@ -646,6 +647,7 @@ const distanciaInput = document.getElementById('distancia');
 let cidadeColetaResolvida = '';
 let cidadeOrigemResolvida = '';
 let cidadeDestinoResolvida = '';
+let prioridadeRotaResolvida = '';
 
 // Flag (não o valor do campo) que diz se a rota calculada ainda vale --
 // o campo "distancia" é required no HTML, então esvaziá-lo pra marcar
@@ -665,6 +667,7 @@ function invalidarRotaCalculada(){
   cidadeColetaResolvida = '';
   cidadeOrigemResolvida = '';
   cidadeDestinoResolvida = '';
+  prioridadeRotaResolvida = '';
   geoStatus.className = 'geo-status';
   geoStatus.textContent = '';
 }
@@ -689,6 +692,7 @@ async function calcularDistanciaEEndereco(){
   cidadeColetaResolvida = '';
   cidadeOrigemResolvida = '';
   cidadeDestinoResolvida = '';
+  prioridadeRotaResolvida = '';
 
   btnGeo.disabled = true;
   btnGeo.textContent = 'Calculando...';
@@ -809,6 +813,7 @@ async function calcularDistanciaEEndereco(){
     }
 
     distanciaInput.value = data2.distancia_km;
+    prioridadeRotaResolvida = data2.prioridade_rota || '';
     const horas = Math.floor(data2.duracao_min / 60);
     const minutos = Math.round(data2.duracao_min % 60);
     const tempoTexto = horas > 0 ? `${horas}h${minutos.toString().padStart(2,'0')}` : `${minutos} min`;
@@ -907,6 +912,7 @@ form.addEventListener('submit', async (ev) => {
     cidade_coleta: cidadeColetaResolvida,
     cidade_origem: cidadeOrigemResolvida,
     cidade_destino: cidadeDestinoResolvida,
+    prioridade_rota: prioridadeRotaResolvida,
     valor_mercadoria: valorMoedaParaNumero(document.getElementById('valor_mercadoria').value),
     categoria: document.getElementById('categoria').value,
     transporte: document.getElementById('transporte').value,
