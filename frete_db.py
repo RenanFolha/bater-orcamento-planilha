@@ -205,6 +205,24 @@ CREATE TABLE IF NOT EXISTS taxas_balsa (
     UNIQUE(cidade_origem, cidade_destino, veiculo)
 );
 
+CREATE TABLE IF NOT EXISTS prioridades_rota (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- Regra de roteirização: quando a rota bate estado_origem (UF) ->
+    -- cidade_destino, a distância do frete deixa de ser calculada direto e
+    -- passa a ser a soma de origem -> filial_escala + filial_escala ->
+    -- destino (ex: Manaus não tem acesso rodoviário direto da maioria dos
+    -- estados -- a carga sempre passa por uma filial em Belém antes de
+    -- seguir de balsa). estado_origem e cidade_destino aceitam "*" como
+    -- curinga (mesmo mecanismo de taxas_balsa, ver
+    -- frete_service.prioridade_rota_aplicavel); quando mais de uma
+    -- linha bate na mesma rota, vence a mais específica.
+    estado_origem TEXT NOT NULL,
+    cidade_destino TEXT NOT NULL,
+    filial_escala TEXT NOT NULL,
+    observacao TEXT DEFAULT '',
+    UNIQUE(estado_origem, cidade_destino)
+);
+
 CREATE TABLE IF NOT EXISTS usuarios (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     nome TEXT NOT NULL,
@@ -554,6 +572,22 @@ def _migrar_colunas(conn: sqlite3.Connection):
         # usado pra obrigar a troca da senha padrão do admin criado
         # automaticamente (ver garantir_usuario_padrao em auth_service.py).
         conn.execute("ALTER TABLE usuarios ADD COLUMN deve_trocar_senha INTEGER NOT NULL DEFAULT 0")
+    if _coluna_existe(conn, "escalas_obrigatorias", "cidade_origem"):
+        # Campo original era cidade de origem exata -- trocado por UF
+        # (estado_origem), porque a regra de roteirização normalmente vale
+        # pro estado inteiro, não só pra uma cidade específica.
+        # RENAME COLUMN existe desde o SQLite 3.25 (2018).
+        conn.execute("ALTER TABLE escalas_obrigatorias RENAME COLUMN cidade_origem TO estado_origem")
+    if _coluna_existe(conn, "escalas_obrigatorias", "estado_origem"):
+        # Tabela renomeada de escalas_obrigatorias pra prioridades_rota
+        # (nome mais claro pro usuário) -- prioridades_rota já foi criada
+        # vazia pelo schema acima, então migra as linhas que existirem e
+        # descarta a tabela antiga.
+        conn.execute(
+            "INSERT INTO prioridades_rota (estado_origem, cidade_destino, filial_escala, observacao) "
+            "SELECT estado_origem, cidade_destino, filial_escala, observacao FROM escalas_obrigatorias"
+        )
+        conn.execute("DROP TABLE escalas_obrigatorias")
 
 
 def _completar_carreta_fechada(conn: sqlite3.Connection):
@@ -1221,6 +1255,64 @@ def atualizar_taxa_balsa(id_, cidade_origem, cidade_destino, veiculo, tipo, valo
 def excluir_taxa_balsa(id_):
     with get_connection() as conn:
         conn.execute("DELETE FROM taxas_balsa WHERE id=?", (id_,))
+
+
+def listar_prioridades_rota_admin() -> list[dict]:
+    with get_connection() as conn:
+        return [
+            dict(r) for r in conn.execute(
+                "SELECT * FROM prioridades_rota ORDER BY estado_origem, cidade_destino"
+            )
+        ]
+
+
+def _prioridade_rota_duplicada(
+    conn: sqlite3.Connection, estado_origem: str, cidade_destino: str, ignorar_id: int | None = None,
+) -> bool:
+    """Mesmo motivo da checagem equivalente em taxas_balsa: a UNIQUE do
+    SQLite é case-sensitive, mas a aplicação compara em minúsculas (ver
+    frete_service.prioridade_rota_aplicavel)."""
+    query = (
+        "SELECT 1 FROM prioridades_rota WHERE LOWER(estado_origem) = LOWER(?) "
+        "AND LOWER(cidade_destino) = LOWER(?)"
+    )
+    params = [estado_origem.strip(), cidade_destino.strip()]
+    if ignorar_id is not None:
+        query += " AND id != ?"
+        params.append(ignorar_id)
+    return conn.execute(query, params).fetchone() is not None
+
+
+def inserir_prioridade_rota(estado_origem, cidade_destino, filial_escala, observacao=""):
+    with get_connection() as conn:
+        if _prioridade_rota_duplicada(conn, estado_origem, cidade_destino):
+            raise sqlite3.IntegrityError(
+                f"já existe uma prioridade de rota de '{estado_origem}' → '{cidade_destino}'"
+            )
+        cur = conn.execute(
+            "INSERT INTO prioridades_rota (estado_origem, cidade_destino, filial_escala, observacao) "
+            "VALUES (?,?,?,?)",
+            (estado_origem, cidade_destino, filial_escala, observacao),
+        )
+        return cur.lastrowid
+
+
+def atualizar_prioridade_rota(id_, estado_origem, cidade_destino, filial_escala, observacao=""):
+    with get_connection() as conn:
+        if _prioridade_rota_duplicada(conn, estado_origem, cidade_destino, ignorar_id=id_):
+            raise sqlite3.IntegrityError(
+                f"já existe uma prioridade de rota de '{estado_origem}' → '{cidade_destino}'"
+            )
+        conn.execute(
+            "UPDATE prioridades_rota SET estado_origem=?, cidade_destino=?, filial_escala=?, observacao=? "
+            "WHERE id=?",
+            (estado_origem, cidade_destino, filial_escala, observacao, id_),
+        )
+
+
+def excluir_prioridade_rota(id_):
+    with get_connection() as conn:
+        conn.execute("DELETE FROM prioridades_rota WHERE id=?", (id_,))
 
 
 def _proximo_codigo_orcamento(conn: sqlite3.Connection) -> str:

@@ -11,7 +11,10 @@ nunca toca no frete.db real nem em rede de verdade.
 
 import asyncio
 
+import pytest
+
 import frete_db as db
+import frete_service as fs
 import geo_service as geo
 
 
@@ -102,3 +105,68 @@ def test_calcular_distancia_sem_veiculo_geocodifica_normalmente(banco_temporario
     resultado = asyncio.run(geo.calcular_distancia("Campinas", "Belém, Pará, Brasil"))
     assert resultado["distancia_km"] == 123
     assert len(chamou_geocode) == 2  # geocodificou os dois endereços de verdade
+
+
+def test_calcular_distancia_com_prioridade_rota_soma_as_duas_pernas(banco_temporario, monkeypatch):
+    # Destino Manaus não tem acesso rodoviário direto -- uma prioridade de
+    # rota "*" -> "Manaus" via Belém precisa fazer a distância final ser a
+    # soma origem->Belém + Belém->Manaus, não a rota direta.
+    p = fs.ParametrosFrete()
+    p.filiais = {"belém": fs.Filial("Belém", "Centro, Belém, PA, Brasil", None, None)}
+    p.prioridades_rota = [
+        fs.PrioridadeRota(estado_origem="*", cidade_destino="Manaus", filial_escala="Belém"),
+    ]
+    monkeypatch.setattr(fs, "parametros", p)
+
+    async def _geocode_fake(client, endereco, dica_cidade=None):
+        resolvidos = {
+            "São Paulo": (0.0, 0.0, "Rua X, São Paulo, São Paulo, Brasil"),
+            "Manaus": (0.0, 0.0, "Rua Y, Manaus, Amazonas, Brasil"),
+        }
+        return resolvidos[endereco]
+
+    async def _coordenadas_filial_fake(client, filial):
+        return (1.0, 1.0)
+
+    chamadas_rota = []
+
+    async def _rota_fake(client, lat1, lon1, lat2, lon2):
+        chamadas_rota.append((lat1, lon1, lat2, lon2))
+        if len(chamadas_rota) == 1:
+            return {"distancia_km": 2500, "duracao_min": 1800, "pedagio_valor": 50.0, "pedagio_moeda": "BRL"}
+        return {"distancia_km": 400, "duracao_min": 300, "pedagio_valor": None, "pedagio_moeda": None}
+
+    monkeypatch.setattr(geo, "_geocode", _geocode_fake)
+    monkeypatch.setattr(geo, "coordenadas_filial", _coordenadas_filial_fake)
+    monkeypatch.setattr(geo, "_rota", _rota_fake)
+
+    resultado = asyncio.run(geo.calcular_distancia("São Paulo", "Manaus"))
+    assert resultado["distancia_km"] == 2900  # 2500 + 400
+    assert resultado["duracao_min"] == 2100  # 1800 + 300
+    assert resultado["pedagio_valor"] == pytest.approx(50.0)
+    assert resultado["prioridade_rota"] == "Belém"
+    assert len(chamadas_rota) == 2  # uma perna pra cada trecho, nunca a rota direta
+
+
+def test_calcular_distancia_sem_prioridade_rota_faz_rota_direta(banco_temporario, monkeypatch):
+    p = fs.ParametrosFrete()
+    p.filiais = {}
+    p.prioridades_rota = []
+    monkeypatch.setattr(fs, "parametros", p)
+
+    async def _geocode_fake(client, endereco, dica_cidade=None):
+        return (0.0, 0.0, endereco)
+
+    chamadas_rota = []
+
+    async def _rota_fake(client, lat1, lon1, lat2, lon2):
+        chamadas_rota.append((lat1, lon1, lat2, lon2))
+        return {"distancia_km": 300, "duracao_min": 200, "pedagio_valor": None, "pedagio_moeda": None}
+
+    monkeypatch.setattr(geo, "_geocode", _geocode_fake)
+    monkeypatch.setattr(geo, "_rota", _rota_fake)
+
+    resultado = asyncio.run(geo.calcular_distancia("Campinas", "Curitiba, PR, Brasil"))
+    assert resultado["distancia_km"] == 300
+    assert "prioridade_rota" not in resultado
+    assert len(chamadas_rota) == 1  # rota direta, sem dividir em pernas

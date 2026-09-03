@@ -82,6 +82,7 @@ Sem planilha — agora tudo fica no banco `frete.db`. Para editar:
 | `coleta_cidades_fixas`   | Preço fixo de coleta por rota (filial de origem → cidade(s) do cliente, uma ou várias separadas por vírgula) + veículo (sobrepõe a faixa por km)|
 | `taxas_regionais`        | Taxas cobradas quando a cidade de origem OU destino bate com uma cidade cadastrada (ex: zona franca de Manaus), fixas ou % |
 | `taxas_balsa`            | Custo de travessia de balsa por rota **direcional** (cidade de origem → cidade de destino) + veículo — ida e volta podem ter valores diferentes, cadastre uma linha pra cada sentido |
+| `prioridades_rota`       | Rota **direcional** (estado de origem, UF → cidade de destino) que não tem acesso direto e precisa passar por uma filial cadastrada antes do destino (ex: Manaus sempre via Belém) — a distância do frete passa a ser a soma das duas pernas |
 | `faixas_coleta`          | Faixas de distância da taxa de coleta (retirada no cliente)|
 | `categorias`             | Categorias de produto e multiplicador                     |
 | `transportes`            | Métodos de transporte, multiplicador e fator de cubagem   |
@@ -163,6 +164,14 @@ Em cima disso somam-se:
   valor da mercadoria. É direcional: a volta (destino → origem) só
   aplica se tiver a própria linha cadastrada — o preço da travessia pode
   ser diferente em cada sentido.
+- **Prioridade de Rota** — quando a rota **estado de origem (UF) → cidade
+  de destino** bate com uma linha cadastrada em
+  `/admin/prioridades-rota` (ex: destino Manaus não tem acesso
+  rodoviário direto e sempre passa por uma filial em Belém antes), a
+  distância calculada em `/geo/distancia` deixa de ser a rota direta e
+  passa a ser a soma origem → filial de escala + filial de escala →
+  destino. Também aceita `"*"` em estado e destino, com a mesma regra de
+  especificidade da Taxa de Balsa.
 - **Taxa de coleta** — quando há retirada no cliente (frota própria,
   veja abaixo) ou o valor combinado com a transportadora, quando a
   coleta é terceirizada.

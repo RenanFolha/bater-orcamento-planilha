@@ -236,6 +236,41 @@ def test_admin_taxas_balsa_exige_admin(client):
     assert r.status_code == 401
 
 
+def test_admin_prioridades_rota_crud(client):
+    _login(client)
+    filial = client.get("/parametros/filiais").json()[0]["nome"]
+
+    r = client.post("/admin/prioridades-rota", json={
+        "estado_origem": "*", "cidade_destino": "Manaus", "filial_escala": filial,
+    })
+    assert r.status_code == 200, r.text
+    prioridade_id = r.json()["id"]
+
+    r = client.get("/admin/prioridades-rota")
+    assert r.status_code == 200
+    assert any(e["id"] == prioridade_id for e in r.json())
+
+    # mesma rota de novo -> conflito
+    r = client.post("/admin/prioridades-rota", json={
+        "estado_origem": "*", "cidade_destino": "Manaus", "filial_escala": filial,
+    })
+    assert r.status_code == 409
+
+    r = client.put(f"/admin/prioridades-rota/{prioridade_id}", json={
+        "estado_origem": "*", "cidade_destino": "Manaus", "filial_escala": filial,
+        "observacao": "ajustada",
+    })
+    assert r.status_code == 200
+
+    r = client.delete(f"/admin/prioridades-rota/{prioridade_id}")
+    assert r.status_code == 200
+
+
+def test_admin_prioridades_rota_exige_admin(client):
+    r = client.get("/admin/prioridades-rota")
+    assert r.status_code == 401
+
+
 def test_geo_distancia_descobre_veiculo_a_partir_de_peso_e_paletes(client, monkeypatch):
     """peso/paletes/transporte em /geo/distancia não entram no cálculo de
     frete -- servem só pra descobrir qual veículo seria escolhido, pra

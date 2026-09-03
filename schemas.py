@@ -166,6 +166,13 @@ class TaxaBalsaIn(BaseModel):
     observacao: str = ""
 
 
+class PrioridadeRotaIn(BaseModel):
+    estado_origem: str = Field(..., min_length=1, description="UF de origem da rota (ex: 'SP'), ou '*' pra valer de qualquer estado")
+    cidade_destino: str = Field(..., min_length=1, description="Cidade de destino da rota — direcional. Também aceita '*'")
+    filial_escala: str = Field(..., min_length=1, description="Filial cadastrada por onde a rota é obrigada a passar antes do destino (ver /parametros/filiais) — a distância do frete passa a ser origem→filial + filial→destino")
+    observacao: str = ""
+
+
 class ColetaCidadeFixaIn(BaseModel):
     filial_origem: str = Field(..., min_length=1, description="Filial de onde o veículo sai para fazer a coleta (ver /parametros/filiais)")
     cidade_destino: str = Field(

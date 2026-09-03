@@ -473,6 +473,48 @@ def test_taxa_balsa_linha_especifica_vence_curinga(parametros):
     assert resultado["calculos_intermediarios"]["custo_balsa"] == pytest.approx(0.0)
 
 
+def test_prioridade_rota_curinga_origem_vale_para_qualquer_estado(parametros):
+    # Manaus não tem acesso rodoviário direto -- "*" -> "Manaus" precisa
+    # valer pra qualquer UF de origem, sem cadastrar uma linha por estado
+    parametros.prioridades_rota.append(
+        fs.PrioridadeRota(estado_origem="*", cidade_destino="Manaus", filial_escala="Belém")
+    )
+    achada = fs.prioridade_rota_aplicavel(parametros, "São Paulo, SP, Brasil", "Manaus, Amazonas, Brasil")
+    assert achada is not None
+    assert achada.filial_escala == "Belém"
+
+
+def test_prioridade_rota_linha_especifica_vence_curinga(parametros):
+    # Roraima -> Manaus é feito por rodovia (BR-174) via uma filial em Boa
+    # Vista -- uma linha específica pra esse estado precisa sobrepor o
+    # curinga "*" -> Manaus (que assume a via fluvial por Belém)
+    parametros.prioridades_rota.append(
+        fs.PrioridadeRota(estado_origem="*", cidade_destino="Manaus", filial_escala="Belém")
+    )
+    parametros.prioridades_rota.append(
+        fs.PrioridadeRota(estado_origem="RR", cidade_destino="Manaus", filial_escala="Boa Vista")
+    )
+    achada = fs.prioridade_rota_aplicavel(parametros, "Boa Vista, Roraima, Brasil", "Manaus, Amazonas, Brasil")
+    assert achada.filial_escala == "Boa Vista"
+
+
+def test_prioridade_rota_nao_aplicada_quando_rota_nao_bate(parametros):
+    parametros.prioridades_rota.append(
+        fs.PrioridadeRota(estado_origem="*", cidade_destino="Manaus", filial_escala="Belém")
+    )
+    achada = fs.prioridade_rota_aplicavel(parametros, "São Paulo, SP, Brasil", "Curitiba, PR, Brasil")
+    assert achada is None
+
+
+def test_prioridade_rota_nao_aplicada_quando_uf_origem_nao_bate(parametros):
+    # regra específica pro Pará -- origem de outro estado não deve casar
+    parametros.prioridades_rota.append(
+        fs.PrioridadeRota(estado_origem="PA", cidade_destino="Manaus", filial_escala="Belém")
+    )
+    achada = fs.prioridade_rota_aplicavel(parametros, "São Paulo, SP, Brasil", "Manaus, Amazonas, Brasil")
+    assert achada is None
+
+
 def test_coleta_fixa_avisa_outro_veiculo_quando_nao_bate(parametros):
     parametros.coleta_cidades_fixas = [
         fs.ColetaCidadeFixa(filial_origem="SP", cidade_destino="Alguma Cidade", veiculo="Carreta", valor_fixo=50.0),

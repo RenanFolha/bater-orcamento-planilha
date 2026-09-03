@@ -1,5 +1,13 @@
 const API_BASE = ""; // mesma origem (servido pelo próprio FastAPI)
 
+// Usado no seletor de UF de origem das Escalas Obrigatórias (ver
+// carregarTabelaPrecos) -- mesmas siglas que frete_service.py reconhece.
+const UFS_BRASIL = [
+  'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS',
+  'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC',
+  'SP', 'SE', 'TO',
+];
+
 const fmtBRL = (v) => new Intl.NumberFormat('pt-BR', {style:'currency', currency:'BRL', minimumFractionDigits:2, maximumFractionDigits:2}).format(v);
 const fmtMult = (v) => v.toFixed(2).replace('.', ',') + 'x';
 
@@ -815,8 +823,15 @@ async function calcularDistanciaEEndereco(){
       pedagioInput.value = formatarValorMoeda(0);
     }
 
+    // Rota com prioridade de rota (ver /geo/distancia): a distância acima já
+    // vem somada (origem->filial + filial->destino) -- só avisa qual filial
+    // entrou no meio do caminho, pra não parecer um km "estranho" sem explicação.
+    const mensagemPrioridade = data2.prioridade_rota
+      ? ` Rota via ${data2.prioridade_rota} (prioridade de rota).`
+      : '';
+
     geoStatus.classList.add('ok');
-    geoStatus.textContent = `${mensagemColeta}Distância do frete: ${data2.distancia_km} km (≈ ${tempoTexto}).${mensagemPedagio} Campos preenchidos — edite se precisar.`;
+    geoStatus.textContent = `${mensagemColeta}Distância do frete: ${data2.distancia_km} km (≈ ${tempoTexto}).${mensagemPrioridade}${mensagemPedagio} Campos preenchidos — edite se precisar.`;
     rotaValida = true;
     return true;
 
@@ -2119,17 +2134,24 @@ async function carregarTabelaPrecos(){
 
     criarEditorTabela({
       containerId: 'precos-taxas-balsa', endpoint: 'taxas-balsa',
-      titulo: 'Taxas de Balsa (travessia origem → destino, direcional — ida e volta podem ter valores diferentes. ' +
-        'Use "*" em origem, destino ou veículo pra valer de qualquer um — ex: corredor fluvial Belém→Manaus vale ' +
-        'pra praticamente qualquer origem: cadastre "*" → "Manaus". Quando mais de uma linha bate na mesma rota, ' +
-        'vence a mais específica — cadastre uma linha exata pra abrir exceção a um curinga, ex: "Boa Vista" → ' +
-        '"Manaus" com valor 0 pra excluir essa rota de um curinga "*" → "Manaus")',
+      titulo: 'Taxa de Balsa',
       colunas: [
         {campo: 'cidade_origem', label: 'Cidade de origem (ou "*")', tipo: 'text'},
         {campo: 'cidade_destino', label: 'Cidade de destino (ou "*")', tipo: 'text'},
         {campo: 'veiculo', label: 'Veículo (ou "*")', tipo: 'select', opcoes: ['*', ...veiculosParaColeta.map(v => v.nome)]},
         {campo: 'tipo', label: 'Tipo', tipo: 'select', opcoes: ['fixo', 'percentual']},
         {campo: 'valor', label: 'Valor (R$ ou %)', tipo: 'number', step: '0.01'},
+        {campo: 'observacao', label: 'Observação', tipo: 'text'},
+      ],
+    }),
+
+    criarEditorTabela({
+      containerId: 'precos-prioridades-rota', endpoint: 'prioridades-rota',
+      titulo: 'Prioridade de rota',
+      colunas: [
+        {campo: 'estado_origem', label: 'Estado de origem (UF, ou "*")', tipo: 'select', opcoes: ['*', ...UFS_BRASIL]},
+        {campo: 'cidade_destino', label: 'Cidade de destino (ou "*")', tipo: 'text'},
+        {campo: 'filial_escala', label: 'Filial obrigatória de passagem', tipo: 'select', opcoes: filiaisParaColeta.map(f => f.nome)},
         {campo: 'observacao', label: 'Observação', tipo: 'text'},
       ],
     }),

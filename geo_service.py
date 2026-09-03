@@ -440,7 +440,18 @@ async def calcular_distancia(origem: str, destino: str, veiculo: str | None = No
     foi cotada e salva no histórico — se achar, reaproveita a distância de
     lá (silenciosamente, sem indicar isso na resposta) em vez de
     geocodificar de novo. Sem o veículo (chamador não informou), sempre
-    geocodifica de verdade."""
+    geocodifica de verdade.
+
+    Depois de geocodificar os dois endereços, também checa se existe uma
+    prioridade de rota cadastrada pra esse par origem/destino (ver
+    frete_service.prioridade_rota_aplicavel — ex: destino Manaus sempre
+    passa por uma filial em Belém antes, por falta de acesso rodoviário
+    direto). A checagem usa os endereços já RESOLVIDOS pelo geocodificador
+    (não o texto bruto cadastrado), porque o endereço de uma filial nem
+    sempre termina em ", Cidade, UF" — o geocodificador sempre devolve a
+    cidade de verdade. Se a prioridade bater, a distância final é a soma
+    das duas pernas (origem -> filial_escala + filial_escala -> destino),
+    em vez da rota direta origem -> destino."""
     if not origem or not origem.strip():
         raise GeoError("Endereço de origem não informado.")
     if not destino or not destino.strip():
@@ -461,6 +472,36 @@ async def calcular_distancia(origem: str, destino: str, veiculo: str | None = No
     async with httpx.AsyncClient() as client:
         lat1, lon1, nome1 = await _geocode(client, origem)
         lat2, lon2, nome2 = await _geocode(client, destino)
+
+        prioridade = fs.prioridade_rota_aplicavel(fs.parametros, nome1, nome2)
+        if prioridade is not None:
+            try:
+                filial_escala = fs.parametros.buscar_filial(prioridade.filial_escala)
+            except fs.FreteInputError as e:
+                raise GeoError(
+                    f"Prioridade de rota cadastrada para '{prioridade.estado_origem}' → "
+                    f"'{prioridade.cidade_destino}' aponta pra uma filial que não existe mais "
+                    f"('{prioridade.filial_escala}'): {e}"
+                ) from e
+
+            lat_e, lon_e = await coordenadas_filial(client, filial_escala)
+            perna1 = await _rota(client, lat1, lon1, lat_e, lon_e)
+            perna2 = await _rota(client, lat_e, lon_e, lat2, lon2)
+
+            pedagio_valor = None
+            if perna1["pedagio_valor"] is not None or perna2["pedagio_valor"] is not None:
+                pedagio_valor = round((perna1["pedagio_valor"] or 0) + (perna2["pedagio_valor"] or 0), 2)
+
+            return {
+                "distancia_km": round(perna1["distancia_km"] + perna2["distancia_km"]),
+                "duracao_min": round(perna1["duracao_min"] + perna2["duracao_min"]),
+                "pedagio_valor": pedagio_valor,
+                "pedagio_moeda": perna1["pedagio_moeda"] or perna2["pedagio_moeda"],
+                "origem_resolvido": nome1,
+                "destino_resolvido": nome2,
+                "prioridade_rota": filial_escala.nome,
+            }
+
         rota = await _rota(client, lat1, lon1, lat2, lon2)
 
     return {

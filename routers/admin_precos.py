@@ -15,6 +15,7 @@ from schemas import (
     FaixaColetaIn,
     FaixaKmVeiculoIn,
     FilialIn,
+    PrioridadeRotaIn,
     SlaIn,
     TaxaAdicionalIn,
     TaxaBalsaIn,
@@ -197,6 +198,32 @@ def admin_atualizar_taxa_balsa(id_: int, payload: TaxaBalsaIn, usuario: dict = D
 @router.delete("/taxas-balsa/{id_}")
 def admin_excluir_taxa_balsa(id_: int, usuario: dict = Depends(exigir_admin)):
     return admin_excluir(db.excluir_taxa_balsa, id_)
+
+
+@router.get("/prioridades-rota")
+def admin_listar_prioridades_rota(usuario: dict = Depends(exigir_admin)):
+    return db.listar_prioridades_rota_admin()
+
+
+@router.post("/prioridades-rota")
+def admin_criar_prioridade_rota(payload: PrioridadeRotaIn, usuario: dict = Depends(exigir_admin)):
+    return admin_criar(
+        db.inserir_prioridade_rota, payload,
+        f"Já existe uma prioridade de rota de '{payload.estado_origem}' → '{payload.cidade_destino}'.",
+    )
+
+
+@router.put("/prioridades-rota/{id_}")
+def admin_atualizar_prioridade_rota(id_: int, payload: PrioridadeRotaIn, usuario: dict = Depends(exigir_admin)):
+    return admin_atualizar(
+        db.atualizar_prioridade_rota, id_, payload,
+        f"Já existe uma prioridade de rota de '{payload.estado_origem}' → '{payload.cidade_destino}'.",
+    )
+
+
+@router.delete("/prioridades-rota/{id_}")
+def admin_excluir_prioridade_rota(id_: int, usuario: dict = Depends(exigir_admin)):
+    return admin_excluir(db.excluir_prioridade_rota, id_)
 
 
 @router.get("/transportadoras-terceirizadas")

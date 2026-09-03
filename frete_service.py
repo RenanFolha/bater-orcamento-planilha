@@ -176,6 +176,13 @@ class ColetaCidadeFixa:
     valor_fixo: float
 
 
+@dataclass
+class PrioridadeRota:
+    estado_origem: str  # UF (sigla), ou "*"
+    cidade_destino: str
+    filial_escala: str
+
+
 class ParametrosFrete:
     """Mantém em memória os parâmetros lidos do banco."""
 
@@ -186,6 +193,7 @@ class ParametrosFrete:
         self.taxas_adicionais: list[TaxaAdicional] = []
         self.taxas_regionais: list[TaxaRegional] = []
         self.taxas_balsa: list[TaxaBalsa] = []
+        self.prioridades_rota: list[PrioridadeRota] = []
         self.coleta_cidades_fixas: list[ColetaCidadeFixa] = []
         self.faixas_coleta: list[FaixaDistancia] = []
         self.categorias: dict[str, Categoria] = {}
@@ -226,6 +234,10 @@ class ParametrosFrete:
             self.taxas_balsa = [
                 TaxaBalsa(r["cidade_origem"], r["cidade_destino"], r["veiculo"], r["tipo"], r["valor"])
                 for r in conn.execute("SELECT * FROM taxas_balsa")
+            ]
+            self.prioridades_rota = [
+                PrioridadeRota(r["estado_origem"], r["cidade_destino"], r["filial_escala"])
+                for r in conn.execute("SELECT * FROM prioridades_rota")
             ]
             self.coleta_cidades_fixas = [
                 ColetaCidadeFixa(r["filial_origem"], r["cidade_destino"], r["veiculo"], r["valor_fixo"])
@@ -522,11 +534,11 @@ def _taxas_regionais_aplicaveis(
     return aplicaveis
 
 
-TAXA_BALSA_CORINGA = "*"  # cidade_origem/cidade_destino/veiculo cadastrado como "*" casa com qualquer valor
+CORINGA_ROTA = "*"  # cidade_origem/cidade_destino (e veiculo, na taxa de balsa) cadastrado como "*" casa com qualquer valor
 
 
-def _taxa_balsa_bate_campo(cadastrado: str, valor: str) -> bool:
-    return cadastrado == TAXA_BALSA_CORINGA or cadastrado == valor
+def _campo_bate_curinga(cadastrado: str, valor: str) -> bool:
+    return cadastrado == CORINGA_ROTA or cadastrado == valor
 
 
 def _normalizar_par_cidades(cidade_origem: str | None, cidade_destino: str | None) -> tuple[str, str] | None:
@@ -568,9 +580,42 @@ def _taxa_balsa_aplicavel(
     candidatas = []
     for t in p.taxas_balsa:
         t_o, t_d, t_v = db.normalizar_texto(t.cidade_origem), db.normalizar_texto(t.cidade_destino), db.normalizar_texto(t.veiculo)
-        if _taxa_balsa_bate_campo(t_o, cid_o) and _taxa_balsa_bate_campo(t_d, cid_d) and _taxa_balsa_bate_campo(t_v, veic):
-            especificidade = (t_o != TAXA_BALSA_CORINGA) + (t_d != TAXA_BALSA_CORINGA) + (t_v != TAXA_BALSA_CORINGA)
+        if _campo_bate_curinga(t_o, cid_o) and _campo_bate_curinga(t_d, cid_d) and _campo_bate_curinga(t_v, veic):
+            especificidade = (t_o != CORINGA_ROTA) + (t_d != CORINGA_ROTA) + (t_v != CORINGA_ROTA)
             candidatas.append((especificidade, t))
+    if not candidatas:
+        return None
+    return max(candidatas, key=lambda par: par[0])[1]
+
+
+def prioridade_rota_aplicavel(
+    p: "ParametrosFrete", cidade_origem: str | None, cidade_destino: str | None
+) -> PrioridadeRota | None:
+    """Retorna a prioridade de rota cadastrada pra essa rota (estado_origem
+    -> cidade_destino), se houver — usada por geo_service.calcular_distancia
+    pra decidir se a distância do frete deve ser calculada em duas pernas
+    (origem -> filial_escala + filial_escala -> destino) em vez da rota
+    direta, quando o destino não tem acesso rodoviário direto da origem
+    (ex: cargas para Manaus sempre passam por uma filial em Belém antes).
+
+    A origem é comparada pela UF (não pela cidade exata): a regra
+    normalmente vale pro estado inteiro de onde a carga sai, não só uma
+    cidade específica. estado_origem e cidade_destino aceitam "*" como
+    curinga, mesmo mecanismo de _taxa_balsa_aplicavel — quando mais de uma
+    linha bate, vence a mais específica."""
+    if not cidade_origem or not cidade_destino:
+        return None
+    _, uf_origem = cidade_e_uf(cidade_origem)
+    cid_d = _cidade_da_retirada(cidade_destino)
+    if not cid_d:
+        return None
+    uf_o, cid_d = db.normalizar_texto(uf_origem), db.normalizar_texto(cid_d)
+    candidatas = []
+    for e in p.prioridades_rota:
+        e_uf, e_d = db.normalizar_texto(e.estado_origem), db.normalizar_texto(e.cidade_destino)
+        if _campo_bate_curinga(e_uf, uf_o) and _campo_bate_curinga(e_d, cid_d):
+            especificidade = (e_uf != CORINGA_ROTA) + (e_d != CORINGA_ROTA)
+            candidatas.append((especificidade, e))
     if not candidatas:
         return None
     return max(candidatas, key=lambda par: par[0])[1]
@@ -590,8 +635,8 @@ def _taxa_balsa_outros_veiculos(
     veic_atual = db.normalizar_texto(veiculo_atual)
     encontrados = {
         t.veiculo for t in p.taxas_balsa
-        if _taxa_balsa_bate_campo(db.normalizar_texto(t.cidade_origem), cid_o)
-        and _taxa_balsa_bate_campo(db.normalizar_texto(t.cidade_destino), cid_d)
+        if _campo_bate_curinga(db.normalizar_texto(t.cidade_origem), cid_o)
+        and _campo_bate_curinga(db.normalizar_texto(t.cidade_destino), cid_d)
         and db.normalizar_texto(t.veiculo) != veic_atual
     }
     return sorted(encontrados)
