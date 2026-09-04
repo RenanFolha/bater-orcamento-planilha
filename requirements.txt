@@ -2,3 +2,12 @@ fastapi==0.141.1
 uvicorn==0.52.4
 httpx==0.28.1
 openpyxl==3.1.5
+
+# Drivers opcionais pra apontar o banco de dados pra um servidor externo
+# (ver "Banco de dados configurável" no README) -- sem eles, o sistema
+# continua funcionando normalmente com SQLite (padrão, nenhuma dependência
+# extra). Só ficam realmente necessários se você usar a tela Configurações
+# → "Banco de dados" pra trocar o tipo de banco.
+pyodbc==5.2.0        # SQL Server — também exige o ODBC Driver 17/18 for SQL Server instalado no SO
+pymysql==1.1.1        # MySQL
+psycopg2-binary==2.9.10  # PostgreSQL

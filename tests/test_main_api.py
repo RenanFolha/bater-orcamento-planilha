@@ -344,6 +344,158 @@ def test_admin_prioridades_rota_exige_admin(client):
     assert r.status_code == 401
 
 
+def test_admin_pracas_pedagio_crud(client):
+    _login(client)
+
+    r = client.post("/admin/pracas-pedagio", json={
+        "nome": "Praça 5", "rodovia": "BR-101", "concessionaria": "ViaSul",
+        "valor_eixo_2": 12.4, "valor_eixo_3": 18.6,
+    })
+    assert r.status_code == 200, r.text
+    praca_id = r.json()["id"]
+
+    r = client.get("/admin/pracas-pedagio")
+    assert r.status_code == 200
+    assert any(p["id"] == praca_id for p in r.json())
+
+    r = client.get("/parametros/pracas-pedagio")
+    assert r.status_code == 200
+    assert any(p["id"] == praca_id for p in r.json())
+
+    # mesmo nome + rodovia de novo -> conflito
+    r = client.post("/admin/pracas-pedagio", json={
+        "nome": "Praça 5", "rodovia": "BR-101", "concessionaria": "Outra",
+    })
+    assert r.status_code == 409
+
+    r = client.put(f"/admin/pracas-pedagio/{praca_id}", json={
+        "nome": "Praça 5", "rodovia": "BR-101", "concessionaria": "ViaSul", "valor_eixo_2": 15.0,
+    })
+    assert r.status_code == 200
+
+    r = client.delete(f"/admin/pracas-pedagio/{praca_id}")
+    assert r.status_code == 200
+
+
+def test_admin_pracas_pedagio_exige_admin(client):
+    r = client.get("/admin/pracas-pedagio")
+    assert r.status_code == 401
+
+
+def test_admin_pracas_pedagio_nao_exclui_praca_em_uso(client):
+    _login(client)
+    r = client.post("/admin/pracas-pedagio", json={
+        "nome": "Praça 5", "rodovia": "BR-101", "concessionaria": "ViaSul",
+    })
+    praca_id = r.json()["id"]
+    client.post("/admin/pedagios-rota", json={
+        "cidade_origem": "Curitiba", "cidade_destino": "Florianópolis", "praca_id": praca_id,
+    })
+
+    r = client.delete(f"/admin/pracas-pedagio/{praca_id}")
+    assert r.status_code == 409
+
+
+def test_admin_pracas_pedagio_importar_csv(client):
+    _login(client)
+    csv = (
+        "nome,rodovia,concessionaria,valor_eixo_2\n"
+        "Praça 5,BR-101,ViaSul,12.4\n"
+        "Praça 8,BR-101,ViaSul,10.0\n"
+    )
+    r = client.post("/admin/pracas-pedagio/importar-csv", json={"conteudo": csv})
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["criadas"] == 2
+    assert data["erros"] == []
+    assert len(client.get("/admin/pracas-pedagio").json()) == 2
+
+
+def test_admin_pedagios_rota_crud(client):
+    _login(client)
+    praca_id = client.post("/admin/pracas-pedagio", json={
+        "nome": "Praça 5", "rodovia": "BR-101", "concessionaria": "ViaSul", "valor_eixo_2": 12.4,
+    }).json()["id"]
+
+    r = client.post("/admin/pedagios-rota", json={
+        "cidade_origem": "Curitiba", "cidade_destino": "Florianópolis", "praca_id": praca_id,
+    })
+    assert r.status_code == 200, r.text
+    pedagio_id = r.json()["id"]
+
+    r = client.get("/admin/pedagios-rota")
+    assert r.status_code == 200
+    linha = next(p for p in r.json() if p["id"] == pedagio_id)
+    assert linha["praca_nome"] == "Praça 5"
+
+    # mesmo corredor + praça de novo -> conflito
+    r = client.post("/admin/pedagios-rota", json={
+        "cidade_origem": "Curitiba", "cidade_destino": "Florianópolis", "praca_id": praca_id,
+    })
+    assert r.status_code == 409
+
+    r = client.put(f"/admin/pedagios-rota/{pedagio_id}", json={
+        "cidade_origem": "Curitiba", "cidade_destino": "Florianópolis", "praca_id": praca_id,
+        "observacao": "ajustado",
+    })
+    assert r.status_code == 200
+
+    r = client.delete(f"/admin/pedagios-rota/{pedagio_id}")
+    assert r.status_code == 200
+
+
+def test_admin_pedagios_rota_exige_admin(client):
+    r = client.get("/admin/pedagios-rota")
+    assert r.status_code == 401
+
+
+def test_admin_distancias_fixas_crud(client):
+    _login(client)
+
+    r = client.post("/admin/distancias-fixas", json={
+        "cidade_origem": "Belem", "cidade_destino": "Manaus", "distancia_km": 2096,
+    })
+    assert r.status_code == 200, r.text
+    id_ = r.json()["id"]
+
+    r = client.get("/admin/distancias-fixas")
+    assert r.status_code == 200
+    assert any(d["id"] == id_ for d in r.json())
+
+    # mesmo corredor de novo -> conflito
+    r = client.post("/admin/distancias-fixas", json={
+        "cidade_origem": "Belem", "cidade_destino": "Manaus", "distancia_km": 2100,
+    })
+    assert r.status_code == 409
+
+    r = client.put(f"/admin/distancias-fixas/{id_}", json={
+        "cidade_origem": "Belem", "cidade_destino": "Manaus", "distancia_km": 2100,
+        "observacao": "ajustada",
+    })
+    assert r.status_code == 200
+
+    r = client.delete(f"/admin/distancias-fixas/{id_}")
+    assert r.status_code == 200
+
+
+def test_admin_distancias_fixas_exige_admin(client):
+    r = client.get("/admin/distancias-fixas")
+    assert r.status_code == 401
+
+
+def test_admin_veiculos_aceita_numero_eixos(client):
+    _login(client)
+    veiculo = client.get("/admin/veiculos").json()[0]  # dict cru do banco, já vem com "id"
+    r = client.put(f"/admin/veiculos/{veiculo['id']}", json={
+        "nome": veiculo["nome"], "de": veiculo["de"], "ate": veiculo["ate"],
+        "tarifa_km": veiculo["tarifa_km"], "valor_tonelada_excedente": veiculo["valor_tonelada_excedente"],
+        "numero_eixos": 2,
+    })
+    assert r.status_code == 200, r.text
+    atualizado = next(v for v in client.get("/admin/veiculos").json() if v["id"] == veiculo["id"])
+    assert atualizado["numero_eixos"] == 2
+
+
 def test_geo_distancia_descobre_veiculo_a_partir_de_peso_e_paletes(client, monkeypatch):
     """peso/paletes/transporte em /geo/distancia não entram no cálculo de
     frete -- servem só pra descobrir qual veículo seria escolhido, pra
@@ -384,3 +536,67 @@ def test_geo_distancia_sem_peso_nao_descobre_veiculo(client, monkeypatch):
     r = client.post("/geo/distancia", json={"origem": "Campinas, SP", "destino": "São Paulo, SP"})
     assert r.status_code == 200
     assert capturado["veiculo"] is None
+
+
+def test_admin_banco_dados_exige_admin(client):
+    assert client.get("/admin/banco-dados").status_code == 401
+    assert client.post("/admin/banco-dados/testar", json={"tipo": "sqlite"}).status_code == 401
+    assert client.post("/admin/banco-dados/aplicar", json={"tipo": "sqlite"}).status_code == 401
+
+
+def test_admin_banco_dados_get_nao_devolve_senha(client):
+    _login(client)
+    r = client.get("/admin/banco-dados")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["tipo"] == "sqlite"
+    assert "senha" not in data
+    assert data["senha_configurada"] is False
+
+
+def test_admin_banco_dados_testar_driver_ausente_da_422(client):
+    _login(client)
+    r = client.post("/admin/banco-dados/testar", json={
+        "tipo": "postgresql", "host": "x", "porta": 5432, "banco": "x", "usuario": "x", "senha": "x",
+    })
+    assert r.status_code == 422
+    assert "psycopg2" in r.json()["detail"]
+
+
+def test_admin_banco_dados_aplicar_sqlite_para_sqlite_migra_tudo(client, tmp_path):
+    """Único cenário de troca de banco testável de ponta a ponta neste
+    ambiente (sem SQL Server/MySQL/PostgreSQL disponíveis): sqlite ->
+    outro arquivo sqlite. Cobre o fluxo inteiro do endpoint /aplicar
+    (criar schema no destino, exportar do atual, importar no destino,
+    trocar a config ativa, recarregar parâmetros)."""
+    _login(client)
+
+    # cadastra uma praça de pedágio pra ter dado "customizado" (além do
+    # seed padrão) que precisa sobreviver à migração
+    r = client.post("/admin/pracas-pedagio", json={
+        "nome": "Praça Migração", "rodovia": "BR-101", "concessionaria": "ViaSul", "valor_eixo_2": 42.0,
+    })
+    assert r.status_code == 200, r.text
+
+    destino = str(tmp_path / "destino_migrado.db")
+    r = client.post("/admin/banco-dados/aplicar", json={"tipo": "sqlite", "sqlite_path": destino})
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["linhas_migradas"]["pracas_pedagio"] == 1
+    assert data["linhas_migradas"]["filiais"] > 0  # dados de exemplo semeados na origem
+
+    # a API já deve estar usando o banco novo, sem precisar reiniciar
+    r = client.get("/admin/banco-dados")
+    assert r.json()["tipo"] == "sqlite"
+    assert r.json()["sqlite_path"] == destino
+
+    r = client.get("/admin/pracas-pedagio")
+    assert any(p["nome"] == "Praça Migração" for p in r.json())
+
+    # o arquivo novo existe de fato e tem os dados
+    import sqlite3
+    conn = sqlite3.connect(destino)
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM pracas_pedagio").fetchone()[0] == 1
+    finally:
+        conn.close()

@@ -1,0 +1,215 @@
+# Desenvolvedor Chefe: RenanFolha
+
+"""
+Testes de db_conexao.py: a camada fina que permite trocar o banco de
+SQLite pra SQL Server/MySQL/PostgreSQL (ver routers/admin_banco.py).
+
+Não há SQL Server/MySQL/PostgreSQL disponíveis neste ambiente — os
+testes daqui cobrem a lógica que dá pra verificar sem um servidor de
+verdade: tradução de placeholder "?" pro paramstyle de cada driver
+(usando um stub DB-API fake, não o driver real), o wrapper de linha por
+dict, config em disco, e o round-trip completo de exportar/importar
+todas as tabelas usando dois bancos SQLite temporários (prova a ordem
+seguro de FK sem depender de nada externo).
+"""
+
+import json
+
+import pytest
+
+import auth_service as auth
+import db_conexao
+import frete_db as db
+
+
+# ============================================================
+# _traduzir_placeholders
+# ============================================================
+
+def test_traduzir_placeholders_qmark_nao_muda():
+    sql = "SELECT * FROM x WHERE a = ? AND b = ?"
+    assert db_conexao._traduzir_placeholders(sql, "qmark") == sql
+
+
+@pytest.mark.parametrize("paramstyle", ["format", "pyformat"])
+def test_traduzir_placeholders_troca_por_percent_s(paramstyle):
+    sql = "SELECT * FROM x WHERE a = ? AND b = ?"
+    assert db_conexao._traduzir_placeholders(sql, paramstyle) == "SELECT * FROM x WHERE a = %s AND b = %s"
+
+
+# ============================================================
+# _montar_linha / _CursorAdaptado / _ConexaoAdaptada — com um stub
+# DB-API fake (paramstyle "format", como pymysql), sem precisar de
+# nenhum driver de verdade instalado.
+# ============================================================
+
+class _CursorFake:
+    def __init__(self, tabela):
+        self._tabela = tabela
+        self.description = None
+        self.lastrowid = None
+        self._resultado = []
+
+    def execute(self, sql, params):
+        assert "?" not in sql, "placeholder deveria ter sido traduzido antes de chegar aqui"
+        if sql.startswith("SELECT"):
+            self.description = [("id",), ("nome",)]
+            self._resultado = list(self._tabela)
+        elif sql.startswith("INSERT"):
+            novo_id = len(self._tabela) + 1
+            self._tabela.append((novo_id, params[0]))
+            self.lastrowid = novo_id
+
+    def fetchone(self):
+        return self._resultado[0] if self._resultado else None
+
+    def fetchall(self):
+        return self._resultado
+
+
+class _ConexaoFake:
+    """Simula uma conexão DB-API com paramstyle "format" (%s), como
+    pymysql -- suficiente pra exercitar _ConexaoAdaptada sem o driver
+    de verdade."""
+    def __init__(self):
+        self._tabela = []
+        self.commits = 0
+        self.fechada = False
+
+    def cursor(self):
+        return _CursorFake(self._tabela)
+
+    def commit(self):
+        self.commits += 1
+
+    def rollback(self):
+        pass
+
+    def close(self):
+        self.fechada = True
+
+
+def test_conexao_adaptada_traduz_placeholder_e_devolve_linha_dict():
+    nativa = _ConexaoFake()
+    adaptada = db_conexao._ConexaoAdaptada(nativa, paramstyle="format")
+
+    cur = adaptada.execute("INSERT INTO x (nome) VALUES (?)", ("Teste",))
+    assert cur.lastrowid == 1
+
+    cur2 = adaptada.execute("SELECT * FROM x WHERE nome = ?", ("Teste",))
+    linhas = cur2.fetchall()
+    assert len(linhas) == 1
+    assert linhas[0]["id"] == 1
+    assert linhas[0]["nome"] == "Teste"
+    assert dict(linhas[0]) == {"id": 1, "nome": "Teste"}
+
+
+def test_conexao_adaptada_commit_e_close_repassam_pra_nativa():
+    nativa = _ConexaoFake()
+    adaptada = db_conexao._ConexaoAdaptada(nativa, paramstyle="format")
+    adaptada.commit()
+    adaptada.close()
+    assert nativa.commits == 1
+    assert nativa.fechada is True
+
+
+# ============================================================
+# Config em disco (db_config.json)
+# ============================================================
+
+def test_carregar_config_sem_arquivo_devolve_padrao_sqlite(tmp_path, monkeypatch):
+    monkeypatch.setattr(db_conexao, "DB_CONFIG_PATH", str(tmp_path / "nao_existe.json"))
+    cfg = db_conexao.carregar_config()
+    assert cfg["tipo"] == "sqlite"
+    assert cfg["sqlite_path"] == ""
+
+
+def test_salvar_e_carregar_config(tmp_path, monkeypatch):
+    caminho = tmp_path / "db_config.json"
+    monkeypatch.setattr(db_conexao, "DB_CONFIG_PATH", str(caminho))
+
+    db_conexao.salvar_config({
+        "tipo": "postgresql", "host": "meuserver", "porta": 5432,
+        "banco": "frete", "usuario": "admin", "senha": "segredo",
+    })
+    cfg = db_conexao.carregar_config()
+    assert cfg["tipo"] == "postgresql"
+    assert cfg["host"] == "meuserver"
+    assert cfg["senha"] == "segredo"
+
+    # o JSON salvo em disco de fato contém a senha em texto puro (mesma
+    # exposição que o frete.db sempre teve -- arquivo local sem
+    # criptografia, ver docstring do módulo)
+    bruto = json.loads(caminho.read_text(encoding="utf-8"))
+    assert bruto["senha"] == "segredo"
+
+
+@pytest.mark.parametrize("tipo,driver", [
+    ("sqlserver", "pyodbc"), ("mysql", "pymysql"), ("postgresql", "psycopg2"),
+])
+def test_conectar_sem_driver_instalado_da_erro_amigavel(tipo, driver):
+    # Neste ambiente nenhum dos três drivers está instalado -- exercita
+    # de verdade o fallback de ImportError (não um mock). Se o driver
+    # estiver instalado (ambiente diferente), o teste não se aplica --
+    # pula em vez de tentar conectar num servidor de verdade.
+    import importlib
+    try:
+        importlib.import_module(driver)
+    except ImportError:
+        pass
+    else:
+        pytest.skip(f"{driver} está instalado neste ambiente — o teste de driver ausente não se aplica")
+
+    cfg = {"tipo": tipo, "host": "x", "porta": 1, "banco": "x", "usuario": "x", "senha": "x"}
+    with pytest.raises(db_conexao.ErroConexaoBanco, match=driver):
+        db_conexao.conectar(cfg)
+
+
+def test_config_sem_senha_nunca_ecoa_a_senha():
+    cfg = {"tipo": "mysql", "host": "x", "senha": "segredo"}
+    seguro = db_conexao.config_sem_senha(cfg)
+    assert "senha" not in seguro
+    assert seguro["senha_configurada"] is True
+
+    cfg_sem_senha = {"tipo": "sqlite", "senha": ""}
+    assert db_conexao.config_sem_senha(cfg_sem_senha)["senha_configurada"] is False
+
+
+# ============================================================
+# Exportar/importar todas as tabelas — round-trip entre dois SQLite
+# temporários (prova a ordem de FK sem precisar de servidor nenhum).
+# ============================================================
+
+def test_exportar_importar_todas_tabelas_round_trip(tmp_path, monkeypatch):
+    origem = tmp_path / "origem.db"
+    destino = tmp_path / "destino.db"
+
+    monkeypatch.setattr(db, "DB_PATH", str(origem))
+    monkeypatch.setattr(db_conexao, "DB_CONFIG_PATH", str(tmp_path / "nao_existe.json"))
+    db.init_db()  # cria e semeia a origem com os dados de exemplo padrão
+    auth.garantir_usuario_padrao()  # mesma sequência de boot do main.py (lifespan)
+
+    with db.get_connection() as conn:
+        dados = db_conexao.exportar_todas_tabelas(conn)
+
+    assert dados["filiais"], "a origem deveria ter os dados de exemplo (filiais) semeados por init_db"
+    assert "usuarios" in dados and dados["usuarios"], "usuário admin padrão deveria ter sido criado"
+
+    # cria o schema (vazio) no destino, sem semear dados de exemplo --
+    # importar_todas_tabelas assume destino vazio (ver docstring)
+    monkeypatch.setattr(db, "DB_PATH", str(destino))
+    db.init_db()
+    with db.get_connection() as conn:
+        for tabela in db_conexao.ORDEM_TABELAS:
+            conn.execute(f"DELETE FROM {tabela}")
+
+    with db.get_connection() as conn:
+        resultado = db_conexao.importar_todas_tabelas(conn, dados)
+
+    assert resultado["filiais"] == len(dados["filiais"])
+    assert resultado["usuarios"] == len(dados["usuarios"])
+
+    with db.get_connection() as conn:
+        dados_destino = db_conexao.exportar_todas_tabelas(conn)
+    for tabela in db_conexao.ORDEM_TABELAS:
+        assert len(dados_destino[tabela]) == len(dados[tabela]), f"contagem diferente em {tabela}"

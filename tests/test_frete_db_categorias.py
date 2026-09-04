@@ -8,10 +8,9 @@ relativa (antes/depois), não `len(...) == 1`. Usa o fixture
 `banco_temporario` (conftest.py) — nunca toca no frete.db real.
 """
 
-import sqlite3
-
 import pytest
 
+import db_conexao
 import frete_db as db
 
 
@@ -29,7 +28,7 @@ def test_inserir_e_listar_categoria(banco_temporario):
 
 def test_nome_duplicado_da_conflito(banco_temporario):
     db.inserir_categoria("Cosméticos", 1.15)
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(db_conexao.ConflitoIntegridade):
         db.inserir_categoria("Cosméticos", 1.25)
 
 

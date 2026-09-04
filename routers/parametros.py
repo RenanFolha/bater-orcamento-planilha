@@ -111,6 +111,16 @@ def listar_faixas_coleta():
     ]
 
 
+@router.get("/pracas-pedagio")
+def listar_pracas_pedagio():
+    """Lista o catálogo de praças de pedágio — usado pra montar o seletor
+    de praça na tela de admin de Pedágios por Rota."""
+    return [
+        {"id": p.id, "nome": p.nome, "rodovia": p.rodovia, "concessionaria": p.concessionaria}
+        for p in fs.parametros.pracas_pedagio.values()
+    ]
+
+
 @router.get("/transportadoras-terceirizadas")
 def listar_transportadoras_terceirizadas():
     """Lista as transportadoras terceirizadas cadastradas — usado pra

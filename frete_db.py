@@ -22,16 +22,27 @@ adicionada automaticamente na inicialização, sem apagar nada que já
 estava lá.
 """
 
+import csv
+import io
 import os
 import sqlite3
 import unicodedata
 from contextlib import contextmanager
 from datetime import datetime
 
+import db_conexao
+
 DB_PATH = os.environ.get(
     "FRETE_DB_PATH",
     os.path.join(os.path.dirname(__file__), "frete.db"),
 )
+
+# Reexportada aqui por conveniência/compatibilidade: a maior parte do
+# projeto (routers/*, deps.py, testes) importa só `frete_db as db` e
+# espera `db.ConflitoIntegridade` -- ver db_conexao.py pro porquê dessa
+# exceção existir (substitui sqlite3.IntegrityError agora que o banco
+# pode não ser SQLite).
+ConflitoIntegridade = db_conexao.ConflitoIntegridade
 
 
 def normalizar_texto(texto: str) -> str:
@@ -223,6 +234,67 @@ CREATE TABLE IF NOT EXISTS prioridades_rota (
     UNIQUE(estado_origem, cidade_destino)
 );
 
+CREATE TABLE IF NOT EXISTS pracas_pedagio (
+    -- Catálogo de praças de pedágio, com preço por número de eixos do
+    -- veículo (padrão real das tabelas publicadas pelas concessionárias
+    -- de rodovia) -- ver frete_service.pedagio_rota_aplicavel. UNIQUE
+    -- em (nome, rodovia) porque o mesmo nome de praça pode se repetir
+    -- em rodovias diferentes, mas não duas vezes na mesma rodovia (é
+    -- usado como chave de upsert no import CSV, ver
+    -- importar_pracas_pedagio_csv).
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nome TEXT NOT NULL,
+    rodovia TEXT NOT NULL,
+    concessionaria TEXT NOT NULL,
+    uf TEXT NOT NULL DEFAULT '',
+    km TEXT NOT NULL DEFAULT '',
+    valor_eixo_2 REAL NOT NULL DEFAULT 0,
+    valor_eixo_3 REAL NOT NULL DEFAULT 0,
+    valor_eixo_4 REAL NOT NULL DEFAULT 0,
+    valor_eixo_5 REAL NOT NULL DEFAULT 0,
+    valor_eixo_6 REAL NOT NULL DEFAULT 0,
+    valor_eixo_7 REAL NOT NULL DEFAULT 0,
+    valor_eixo_8 REAL NOT NULL DEFAULT 0,
+    valor_eixo_9 REAL NOT NULL DEFAULT 0,
+    observacao TEXT DEFAULT '',
+    UNIQUE(nome, rodovia)
+);
+
+CREATE TABLE IF NOT EXISTS pedagios_rota (
+    -- Liga um corredor (cidade_origem -> cidade_destino, direcional,
+    -- mesmo mecanismo de curinga "*" de taxas_balsa) às praças de
+    -- pracas_pedagio que aquela rota atravessa. Uma rota pode ter várias
+    -- linhas (uma por praça) -- o valor final é a SOMA de todas as
+    -- praças do corredor mais específico que bater (ver
+    -- frete_service.pedagio_rota_aplicavel), diferente de taxas_balsa
+    -- que escolhe só uma linha vencedora.
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    cidade_origem TEXT NOT NULL,
+    cidade_destino TEXT NOT NULL,
+    praca_id INTEGER NOT NULL REFERENCES pracas_pedagio(id),
+    observacao TEXT DEFAULT '',
+    UNIQUE(cidade_origem, cidade_destino, praca_id)
+);
+
+CREATE TABLE IF NOT EXISTS distancias_fixas (
+    -- Sobrepõe o cálculo automático de distância (rodoviário via OSRM/
+    -- Google) pra um corredor cidade_origem -> cidade_destino, direcional
+    -- (mesmo mecanismo de curinga "*" e especificidade de taxas_balsa).
+    -- Existe pra corredores onde a rota real usada na prática (ex: com
+    -- travessia de balsa) é bem diferente da rota 100% rodoviária que o
+    -- serviço de mapa calcula (ver geo_service._rota_ou_fixa) -- ex:
+    -- Belém -> Manaus: rodoviário puro dá uma volta enorme (~3000km+)
+    -- porque a BR-319 não é confiável, mas a rota real com balsa é bem
+    -- mais curta. Vale tanto pra rota direta quanto pra cada perna de
+    -- uma "Prioridade de Rota" (escala obrigatória via filial).
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    cidade_origem TEXT NOT NULL,
+    cidade_destino TEXT NOT NULL,
+    distancia_km REAL NOT NULL,
+    observacao TEXT DEFAULT '',
+    UNIQUE(cidade_origem, cidade_destino)
+);
+
 CREATE TABLE IF NOT EXISTS usuarios (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     nome TEXT NOT NULL,
@@ -263,12 +335,20 @@ CREATE TABLE IF NOT EXISTS orcamentos_historico (
 
 @contextmanager
 def get_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
+    # DB_PATH é passado explicitamente como default aqui (em vez de
+    # db_conexao.py ter sua própria cópia do caminho) justamente pra
+    # preservar o monkeypatch de DB_PATH que os testes usam (ver
+    # tests/conftest.py::banco_temporario) -- só entra em jogo quando o
+    # tipo configurado é "sqlite" e db_config.json não sobrescreveu o
+    # caminho (o caso de sempre, pra quem nunca abriu a tela "Banco de
+    # dados").
+    conn = db_conexao.conectar(sqlite_path_padrao=DB_PATH)
     try:
         yield conn
         conn.commit()
+    except db_conexao.ERROS_INTEGRIDADE_NATIVOS as exc:
+        conn.rollback()
+        raise db_conexao.ConflitoIntegridade(str(exc)) from exc
     finally:
         conn.close()
 
@@ -547,6 +627,12 @@ def _migrar_colunas(conn: sqlite3.Connection):
         conn.execute("ALTER TABLE veiculos ADD COLUMN capacidade_m3 REAL NOT NULL DEFAULT 0")
     if not _coluna_existe(conn, "veiculos", "percentual_capacidade_util"):
         conn.execute("ALTER TABLE veiculos ADD COLUMN percentual_capacidade_util REAL NOT NULL DEFAULT 80")
+    if not _coluna_existe(conn, "veiculos", "numero_eixos"):
+        # Usado pra achar o preço certo nas praças de pedágio cadastradas
+        # (pracas_pedagio.valor_eixo_N) -- 0 = não cadastrado, o veículo
+        # fica de fora do cálculo automático de pedágio até ser preenchido
+        # (ver frete_service.pedagio_rota_aplicavel).
+        conn.execute("ALTER TABLE veiculos ADD COLUMN numero_eixos INTEGER NOT NULL DEFAULT 0")
     if not _coluna_existe(conn, "orcamentos_historico", "criado_por"):
         # Registra qual conta de login efetivamente salvou o registro —
         # distinto de "responsavel" (texto livre, quem o usuário diz ser o
@@ -622,10 +708,256 @@ def _completar_carreta_fechada(conn: sqlite3.Connection):
         )
 
 
+_PK_DDL_POR_DIALETO = {
+    "sqlserver": "INT IDENTITY(1,1) PRIMARY KEY",
+    "mysql": "INT AUTO_INCREMENT PRIMARY KEY",
+    "postgresql": "SERIAL PRIMARY KEY",
+}
+
+# Schema "final" (já com todas as colunas que hoje só existem no SQLite
+# por causa de ALTER TABLE incremental, ver _migrar_colunas) pros três
+# dialetos não-SQLite -- um servidor novo nasce direto nesse formato,
+# nunca precisa repetir a cadeia histórica de migração incremental (essa
+# só existe pra não quebrar quem já tinha um frete.db de uma versão
+# anterior). Colunas que entram em UNIQUE/PRIMARY KEY usam VARCHAR(255)
+# em vez de TEXT porque o MySQL não aceita TEXT/BLOB em índice sem
+# tamanho de prefixo -- as demais (livres, sem constraint) continuam
+# TEXT, compatível nos três dialetos.
+SCHEMA_CONSOLIDADO_TEMPLATE = """
+CREATE TABLE faixas_peso (
+    id {PK},
+    tipo_frete VARCHAR(60) NOT NULL DEFAULT 'Fracionado',
+    de REAL NOT NULL,
+    ate REAL NOT NULL,
+    tarifa_base REAL NOT NULL,
+    custo_kg_adicional REAL NOT NULL DEFAULT 0,
+    observacao TEXT DEFAULT ''
+);
+
+CREATE TABLE faixas_distancia (
+    id {PK},
+    tipo_frete VARCHAR(60) NOT NULL DEFAULT 'Fracionado',
+    de REAL NOT NULL,
+    ate REAL NOT NULL,
+    taxa_fixa REAL NOT NULL,
+    tarifa_km REAL NOT NULL DEFAULT 0,
+    observacao TEXT DEFAULT ''
+);
+
+CREATE TABLE faixas_coleta (
+    id {PK},
+    de REAL NOT NULL,
+    ate REAL NOT NULL,
+    taxa_fixa REAL NOT NULL,
+    tarifa_km REAL NOT NULL DEFAULT 0,
+    observacao TEXT DEFAULT ''
+);
+
+CREATE TABLE categorias (
+    id {PK},
+    nome VARCHAR(255) NOT NULL UNIQUE,
+    multiplicador REAL NOT NULL,
+    observacao TEXT DEFAULT ''
+);
+
+CREATE TABLE transportes (
+    id {PK},
+    nome VARCHAR(255) NOT NULL UNIQUE,
+    multiplicador REAL NOT NULL,
+    fator_cubagem REAL NOT NULL,
+    observacao TEXT DEFAULT ''
+);
+
+CREATE TABLE slas (
+    id {PK},
+    nome VARCHAR(255) NOT NULL UNIQUE,
+    multiplicador REAL NOT NULL,
+    prazo_dias INTEGER NOT NULL,
+    observacao TEXT DEFAULT ''
+);
+
+CREATE TABLE filiais (
+    id {PK},
+    nome VARCHAR(255) NOT NULL UNIQUE,
+    endereco TEXT NOT NULL,
+    latitude REAL,
+    longitude REAL
+);
+
+CREATE TABLE veiculos (
+    id {PK},
+    nome VARCHAR(255) NOT NULL UNIQUE,
+    de REAL NOT NULL DEFAULT 0,
+    ate REAL NOT NULL DEFAULT 999999,
+    tarifa_km REAL NOT NULL,
+    valor_tonelada_excedente REAL NOT NULL DEFAULT 0,
+    tarifa_km_retorno REAL NOT NULL DEFAULT 0,
+    tarifa_km_manutencao REAL NOT NULL DEFAULT 0,
+    capacidade_m3 REAL NOT NULL DEFAULT 0,
+    percentual_capacidade_util REAL NOT NULL DEFAULT 80,
+    numero_eixos INTEGER NOT NULL DEFAULT 0,
+    observacao TEXT DEFAULT ''
+);
+
+CREATE TABLE faixas_km_veiculo (
+    id {PK},
+    veiculo TEXT NOT NULL,
+    de REAL NOT NULL,
+    ate REAL NOT NULL,
+    tarifa_km REAL NOT NULL,
+    observacao TEXT DEFAULT ''
+);
+
+CREATE TABLE taxas_adicionais (
+    id {PK},
+    nome VARCHAR(255) NOT NULL UNIQUE,
+    tipo VARCHAR(20) NOT NULL DEFAULT 'fixo' CHECK (tipo IN ('fixo', 'percentual')),
+    valor REAL NOT NULL DEFAULT 0,
+    observacao TEXT DEFAULT ''
+);
+
+CREATE TABLE coleta_cidades_fixas (
+    id {PK},
+    filial_origem TEXT NOT NULL,
+    cidade_destino TEXT NOT NULL,
+    veiculo TEXT NOT NULL,
+    valor_fixo REAL NOT NULL,
+    observacao TEXT DEFAULT ''
+);
+
+CREATE TABLE transportadoras_terceirizadas (
+    id {PK},
+    nome VARCHAR(255) NOT NULL,
+    cidade VARCHAR(255) NOT NULL,
+    tipo VARCHAR(20) NOT NULL DEFAULT 'ambos' CHECK (tipo IN ('coleta', 'entrega', 'ambos')),
+    valor REAL NOT NULL,
+    observacao TEXT DEFAULT '',
+    UNIQUE(nome, cidade)
+);
+
+CREATE TABLE taxas_regionais (
+    id {PK},
+    cidade TEXT NOT NULL,
+    nome TEXT NOT NULL,
+    tipo VARCHAR(20) NOT NULL DEFAULT 'fixo' CHECK (tipo IN ('fixo', 'percentual')),
+    valor REAL NOT NULL,
+    observacao TEXT DEFAULT ''
+);
+
+CREATE TABLE taxas_balsa (
+    id {PK},
+    cidade_origem VARCHAR(255) NOT NULL,
+    cidade_destino VARCHAR(255) NOT NULL,
+    veiculo VARCHAR(255) NOT NULL,
+    tipo VARCHAR(20) NOT NULL DEFAULT 'fixo' CHECK (tipo IN ('fixo', 'percentual')),
+    valor REAL NOT NULL,
+    observacao TEXT DEFAULT '',
+    UNIQUE(cidade_origem, cidade_destino, veiculo)
+);
+
+CREATE TABLE prioridades_rota (
+    id {PK},
+    estado_origem VARCHAR(255) NOT NULL,
+    cidade_destino VARCHAR(255) NOT NULL,
+    filial_escala TEXT NOT NULL,
+    observacao TEXT DEFAULT '',
+    UNIQUE(estado_origem, cidade_destino)
+);
+
+CREATE TABLE pracas_pedagio (
+    id {PK},
+    nome VARCHAR(255) NOT NULL,
+    rodovia VARCHAR(255) NOT NULL,
+    concessionaria TEXT NOT NULL,
+    uf VARCHAR(10) NOT NULL DEFAULT '',
+    km VARCHAR(50) NOT NULL DEFAULT '',
+    valor_eixo_2 REAL NOT NULL DEFAULT 0,
+    valor_eixo_3 REAL NOT NULL DEFAULT 0,
+    valor_eixo_4 REAL NOT NULL DEFAULT 0,
+    valor_eixo_5 REAL NOT NULL DEFAULT 0,
+    valor_eixo_6 REAL NOT NULL DEFAULT 0,
+    valor_eixo_7 REAL NOT NULL DEFAULT 0,
+    valor_eixo_8 REAL NOT NULL DEFAULT 0,
+    valor_eixo_9 REAL NOT NULL DEFAULT 0,
+    observacao TEXT DEFAULT '',
+    UNIQUE(nome, rodovia)
+);
+
+CREATE TABLE pedagios_rota (
+    id {PK},
+    cidade_origem VARCHAR(255) NOT NULL,
+    cidade_destino VARCHAR(255) NOT NULL,
+    praca_id INTEGER NOT NULL REFERENCES pracas_pedagio(id),
+    observacao TEXT DEFAULT '',
+    UNIQUE(cidade_origem, cidade_destino, praca_id)
+);
+
+CREATE TABLE distancias_fixas (
+    id {PK},
+    cidade_origem VARCHAR(255) NOT NULL,
+    cidade_destino VARCHAR(255) NOT NULL,
+    distancia_km REAL NOT NULL,
+    observacao TEXT DEFAULT '',
+    UNIQUE(cidade_origem, cidade_destino)
+);
+
+CREATE TABLE usuarios (
+    id {PK},
+    nome TEXT NOT NULL,
+    username VARCHAR(255) NOT NULL UNIQUE,
+    senha_hash TEXT NOT NULL,
+    senha_salt TEXT NOT NULL,
+    role VARCHAR(20) NOT NULL DEFAULT 'usuario' CHECK (role IN ('admin', 'usuario')),
+    ativo INTEGER NOT NULL DEFAULT 1,
+    criado_em TEXT NOT NULL DEFAULT '',
+    deve_trocar_senha INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE sessoes (
+    token VARCHAR(255) PRIMARY KEY,
+    usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+    criado_em TEXT NOT NULL,
+    expira_em TEXT NOT NULL
+);
+
+CREATE TABLE orcamentos_historico (
+    id {PK},
+    codigo VARCHAR(255) NOT NULL UNIQUE,
+    criado_em TEXT NOT NULL,
+    cliente TEXT NOT NULL DEFAULT '',
+    responsavel TEXT NOT NULL DEFAULT '',
+    origem_resumo TEXT DEFAULT '',
+    destino_resumo TEXT DEFAULT '',
+    veiculo TEXT DEFAULT '',
+    distancia_km REAL DEFAULT 0,
+    valor_mercadoria REAL DEFAULT 0,
+    frete_total REAL DEFAULT 0,
+    status VARCHAR(30) NOT NULL DEFAULT 'Fechado',
+    dados_json TEXT NOT NULL DEFAULT '{}',
+    criado_por TEXT NOT NULL DEFAULT ''
+);
+"""
+
+
+def _gerar_schema_consolidado(tipo: str) -> str:
+    """Monta o DDL de criação das tabelas pro dialeto pedido (sqlserver/
+    mysql/postgresql — SQLite continua usando SCHEMA + _migrar_colunas,
+    sem passar por aqui). Usado só na primeira vez que um banco externo
+    é configurado (ver POST /admin/banco-dados/aplicar em
+    routers/admin_banco.py) -- o destino sempre nasce do zero, direto no
+    formato final, sem precisar da cadeia histórica de ALTER TABLE que o
+    SQLite acumulou ao longo do tempo."""
+    return SCHEMA_CONSOLIDADO_TEMPLATE.replace("{PK}", _PK_DDL_POR_DIALETO[tipo])
+
+
 def init_db():
+    tipo = db_conexao.carregar_config().get("tipo", "sqlite")
     with get_connection() as conn:
-        conn.executescript(SCHEMA)
-        _migrar_colunas(conn)
+        if tipo == "sqlite":
+            conn.executescript(SCHEMA)
+            _migrar_colunas(conn)
+        else:
+            conn.executescript(_gerar_schema_consolidado(tipo))
         _seed_se_vazio(conn)
         _completar_carreta_fechada(conn)
 
@@ -905,28 +1237,30 @@ def listar_veiculos_admin() -> list[dict]:
 
 def inserir_veiculo(nome, de, ate, tarifa_km, valor_tonelada_excedente,
                      tarifa_km_retorno=0, tarifa_km_manutencao=0, capacidade_m3=0,
-                     percentual_capacidade_util=80, observacao=""):
+                     percentual_capacidade_util=80, numero_eixos=0, observacao=""):
     with get_connection() as conn:
         cur = conn.execute(
             "INSERT INTO veiculos (nome, de, ate, tarifa_km, valor_tonelada_excedente, "
-            "tarifa_km_retorno, tarifa_km_manutencao, capacidade_m3, percentual_capacidade_util, observacao) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "tarifa_km_retorno, tarifa_km_manutencao, capacidade_m3, percentual_capacidade_util, "
+            "numero_eixos, observacao) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (nome, de, ate, tarifa_km, valor_tonelada_excedente,
-             tarifa_km_retorno, tarifa_km_manutencao, capacidade_m3, percentual_capacidade_util, observacao),
+             tarifa_km_retorno, tarifa_km_manutencao, capacidade_m3, percentual_capacidade_util,
+             numero_eixos, observacao),
         )
         return cur.lastrowid
 
 
 def atualizar_veiculo(id_, nome, de, ate, tarifa_km, valor_tonelada_excedente,
                        tarifa_km_retorno=0, tarifa_km_manutencao=0, capacidade_m3=0,
-                       percentual_capacidade_util=80, observacao=""):
+                       percentual_capacidade_util=80, numero_eixos=0, observacao=""):
     with get_connection() as conn:
         conn.execute(
             "UPDATE veiculos SET nome=?, de=?, ate=?, tarifa_km=?, valor_tonelada_excedente=?, "
             "tarifa_km_retorno=?, tarifa_km_manutencao=?, capacidade_m3=?, percentual_capacidade_util=?, "
-            "observacao=? WHERE id=?",
+            "numero_eixos=?, observacao=? WHERE id=?",
             (nome, de, ate, tarifa_km, valor_tonelada_excedente,
-             tarifa_km_retorno, tarifa_km_manutencao, capacidade_m3, percentual_capacidade_util, observacao, id_),
+             tarifa_km_retorno, tarifa_km_manutencao, capacidade_m3, percentual_capacidade_util,
+             numero_eixos, observacao, id_),
         )
 
 
@@ -1024,11 +1358,11 @@ def _cidades_coleta_conflitantes(
 def inserir_coleta_cidade_fixa(filial_origem, cidade_destino, veiculo, valor_fixo, observacao=""):
     cidades = _dividir_cidades(cidade_destino)
     if not cidades:
-        raise sqlite3.IntegrityError("informe ao menos uma cidade do cliente")
+        raise db_conexao.ConflitoIntegridade("informe ao menos uma cidade do cliente")
     with get_connection() as conn:
         conflitos = _cidades_coleta_conflitantes(conn, filial_origem, veiculo, cidades)
         if conflitos:
-            raise sqlite3.IntegrityError(
+            raise db_conexao.ConflitoIntegridade(
                 f"cidade(s) {', '.join(conflitos)} já têm preço fixo de coleta cadastrado para "
                 f"a filial '{filial_origem}' + veículo '{veiculo}' em outra linha"
             )
@@ -1043,11 +1377,11 @@ def inserir_coleta_cidade_fixa(filial_origem, cidade_destino, veiculo, valor_fix
 def atualizar_coleta_cidade_fixa(id_, filial_origem, cidade_destino, veiculo, valor_fixo, observacao=""):
     cidades = _dividir_cidades(cidade_destino)
     if not cidades:
-        raise sqlite3.IntegrityError("informe ao menos uma cidade do cliente")
+        raise db_conexao.ConflitoIntegridade("informe ao menos uma cidade do cliente")
     with get_connection() as conn:
         conflitos = _cidades_coleta_conflitantes(conn, filial_origem, veiculo, cidades, ignorar_id=id_)
         if conflitos:
-            raise sqlite3.IntegrityError(
+            raise db_conexao.ConflitoIntegridade(
                 f"cidade(s) {', '.join(conflitos)} já têm preço fixo de coleta cadastrado para "
                 f"a filial '{filial_origem}' + veículo '{veiculo}' em outra linha"
             )
@@ -1161,11 +1495,11 @@ def _cidades_regionais_conflitantes(
 def inserir_taxa_regional(cidade, nome, tipo, valor, observacao=""):
     cidades = _dividir_cidades(cidade)
     if not cidades:
-        raise sqlite3.IntegrityError("informe ao menos uma cidade")
+        raise db_conexao.ConflitoIntegridade("informe ao menos uma cidade")
     with get_connection() as conn:
         conflitos = _cidades_regionais_conflitantes(conn, nome, cidades)
         if conflitos:
-            raise sqlite3.IntegrityError(
+            raise db_conexao.ConflitoIntegridade(
                 f"cidade(s) {', '.join(conflitos)} já têm a taxa '{nome}' cadastrada em outra linha"
             )
         cur = conn.execute(
@@ -1178,11 +1512,11 @@ def inserir_taxa_regional(cidade, nome, tipo, valor, observacao=""):
 def atualizar_taxa_regional(id_, cidade, nome, tipo, valor, observacao=""):
     cidades = _dividir_cidades(cidade)
     if not cidades:
-        raise sqlite3.IntegrityError("informe ao menos uma cidade")
+        raise db_conexao.ConflitoIntegridade("informe ao menos uma cidade")
     with get_connection() as conn:
         conflitos = _cidades_regionais_conflitantes(conn, nome, cidades, ignorar_id=id_)
         if conflitos:
-            raise sqlite3.IntegrityError(
+            raise db_conexao.ConflitoIntegridade(
                 f"cidade(s) {', '.join(conflitos)} já têm a taxa '{nome}' cadastrada em outra linha"
             )
         conn.execute(
@@ -1228,7 +1562,7 @@ def _taxa_balsa_duplicada(
 def inserir_taxa_balsa(cidade_origem, cidade_destino, veiculo, tipo, valor, observacao=""):
     with get_connection() as conn:
         if _taxa_balsa_duplicada(conn, cidade_origem, cidade_destino, veiculo):
-            raise sqlite3.IntegrityError(
+            raise db_conexao.ConflitoIntegridade(
                 f"já existe uma taxa de balsa de '{cidade_origem}' → '{cidade_destino}' pro veículo '{veiculo}'"
             )
         cur = conn.execute(
@@ -1242,7 +1576,7 @@ def inserir_taxa_balsa(cidade_origem, cidade_destino, veiculo, tipo, valor, obse
 def atualizar_taxa_balsa(id_, cidade_origem, cidade_destino, veiculo, tipo, valor, observacao=""):
     with get_connection() as conn:
         if _taxa_balsa_duplicada(conn, cidade_origem, cidade_destino, veiculo, ignorar_id=id_):
-            raise sqlite3.IntegrityError(
+            raise db_conexao.ConflitoIntegridade(
                 f"já existe uma taxa de balsa de '{cidade_origem}' → '{cidade_destino}' pro veículo '{veiculo}'"
             )
         conn.execute(
@@ -1286,7 +1620,7 @@ def _prioridade_rota_duplicada(
 def inserir_prioridade_rota(estado_origem, cidade_destino, filial_escala, observacao=""):
     with get_connection() as conn:
         if _prioridade_rota_duplicada(conn, estado_origem, cidade_destino):
-            raise sqlite3.IntegrityError(
+            raise db_conexao.ConflitoIntegridade(
                 f"já existe uma prioridade de rota de '{estado_origem}' → '{cidade_destino}'"
             )
         cur = conn.execute(
@@ -1300,7 +1634,7 @@ def inserir_prioridade_rota(estado_origem, cidade_destino, filial_escala, observ
 def atualizar_prioridade_rota(id_, estado_origem, cidade_destino, filial_escala, observacao=""):
     with get_connection() as conn:
         if _prioridade_rota_duplicada(conn, estado_origem, cidade_destino, ignorar_id=id_):
-            raise sqlite3.IntegrityError(
+            raise db_conexao.ConflitoIntegridade(
                 f"já existe uma prioridade de rota de '{estado_origem}' → '{cidade_destino}'"
             )
         conn.execute(
@@ -1313,6 +1647,241 @@ def atualizar_prioridade_rota(id_, estado_origem, cidade_destino, filial_escala,
 def excluir_prioridade_rota(id_):
     with get_connection() as conn:
         conn.execute("DELETE FROM prioridades_rota WHERE id=?", (id_,))
+
+
+EIXOS_PEDAGIO = list(range(2, 10))  # números de eixos suportados nas praças de pedágio (2 a 9)
+
+
+def listar_pracas_pedagio_admin() -> list[dict]:
+    with get_connection() as conn:
+        return [
+            dict(r) for r in conn.execute("SELECT * FROM pracas_pedagio ORDER BY rodovia, nome")
+        ]
+
+
+def _praca_pedagio_duplicada(
+    conn: sqlite3.Connection, nome: str, rodovia: str, ignorar_id: int | None = None,
+) -> bool:
+    """Mesmo motivo das checagens equivalentes em taxas_balsa/prioridades_rota:
+    a UNIQUE do SQLite é case-sensitive, mas nome/rodovia são comparados sem
+    diferenciar maiúsculas -- inclusive no upsert do import CSV, ver
+    importar_pracas_pedagio_csv."""
+    query = "SELECT 1 FROM pracas_pedagio WHERE LOWER(nome) = LOWER(?) AND LOWER(rodovia) = LOWER(?)"
+    params = [nome.strip(), rodovia.strip()]
+    if ignorar_id is not None:
+        query += " AND id != ?"
+        params.append(ignorar_id)
+    return conn.execute(query, params).fetchone() is not None
+
+
+def _valores_eixo_tuple(valores_eixo: dict) -> tuple:
+    return tuple(valores_eixo.get(n, 0) or 0 for n in EIXOS_PEDAGIO)
+
+
+def inserir_praca_pedagio(nome, rodovia, concessionaria, uf="", km="",
+                           valor_eixo_2=0, valor_eixo_3=0, valor_eixo_4=0, valor_eixo_5=0,
+                           valor_eixo_6=0, valor_eixo_7=0, valor_eixo_8=0, valor_eixo_9=0,
+                           observacao=""):
+    with get_connection() as conn:
+        if _praca_pedagio_duplicada(conn, nome, rodovia):
+            raise db_conexao.ConflitoIntegridade(f"já existe uma praça de pedágio '{nome}' na rodovia '{rodovia}'")
+        cur = conn.execute(
+            "INSERT INTO pracas_pedagio (nome, rodovia, concessionaria, uf, km, "
+            "valor_eixo_2, valor_eixo_3, valor_eixo_4, valor_eixo_5, valor_eixo_6, "
+            "valor_eixo_7, valor_eixo_8, valor_eixo_9, observacao) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (nome, rodovia, concessionaria, uf, km, valor_eixo_2, valor_eixo_3, valor_eixo_4,
+             valor_eixo_5, valor_eixo_6, valor_eixo_7, valor_eixo_8, valor_eixo_9, observacao),
+        )
+        return cur.lastrowid
+
+
+def atualizar_praca_pedagio(id_, nome, rodovia, concessionaria, uf="", km="",
+                             valor_eixo_2=0, valor_eixo_3=0, valor_eixo_4=0, valor_eixo_5=0,
+                             valor_eixo_6=0, valor_eixo_7=0, valor_eixo_8=0, valor_eixo_9=0,
+                             observacao=""):
+    with get_connection() as conn:
+        if _praca_pedagio_duplicada(conn, nome, rodovia, ignorar_id=id_):
+            raise db_conexao.ConflitoIntegridade(f"já existe uma praça de pedágio '{nome}' na rodovia '{rodovia}'")
+        conn.execute(
+            "UPDATE pracas_pedagio SET nome=?, rodovia=?, concessionaria=?, uf=?, km=?, "
+            "valor_eixo_2=?, valor_eixo_3=?, valor_eixo_4=?, valor_eixo_5=?, valor_eixo_6=?, "
+            "valor_eixo_7=?, valor_eixo_8=?, valor_eixo_9=?, observacao=? WHERE id=?",
+            (nome, rodovia, concessionaria, uf, km, valor_eixo_2, valor_eixo_3, valor_eixo_4,
+             valor_eixo_5, valor_eixo_6, valor_eixo_7, valor_eixo_8, valor_eixo_9, observacao, id_),
+        )
+
+
+def excluir_praca_pedagio(id_):
+    with get_connection() as conn:
+        conn.execute("DELETE FROM pracas_pedagio WHERE id=?", (id_,))
+
+
+def listar_pedagios_rota_admin() -> list[dict]:
+    with get_connection() as conn:
+        return [
+            dict(r) for r in conn.execute(
+                "SELECT pr.id, pr.cidade_origem, pr.cidade_destino, pr.praca_id, pr.observacao, "
+                "pp.nome AS praca_nome, pp.rodovia AS praca_rodovia "
+                "FROM pedagios_rota pr JOIN pracas_pedagio pp ON pp.id = pr.praca_id "
+                "ORDER BY pr.cidade_origem, pr.cidade_destino, pp.nome"
+            )
+        ]
+
+
+def _pedagio_rota_duplicado(
+    conn: sqlite3.Connection, cidade_origem: str, cidade_destino: str, praca_id: int,
+    ignorar_id: int | None = None,
+) -> bool:
+    query = (
+        "SELECT 1 FROM pedagios_rota WHERE LOWER(cidade_origem) = LOWER(?) AND LOWER(cidade_destino) = LOWER(?) "
+        "AND praca_id = ?"
+    )
+    params = [cidade_origem.strip(), cidade_destino.strip(), praca_id]
+    if ignorar_id is not None:
+        query += " AND id != ?"
+        params.append(ignorar_id)
+    return conn.execute(query, params).fetchone() is not None
+
+
+def inserir_pedagio_rota(cidade_origem, cidade_destino, praca_id, observacao=""):
+    with get_connection() as conn:
+        if _pedagio_rota_duplicado(conn, cidade_origem, cidade_destino, praca_id):
+            raise db_conexao.ConflitoIntegridade(
+                f"já existe um pedágio de rota '{cidade_origem}' → '{cidade_destino}' pra essa praça"
+            )
+        cur = conn.execute(
+            "INSERT INTO pedagios_rota (cidade_origem, cidade_destino, praca_id, observacao) VALUES (?,?,?,?)",
+            (cidade_origem, cidade_destino, praca_id, observacao),
+        )
+        return cur.lastrowid
+
+
+def atualizar_pedagio_rota(id_, cidade_origem, cidade_destino, praca_id, observacao=""):
+    with get_connection() as conn:
+        if _pedagio_rota_duplicado(conn, cidade_origem, cidade_destino, praca_id, ignorar_id=id_):
+            raise db_conexao.ConflitoIntegridade(
+                f"já existe um pedágio de rota '{cidade_origem}' → '{cidade_destino}' pra essa praça"
+            )
+        conn.execute(
+            "UPDATE pedagios_rota SET cidade_origem=?, cidade_destino=?, praca_id=?, observacao=? WHERE id=?",
+            (cidade_origem, cidade_destino, praca_id, observacao, id_),
+        )
+
+
+def excluir_pedagio_rota(id_):
+    with get_connection() as conn:
+        conn.execute("DELETE FROM pedagios_rota WHERE id=?", (id_,))
+
+
+def listar_distancias_fixas_admin() -> list[dict]:
+    with get_connection() as conn:
+        return [
+            dict(r) for r in conn.execute(
+                "SELECT * FROM distancias_fixas ORDER BY cidade_origem, cidade_destino"
+            )
+        ]
+
+
+def _distancia_fixa_duplicada(
+    conn: sqlite3.Connection, cidade_origem: str, cidade_destino: str, ignorar_id: int | None = None,
+) -> bool:
+    """Mesmo motivo das checagens equivalentes em taxas_balsa/prioridades_rota:
+    a UNIQUE do SQLite é case-sensitive, mas a aplicação compara em
+    minúsculas (ver frete_service.distancia_fixa_aplicavel)."""
+    query = (
+        "SELECT 1 FROM distancias_fixas WHERE LOWER(cidade_origem) = LOWER(?) "
+        "AND LOWER(cidade_destino) = LOWER(?)"
+    )
+    params = [cidade_origem.strip(), cidade_destino.strip()]
+    if ignorar_id is not None:
+        query += " AND id != ?"
+        params.append(ignorar_id)
+    return conn.execute(query, params).fetchone() is not None
+
+
+def inserir_distancia_fixa(cidade_origem, cidade_destino, distancia_km, observacao=""):
+    with get_connection() as conn:
+        if _distancia_fixa_duplicada(conn, cidade_origem, cidade_destino):
+            raise db_conexao.ConflitoIntegridade(
+                f"já existe uma distância fixa cadastrada de '{cidade_origem}' → '{cidade_destino}'"
+            )
+        cur = conn.execute(
+            "INSERT INTO distancias_fixas (cidade_origem, cidade_destino, distancia_km, observacao) "
+            "VALUES (?,?,?,?)",
+            (cidade_origem, cidade_destino, distancia_km, observacao),
+        )
+        return cur.lastrowid
+
+
+def atualizar_distancia_fixa(id_, cidade_origem, cidade_destino, distancia_km, observacao=""):
+    with get_connection() as conn:
+        if _distancia_fixa_duplicada(conn, cidade_origem, cidade_destino, ignorar_id=id_):
+            raise db_conexao.ConflitoIntegridade(
+                f"já existe uma distância fixa cadastrada de '{cidade_origem}' → '{cidade_destino}'"
+            )
+        conn.execute(
+            "UPDATE distancias_fixas SET cidade_origem=?, cidade_destino=?, distancia_km=?, observacao=? "
+            "WHERE id=?",
+            (cidade_origem, cidade_destino, distancia_km, observacao, id_),
+        )
+
+
+def excluir_distancia_fixa(id_):
+    with get_connection() as conn:
+        conn.execute("DELETE FROM distancias_fixas WHERE id=?", (id_,))
+
+
+def importar_pracas_pedagio_csv(conteudo: str) -> dict:
+    """Importa/atualiza o catálogo de praças de pedágio a partir de um CSV
+    no mesmo formato publicado pelas concessionárias (uma linha por praça,
+    uma coluna por número de eixos). Colunas esperadas no cabeçalho
+    (case-insensitive): nome, rodovia, concessionaria, uf, km,
+    valor_eixo_2..valor_eixo_9, observacao -- todas exceto nome/rodovia/
+    concessionaria são opcionais. Faz upsert por (nome, rodovia): atualiza
+    se já existir uma praça com esse nome nessa rodovia, senão insere."""
+    criadas = 0
+    atualizadas = 0
+    erros: list[str] = []
+    leitor = csv.DictReader(io.StringIO(conteudo))
+    with get_connection() as conn:
+        for i, linha in enumerate(leitor, start=2):  # linha 1 é o cabeçalho
+            campos = {(k or "").strip().lower(): (v or "").strip() for k, v in linha.items()}
+            nome = campos.get("nome", "")
+            rodovia = campos.get("rodovia", "")
+            concessionaria = campos.get("concessionaria", "")
+            if not nome or not rodovia or not concessionaria:
+                erros.append(f"linha {i}: nome, rodovia e concessionaria são obrigatórios")
+                continue
+            try:
+                valores_eixo = {
+                    n: (float(campos[f"valor_eixo_{n}"].replace(",", ".")) if campos.get(f"valor_eixo_{n}") else 0)
+                    for n in EIXOS_PEDAGIO
+                }
+            except ValueError:
+                erros.append(f"linha {i}: valor de eixo inválido")
+                continue
+            uf, km, observacao = campos.get("uf", ""), campos.get("km", ""), campos.get("observacao", "")
+            existente = conn.execute(
+                "SELECT id FROM pracas_pedagio WHERE LOWER(nome) = LOWER(?) AND LOWER(rodovia) = LOWER(?)",
+                (nome, rodovia),
+            ).fetchone()
+            if existente:
+                conn.execute(
+                    "UPDATE pracas_pedagio SET concessionaria=?, uf=?, km=?, "
+                    "valor_eixo_2=?, valor_eixo_3=?, valor_eixo_4=?, valor_eixo_5=?, valor_eixo_6=?, "
+                    "valor_eixo_7=?, valor_eixo_8=?, valor_eixo_9=?, observacao=? WHERE id=?",
+                    (concessionaria, uf, km, *_valores_eixo_tuple(valores_eixo), observacao, existente["id"]),
+                )
+                atualizadas += 1
+            else:
+                conn.execute(
+                    "INSERT INTO pracas_pedagio (nome, rodovia, concessionaria, uf, km, "
+                    "valor_eixo_2, valor_eixo_3, valor_eixo_4, valor_eixo_5, valor_eixo_6, "
+                    "valor_eixo_7, valor_eixo_8, valor_eixo_9, observacao) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (nome, rodovia, concessionaria, uf, km, *_valores_eixo_tuple(valores_eixo), observacao),
+                )
+                criadas += 1
+    return {"criadas": criadas, "atualizadas": atualizadas, "erros": erros}
 
 
 def _proximo_codigo_orcamento(conn: sqlite3.Connection) -> str:
@@ -1477,7 +2046,7 @@ def inserir_usuario(
 ) -> int:
     with get_connection() as conn:
         if _usuario_duplicado(conn, username):
-            raise sqlite3.IntegrityError(f"já existe um usuário com o login '{username}'")
+            raise db_conexao.ConflitoIntegridade(f"já existe um usuário com o login '{username}'")
         cur = conn.execute(
             "INSERT INTO usuarios (nome, username, senha_hash, senha_salt, role, ativo, criado_em, deve_trocar_senha) "
             "VALUES (?,?,?,?,?,?,?,?)",
@@ -1492,7 +2061,7 @@ def inserir_usuario(
 def atualizar_usuario(id_: int, nome: str, username: str, role: str, ativo: bool):
     with get_connection() as conn:
         if _usuario_duplicado(conn, username, ignorar_id=id_):
-            raise sqlite3.IntegrityError(f"já existe um usuário com o login '{username}'")
+            raise db_conexao.ConflitoIntegridade(f"já existe um usuário com o login '{username}'")
         conn.execute(
             "UPDATE usuarios SET nome=?, username=?, role=?, ativo=? WHERE id=?",
             (nome, username, role, int(ativo), id_),

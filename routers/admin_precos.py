@@ -12,9 +12,13 @@ from deps import admin_atualizar, admin_criar, admin_excluir, exigir_admin
 from schemas import (
     CategoriaIn,
     ColetaCidadeFixaIn,
+    DistanciaFixaIn,
     FaixaColetaIn,
     FaixaKmVeiculoIn,
     FilialIn,
+    ImportarPracasPedagioRequest,
+    PedagioRotaIn,
+    PracaPedagioIn,
     PrioridadeRotaIn,
     SlaIn,
     TaxaAdicionalIn,
@@ -224,6 +228,102 @@ def admin_atualizar_prioridade_rota(id_: int, payload: PrioridadeRotaIn, usuario
 @router.delete("/prioridades-rota/{id_}")
 def admin_excluir_prioridade_rota(id_: int, usuario: dict = Depends(exigir_admin)):
     return admin_excluir(db.excluir_prioridade_rota, id_)
+
+
+@router.get("/pracas-pedagio")
+def admin_listar_pracas_pedagio(usuario: dict = Depends(exigir_admin)):
+    return db.listar_pracas_pedagio_admin()
+
+
+@router.post("/pracas-pedagio")
+def admin_criar_praca_pedagio(payload: PracaPedagioIn, usuario: dict = Depends(exigir_admin)):
+    return admin_criar(
+        db.inserir_praca_pedagio, payload,
+        f"Já existe uma praça de pedágio '{payload.nome}' na rodovia '{payload.rodovia}'.",
+    )
+
+
+@router.put("/pracas-pedagio/{id_}")
+def admin_atualizar_praca_pedagio(id_: int, payload: PracaPedagioIn, usuario: dict = Depends(exigir_admin)):
+    return admin_atualizar(
+        db.atualizar_praca_pedagio, id_, payload,
+        f"Já existe uma praça de pedágio '{payload.nome}' na rodovia '{payload.rodovia}'.",
+    )
+
+
+@router.delete("/pracas-pedagio/{id_}")
+def admin_excluir_praca_pedagio(id_: int, usuario: dict = Depends(exigir_admin)):
+    try:
+        return admin_excluir(db.excluir_praca_pedagio, id_)
+    except db.ConflitoIntegridade as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Essa praça está em uso em algum pedágio de rota cadastrado — remova o vínculo antes de excluí-la.",
+        ) from exc
+
+
+@router.post("/pracas-pedagio/importar-csv")
+def admin_importar_pracas_pedagio(payload: ImportarPracasPedagioRequest, usuario: dict = Depends(exigir_admin)):
+    """Importa/atualiza o catálogo de praças a partir de um CSV no mesmo
+    formato publicado pelas concessionárias — ver
+    frete_db.importar_pracas_pedagio_csv para o formato esperado. Recebe o
+    texto do arquivo já lido no navegador (não multipart), pra não
+    depender do pacote python-multipart."""
+    resultado = db.importar_pracas_pedagio_csv(payload.conteudo)
+    fs.carregar_parametros()
+    return resultado
+
+
+@router.get("/pedagios-rota")
+def admin_listar_pedagios_rota(usuario: dict = Depends(exigir_admin)):
+    return db.listar_pedagios_rota_admin()
+
+
+@router.post("/pedagios-rota")
+def admin_criar_pedagio_rota(payload: PedagioRotaIn, usuario: dict = Depends(exigir_admin)):
+    return admin_criar(
+        db.inserir_pedagio_rota, payload,
+        f"Já existe um pedágio de rota de '{payload.cidade_origem}' → '{payload.cidade_destino}' pra essa praça.",
+    )
+
+
+@router.put("/pedagios-rota/{id_}")
+def admin_atualizar_pedagio_rota(id_: int, payload: PedagioRotaIn, usuario: dict = Depends(exigir_admin)):
+    return admin_atualizar(
+        db.atualizar_pedagio_rota, id_, payload,
+        f"Já existe um pedágio de rota de '{payload.cidade_origem}' → '{payload.cidade_destino}' pra essa praça.",
+    )
+
+
+@router.delete("/pedagios-rota/{id_}")
+def admin_excluir_pedagio_rota(id_: int, usuario: dict = Depends(exigir_admin)):
+    return admin_excluir(db.excluir_pedagio_rota, id_)
+
+
+@router.get("/distancias-fixas")
+def admin_listar_distancias_fixas(usuario: dict = Depends(exigir_admin)):
+    return db.listar_distancias_fixas_admin()
+
+
+@router.post("/distancias-fixas")
+def admin_criar_distancia_fixa(payload: DistanciaFixaIn, usuario: dict = Depends(exigir_admin)):
+    return admin_criar(
+        db.inserir_distancia_fixa, payload,
+        f"Já existe uma distância fixa cadastrada de '{payload.cidade_origem}' → '{payload.cidade_destino}'.",
+    )
+
+
+@router.put("/distancias-fixas/{id_}")
+def admin_atualizar_distancia_fixa(id_: int, payload: DistanciaFixaIn, usuario: dict = Depends(exigir_admin)):
+    return admin_atualizar(
+        db.atualizar_distancia_fixa, id_, payload,
+        f"Já existe uma distância fixa cadastrada de '{payload.cidade_origem}' → '{payload.cidade_destino}'.",
+    )
+
+
+@router.delete("/distancias-fixas/{id_}")
+def admin_excluir_distancia_fixa(id_: int, usuario: dict = Depends(exigir_admin)):
+    return admin_excluir(db.excluir_distancia_fixa, id_)
 
 
 @router.get("/transportadoras-terceirizadas")

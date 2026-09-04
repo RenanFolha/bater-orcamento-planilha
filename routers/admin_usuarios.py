@@ -2,8 +2,6 @@
 
 """CRUD administrativo de usuários — só administrador."""
 
-import sqlite3
-
 from fastapi import APIRouter, Depends, HTTPException
 
 import auth_service as auth
@@ -28,7 +26,7 @@ def admin_criar_usuario(payload: UsuarioIn, usuario: dict = Depends(exigir_admin
             senha_hash=senha_hash, senha_salt=senha_salt,
             role=payload.role, ativo=payload.ativo,
         )
-    except sqlite3.IntegrityError as exc:
+    except db.ConflitoIntegridade as exc:
         raise HTTPException(status_code=409, detail=f"Já existe um usuário com o login '{payload.username}'.") from exc
     return {"id": novo_id}
 
@@ -51,7 +49,7 @@ def admin_atualizar_usuario(id_: int, payload: UsuarioUpdateIn, usuario: dict = 
         )
     try:
         db.atualizar_usuario(id_, nome=payload.nome, username=payload.username, role=payload.role, ativo=payload.ativo)
-    except sqlite3.IntegrityError as exc:
+    except db.ConflitoIntegridade as exc:
         raise HTTPException(status_code=409, detail=f"Já existe um usuário com o login '{payload.username}'.") from exc
     if payload.senha:
         senha_hash, senha_salt = auth.gerar_hash_senha(payload.senha)

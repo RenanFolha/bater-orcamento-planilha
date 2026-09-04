@@ -8,10 +8,9 @@ dados já cadastrados. Usa o fixture `banco_temporario` (conftest.py) —
 nunca toca no frete.db real.
 """
 
-import sqlite3
-
 import pytest
 
+import db_conexao
 import frete_db as db
 
 
@@ -28,7 +27,7 @@ def test_busca_encontra_qualquer_cidade_da_lista(banco_temporario):
 
 def test_cidade_repetida_no_mesmo_filial_veiculo_da_conflito(banco_temporario):
     db.inserir_coleta_cidade_fixa("São Paulo", "Osasco, Barueri", "VUC", 80.0)
-    with pytest.raises(sqlite3.IntegrityError, match="Barueri"):
+    with pytest.raises(db_conexao.ConflitoIntegridade, match="Barueri"):
         db.inserir_coleta_cidade_fixa("São Paulo", "Barueri, Cotia", "VUC", 90.0)
 
 
@@ -52,12 +51,12 @@ def test_atualizar_permite_manter_as_mesmas_cidades(banco_temporario):
 def test_atualizar_com_cidade_de_outra_linha_da_conflito(banco_temporario):
     db.inserir_coleta_cidade_fixa("São Paulo", "Osasco", "VUC", 80.0)
     id2 = db.inserir_coleta_cidade_fixa("São Paulo", "Cotia", "VUC", 90.0)
-    with pytest.raises(sqlite3.IntegrityError, match="Osasco"):
+    with pytest.raises(db_conexao.ConflitoIntegridade, match="Osasco"):
         db.atualizar_coleta_cidade_fixa(id2, "São Paulo", "Osasco", "VUC", 90.0)
 
 
 def test_lista_vazia_e_rejeitada(banco_temporario):
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(db_conexao.ConflitoIntegridade):
         db.inserir_coleta_cidade_fixa("São Paulo", "  ,  ,", "VUC", 80.0)
 
 

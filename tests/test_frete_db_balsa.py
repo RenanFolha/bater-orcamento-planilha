@@ -8,10 +8,9 @@ rota+veículo duas vezes deve dar erro de conflito. Usa o fixture
 `banco_temporario` (conftest.py) — nunca toca no frete.db real.
 """
 
-import sqlite3
-
 import pytest
 
+import db_conexao
 import frete_db as db
 
 
@@ -44,7 +43,7 @@ def test_mesma_rota_e_veiculo_da_conflito(banco_temporario):
     # igual nas outras checagens de duplicidade do projeto) -- por isso o
     # teste varia só letras sem acento, não a acentuação em si.
     db.inserir_taxa_balsa("Belem", "Macapa", "VUC", "fixo", 120.0)
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(db_conexao.ConflitoIntegridade):
         db.inserir_taxa_balsa("BELEM", "macapa", "vuc", "fixo", 130.0)  # case-insensitive
 
 

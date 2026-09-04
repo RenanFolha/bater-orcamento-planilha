@@ -590,3 +590,100 @@ def test_categoria_invalida_gera_erro_com_opcoes(parametros):
 ])
 def test_cidade_da_retirada(endereco, esperado):
     assert fs._cidade_da_retirada(endereco) == esperado
+
+
+def test_pedagio_rota_sem_corredor_cadastrado_retorna_none(parametros):
+    achado = fs.pedagio_rota_aplicavel(parametros, "Curitiba, PR, Brasil", "Florianópolis, SC, Brasil", 2)
+    assert achado is None
+
+
+def test_pedagio_rota_soma_todas_as_pracas_do_corredor(parametros):
+    # Um corredor normalmente atravessa mais de uma praça -- diferente de
+    # taxa de balsa (que escolhe uma linha vencedora), aqui todas as
+    # praças do corredor mais específico entram na soma.
+    parametros.pracas_pedagio = {
+        1: fs.PracaPedagio(1, "Praça 5", "BR-101", "ViaSul", {2: 12.4, 3: 18.6}),
+        2: fs.PracaPedagio(2, "Praça 8", "BR-101", "ViaSul", {2: 10.0, 3: 15.0}),
+    }
+    parametros.pedagios_rota = [
+        fs.PedagioRota("Curitiba", "Florianópolis", 1),
+        fs.PedagioRota("Curitiba", "Florianópolis", 2),
+    ]
+    total, pracas = fs.pedagio_rota_aplicavel(parametros, "Curitiba, PR, Brasil", "Florianópolis, SC, Brasil", 2)
+    assert total == pytest.approx(22.4)
+    assert set(pracas) == {"Praça 5", "Praça 8"}
+
+
+def test_pedagio_rota_curinga_origem_vale_para_qualquer_origem(parametros):
+    parametros.pracas_pedagio = {1: fs.PracaPedagio(1, "Praça X", "BR-101", "ViaSul", {2: 20.0})}
+    parametros.pedagios_rota = [fs.PedagioRota("*", "Manaus", 1)]
+    total, pracas = fs.pedagio_rota_aplicavel(parametros, "São Paulo, SP, Brasil", "Manaus, Amazonas, Brasil", 2)
+    assert total == pytest.approx(20.0)
+    assert pracas == ["Praça X"]
+
+
+def test_pedagio_rota_linha_especifica_vence_curinga(parametros):
+    parametros.pracas_pedagio = {
+        1: fs.PracaPedagio(1, "Praça Curinga", "BR-101", "ViaSul", {2: 20.0}),
+        2: fs.PracaPedagio(2, "Praça Específica", "BR-116", "Arteris", {2: 30.0}),
+    }
+    parametros.pedagios_rota = [
+        fs.PedagioRota("*", "Manaus", 1),
+        fs.PedagioRota("Belém", "Manaus", 2),
+    ]
+    total, pracas = fs.pedagio_rota_aplicavel(parametros, "Belém, PA, Brasil", "Manaus, Amazonas, Brasil", 2)
+    assert total == pytest.approx(30.0)
+    assert pracas == ["Praça Específica"]
+
+
+def test_pedagio_rota_direcao_invertida_nao_bate(parametros):
+    parametros.pracas_pedagio = {1: fs.PracaPedagio(1, "Praça 5", "BR-101", "ViaSul", {2: 12.4})}
+    parametros.pedagios_rota = [fs.PedagioRota("Curitiba", "Florianópolis", 1)]
+    achado = fs.pedagio_rota_aplicavel(parametros, "Florianópolis, SC, Brasil", "Curitiba, PR, Brasil", 2)
+    assert achado is None
+
+
+def test_pedagio_rota_sem_preco_pro_numero_de_eixos_retorna_none(parametros):
+    parametros.pracas_pedagio = {1: fs.PracaPedagio(1, "Praça 5", "BR-101", "ViaSul", {2: 12.4})}
+    parametros.pedagios_rota = [fs.PedagioRota("Curitiba", "Florianópolis", 1)]
+    # a praça não tem preço cadastrado pra 6 eixos (0 == "não cadastrado")
+    achado = fs.pedagio_rota_aplicavel(parametros, "Curitiba, PR, Brasil", "Florianópolis, SC, Brasil", 6)
+    assert achado is None
+
+
+def test_pedagio_rota_sem_numero_de_eixos_retorna_none(parametros):
+    parametros.pracas_pedagio = {1: fs.PracaPedagio(1, "Praça 5", "BR-101", "ViaSul", {2: 12.4})}
+    parametros.pedagios_rota = [fs.PedagioRota("Curitiba", "Florianópolis", 1)]
+    achado = fs.pedagio_rota_aplicavel(parametros, "Curitiba, PR, Brasil", "Florianópolis, SC, Brasil", 0)
+    assert achado is None
+
+
+def test_distancia_fixa_sem_corredor_cadastrado_retorna_none(parametros):
+    achado = fs.distancia_fixa_aplicavel(parametros, "São Paulo, SP, Brasil", "Manaus, Amazonas, Brasil")
+    assert achado is None
+
+
+def test_distancia_fixa_corredor_exato(parametros):
+    parametros.distancias_fixas = [fs.DistanciaFixa("Belém", "Manaus", 2096)]
+    achado = fs.distancia_fixa_aplicavel(parametros, "Belém, Pará, Brasil", "Manaus, Amazonas, Brasil")
+    assert achado is not None
+    assert achado.distancia_km == 2096
+
+
+def test_distancia_fixa_direcao_invertida_nao_bate(parametros):
+    parametros.distancias_fixas = [fs.DistanciaFixa("Belém", "Manaus", 2096)]
+    achado = fs.distancia_fixa_aplicavel(parametros, "Manaus, Amazonas, Brasil", "Belém, Pará, Brasil")
+    assert achado is None
+
+
+def test_distancia_fixa_curinga_e_especificidade(parametros):
+    parametros.distancias_fixas = [
+        fs.DistanciaFixa("*", "Manaus", 3000),
+        fs.DistanciaFixa("Belém", "Manaus", 2096),
+    ]
+    # a linha específica (Belém -> Manaus) vence o curinga (* -> Manaus)
+    achado = fs.distancia_fixa_aplicavel(parametros, "Belém, Pará, Brasil", "Manaus, Amazonas, Brasil")
+    assert achado.distancia_km == 2096
+    # origem diferente só bate no curinga
+    achado2 = fs.distancia_fixa_aplicavel(parametros, "Fortaleza, CE, Brasil", "Manaus, Amazonas, Brasil")
+    assert achado2.distancia_km == 3000

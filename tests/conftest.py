@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pytest
 
 import auth_service as auth
+import db_conexao
 import frete_db as db
 
 
@@ -38,8 +39,15 @@ def banco_temporario(tmp_path, monkeypatch):
     get_connection() lê esse nome do escopo do módulo a cada chamada (não
     captura o valor num default), qualquer código que chame `db.get_connection()`
     — mesmo em auth_service.py ou main.py, que importam `frete_db as db`
-    separadamente — enxerga o caminho trocado."""
+    separadamente — enxerga o caminho trocado.
+
+    Também monkeypatcha `db_conexao.DB_CONFIG_PATH` pra um arquivo que não
+    existe: se a máquina que roda os testes já tiver configurado um banco
+    externo de verdade pela tela "Banco de dados" (`db_config.json` na
+    raiz do projeto), sem isso os testes tentariam conectar nesse banco
+    externo em vez do SQLite temporário — inclusive escrevendo nele."""
     caminho = tmp_path / "teste_frete.db"
     monkeypatch.setattr(db, "DB_PATH", str(caminho))
+    monkeypatch.setattr(db_conexao, "DB_CONFIG_PATH", str(tmp_path / "nao_existe_db_config.json"))
     db.init_db()
     return caminho

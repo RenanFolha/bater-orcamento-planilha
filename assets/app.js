@@ -822,7 +822,12 @@ async function calcularDistanciaEEndereco(){
     if(typeof data2.pedagio_valor === 'number'){
       pedagioInput.value = formatarValorMoeda(data2.pedagio_valor);
       campoPedagio.style.display = '';
-      mensagemPedagio = ` Pedágio estimado: ${fmtBRL(data2.pedagio_valor)}.`;
+      // pedagio_pracas só vem preenchido quando o valor saiu do catálogo
+      // de praças cadastrado (/admin/pracas-pedagio), não da estimativa
+      // genérica do Google -- mais preciso, por isso mostra a composição.
+      mensagemPedagio = (data2.pedagio_pracas && data2.pedagio_pracas.length)
+        ? ` Pedágio: ${fmtBRL(data2.pedagio_valor)} (${data2.pedagio_pracas.join(', ')}).`
+        : ` Pedágio estimado: ${fmtBRL(data2.pedagio_valor)}.`;
     }else{
       campoPedagio.style.display = 'none';
       pedagioInput.value = formatarValorMoeda(0);
@@ -1161,7 +1166,7 @@ function mostrarView(viewName){
 
   if(viewName === 'precos') carregarTabelaPrecos();
   if(viewName === 'historico') carregarHistorico();
-  if(viewName === 'config') carregarConfiguracoes();
+  if(viewName === 'config'){ carregarConfiguracoes(); carregarBancoDadosConfig(); }
 }
 
 document.querySelectorAll('.sidebar-nav a').forEach(link => {
@@ -1336,6 +1341,110 @@ async function carregarConfiguracoes(){
     dbEl.textContent = '-';
   }
 }
+
+const TIPOS_BANCO_LABEL = {
+  sqlite: 'SQLite (arquivo local)', sqlserver: 'SQL Server', mysql: 'MySQL', postgresql: 'PostgreSQL',
+};
+
+function _bdAtualizarCamposVisiveis(){
+  const tipo = document.getElementById('bd-tipo').value;
+  document.getElementById('bd-campo-sqlite_path').style.display = tipo === 'sqlite' ? '' : 'none';
+  document.getElementById('bd-campos-servidor').style.display = tipo === 'sqlite' ? 'none' : '';
+}
+
+function _bdLerFormulario(){
+  return {
+    tipo: document.getElementById('bd-tipo').value,
+    sqlite_path: document.getElementById('bd-sqlite_path').value,
+    host: document.getElementById('bd-host').value,
+    porta: parseInt(document.getElementById('bd-porta').value, 10) || 0,
+    banco: document.getElementById('bd-banco').value,
+    usuario: document.getElementById('bd-usuario').value,
+    senha: document.getElementById('bd-senha').value,
+  };
+}
+
+async function carregarBancoDadosConfig(){
+  const tipoSel = document.getElementById('bd-tipo');
+  const tagEl = document.getElementById('bd-tipo-atual-tag');
+  if(!tipoSel.dataset.wired){
+    tipoSel.addEventListener('change', _bdAtualizarCamposVisiveis);
+    tipoSel.dataset.wired = '1';
+  }
+  try{
+    const res = await fetch(`${API_BASE}/admin/banco-dados`);
+    if(!res.ok) throw new Error();
+    const cfg = await res.json();
+    tagEl.textContent = TIPOS_BANCO_LABEL[cfg.tipo] || cfg.tipo;
+    tipoSel.value = cfg.tipo;
+    document.getElementById('bd-sqlite_path').value = cfg.sqlite_path || '';
+    document.getElementById('bd-host').value = cfg.host || '';
+    document.getElementById('bd-porta').value = cfg.porta || '';
+    document.getElementById('bd-banco').value = cfg.banco || '';
+    document.getElementById('bd-usuario').value = cfg.usuario || '';
+    document.getElementById('bd-senha').value = '';
+    document.getElementById('bd-senha').placeholder = cfg.senha_configurada ? '(mantida — digite pra trocar)' : '';
+    _bdAtualizarCamposVisiveis();
+  }catch(err){
+    tagEl.textContent = 'erro';
+  }
+}
+
+document.getElementById('btn-testar-banco').addEventListener('click', async () => {
+  const btn = document.getElementById('btn-testar-banco');
+  const statusEl = document.getElementById('banco-dados-status');
+  btn.disabled = true;
+  statusEl.className = 'geo-status';
+  statusEl.textContent = 'Testando conexão...';
+  try{
+    const res = await fetch(`${API_BASE}/admin/banco-dados/testar`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(_bdLerFormulario()),
+    });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.detail || 'Falha ao testar a conexão.');
+    statusEl.classList.add('ok');
+    statusEl.textContent = data.mensagem || 'Conexão bem-sucedida.';
+  }catch(e){
+    statusEl.classList.add('err');
+    statusEl.textContent = e.message;
+  }finally{
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('btn-aplicar-banco').addEventListener('click', async () => {
+  const dados = _bdLerFormulario();
+  const confirmacao = confirm(
+    `Isso vai criar o schema em "${TIPOS_BANCO_LABEL[dados.tipo] || dados.tipo}", copiar TODOS os dados ` +
+    'do banco atual pra ele, e passar a usar esse banco novo a partir de agora. Confirma?'
+  );
+  if(!confirmacao) return;
+
+  const btn = document.getElementById('btn-aplicar-banco');
+  const statusEl = document.getElementById('banco-dados-status');
+  btn.disabled = true;
+  statusEl.className = 'geo-status';
+  statusEl.textContent = 'Migrando dados — isso pode demorar um pouco...';
+  try{
+    const res = await fetch(`${API_BASE}/admin/banco-dados/aplicar`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(dados),
+    });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.detail || 'Falha ao aplicar a mudança de banco.');
+    const totalLinhas = Object.values(data.linhas_migradas || {}).reduce((a, b) => a + b, 0);
+    statusEl.classList.add('ok');
+    statusEl.textContent = `Banco trocado com sucesso — ${totalLinhas} linhas migradas.`;
+    await carregarBancoDadosConfig();
+    await carregarConfiguracoes();
+  }catch(e){
+    statusEl.classList.add('err');
+    statusEl.textContent = e.message;
+  }finally{
+    btn.disabled = false;
+  }
+});
 
 async function carregarUsuarios(){
   const container = document.getElementById('precos-usuarios');
@@ -1596,13 +1705,18 @@ async function criarEditorTabela({containerId, endpoint, titulo, colunas, campoM
     return colunas.map(c => {
       if(c.tipo === 'select'){
         const select = document.createElement('select');
+        // Opção pode ser uma string simples (valor = texto exibido, caso
+        // mais comum: veículo, UF, tipo...) ou um objeto {value, label}
+        // quando o valor salvo (ex: praca_id, um FK numérico) precisa ser
+        // diferente do texto mostrado pro usuário (ex: "BR-101 — Praça X").
         c.opcoes.forEach(op => {
           const option = document.createElement('option');
-          option.value = op;
-          option.textContent = op;
+          option.value = (op && typeof op === 'object') ? op.value : op;
+          option.textContent = (op && typeof op === 'object') ? op.label : op;
           select.appendChild(option);
         });
-        select.value = dados[c.campo] ?? c.opcoes[0];
+        const primeiraOpcao = (c.opcoes[0] && typeof c.opcoes[0] === 'object') ? c.opcoes[0].value : c.opcoes[0];
+        select.value = dados[c.campo] ?? primeiraOpcao;
         return select;
       }
       const input = document.createElement('input');
@@ -1627,7 +1741,13 @@ async function criarEditorTabela({containerId, endpoint, titulo, colunas, campoM
     const obj = {};
     colunas.forEach((c, i) => {
       const bruto = inputs[i].value;
-      if(c.tipo === 'select' || c.tipo === 'text'){
+      if(c.tipo === 'select'){
+        // c.numerico: o valor salvo no <select> é um FK numérico (ex:
+        // praca_id), não texto -- ver comentário em criarInputs.
+        obj[c.campo] = c.numerico ? Number(bruto) : bruto;
+        return;
+      }
+      if(c.tipo === 'text'){
         obj[c.campo] = bruto;
         return;
       }
@@ -1776,7 +1896,9 @@ async function criarEditorTabela({containerId, endpoint, titulo, colunas, campoM
         if(falhas.length === 0){
           mostrarStatus(alvos.length > 1 ? `${sucesso.length} linhas adicionadas.` : 'Linha adicionada.', true);
           inputsNovos.forEach((inp, i) => {
-            inp.value = colunas[i].tipo === 'select' ? colunas[i].opcoes[0] : '';
+            if(colunas[i].tipo !== 'select'){ inp.value = ''; return; }
+            const primeiraOpcao = colunas[i].opcoes[0];
+            inp.value = (primeiraOpcao && typeof primeiraOpcao === 'object') ? primeiraOpcao.value : primeiraOpcao;
           });
         }else if(sucesso.length === 0){
           mostrarStatus(`Nada adicionado — ${falhas.join(' | ')}`, false);
@@ -2045,17 +2167,92 @@ document.getElementById('btn-exportar-planilha').addEventListener('click', async
   }
 });
 
+const configPracasPedagio = {
+  containerId: 'precos-pracas-pedagio', endpoint: 'pracas-pedagio',
+  titulo: 'Praças de Pedágio (preço por número de eixos do veículo)',
+  colunas: [
+    {campo: 'nome', label: 'Nome da praça', tipo: 'text'},
+    {campo: 'rodovia', label: 'Rodovia', tipo: 'text'},
+    {campo: 'concessionaria', label: 'Concessionária', tipo: 'text'},
+    {campo: 'uf', label: 'UF', tipo: 'text'},
+    {campo: 'km', label: 'Km', tipo: 'text'},
+    {campo: 'valor_eixo_2', label: '2 eixos (R$)', tipo: 'moeda'},
+    {campo: 'valor_eixo_3', label: '3 eixos (R$)', tipo: 'moeda'},
+    {campo: 'valor_eixo_4', label: '4 eixos (R$)', tipo: 'moeda'},
+    {campo: 'valor_eixo_5', label: '5 eixos (R$)', tipo: 'moeda'},
+    {campo: 'valor_eixo_6', label: '6 eixos (R$)', tipo: 'moeda'},
+    {campo: 'valor_eixo_7', label: '7 eixos (R$)', tipo: 'moeda'},
+    {campo: 'valor_eixo_8', label: '8 eixos (R$)', tipo: 'moeda'},
+    {campo: 'valor_eixo_9', label: '9 eixos (R$)', tipo: 'moeda'},
+    {campo: 'observacao', label: 'Observação', tipo: 'text'},
+  ],
+};
+
+// Carrega (ou recarrega, depois de um import CSV) o card de Praças de
+// Pedágio e reanexa o bloco de import CSV embaixo dele -- criarEditorTabela
+// substitui todo o innerHTML do container, então o bloco de import precisa
+// ser reanexado toda vez.
+async function carregarBlocoPracasPedagio(){
+  await criarEditorTabela(configPracasPedagio);
+  montarImportCsvPracasPedagio();
+}
+
+function montarImportCsvPracasPedagio(){
+  const container = document.getElementById('precos-pracas-pedagio');
+  const bloco = document.createElement('div');
+  bloco.style.cssText = 'padding:12px 20px;border-top:1px solid var(--border-soft);display:flex;align-items:center;gap:10px;flex-wrap:wrap;';
+
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.csv,text/csv';
+
+  const btn = criarElemento('button', {type: 'button', class: 'btn-icone'}, '📥 Importar CSV');
+  const statusEl = document.createElement('span');
+  statusEl.style.cssText = 'font-size:11.5px;color:var(--text-dim);';
+
+  btn.addEventListener('click', async () => {
+    if(!input.files || !input.files[0]){
+      statusEl.textContent = 'Escolha um arquivo CSV primeiro.';
+      return;
+    }
+    btn.disabled = true;
+    statusEl.textContent = 'Importando...';
+    try{
+      const conteudo = await input.files[0].text();
+      const res = await fetch(`${API_BASE}/admin/pracas-pedagio/importar-csv`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({conteudo}),
+      });
+      const data = await res.json();
+      if(!res.ok) throw new Error(data.detail || 'Erro ao importar.');
+      const erros = (data.erros && data.erros.length) ? ` — ${data.erros.length} erro(s): ${data.erros.join(' | ')}` : '';
+      statusEl.textContent = `${data.criadas} criada(s), ${data.atualizadas} atualizada(s).${erros}`;
+      await carregarBlocoPracasPedagio();
+    }catch(e){
+      statusEl.textContent = `Erro ao importar: ${e.message}`;
+      btn.disabled = false;
+    }
+  });
+
+  bloco.appendChild(input);
+  bloco.appendChild(btn);
+  bloco.appendChild(statusEl);
+  container.appendChild(bloco);
+}
+
 async function carregarTabelaPrecos(){
   if(precosCarregado) return;
   precosCarregado = true;
 
-  // Listas cruas de filiais/veículos pras colunas <select> das tabelas
-  // que dependem delas (faixas-km-veiculo, coleta-cidades-fixas,
-  // taxas-balsa) -- buscadas em paralelo com as tabelas independentes
-  // abaixo, já que não têm relação nenhuma com elas.
+  // Listas cruas de filiais/veículos/praças pras colunas <select> das
+  // tabelas que dependem delas (faixas-km-veiculo, coleta-cidades-fixas,
+  // taxas-balsa, pedagios-rota) -- buscadas em paralelo com as tabelas
+  // independentes abaixo, já que não têm relação nenhuma com elas.
   const filiaisVeiculosPromise = Promise.all([
     fetch(`${API_BASE}/admin/filiais`).then(r => r.json()).catch(() => []),
     fetch(`${API_BASE}/admin/veiculos`).then(r => r.json()).catch(() => []),
+    fetch(`${API_BASE}/parametros/pracas-pedagio`).then(r => r.json()).catch(() => []),
   ]);
 
   // Tabelas sem dependência entre si -- rodam em paralelo em vez de
@@ -2083,9 +2280,12 @@ async function carregarTabelaPrecos(){
         {campo: 'tarifa_km_manutencao', label: 'Manutenção (R$/km, ida + coleta própria + retorno vazio)', tipo: 'moeda'},
         {campo: 'capacidade_m3', label: 'Capacidade útil (m³)', tipo: 'number', step: '0.01'},
         {campo: 'percentual_capacidade_util', label: '% da capacidade que pode ocupar', tipo: 'number', step: '1'},
+        {campo: 'numero_eixos', label: 'Nº de eixos (pra achar o pedágio nas praças cadastradas)', tipo: 'number', step: '1'},
         {campo: 'observacao', label: 'Observação', tipo: 'text'},
       ],
     }),
+
+    carregarBlocoPracasPedagio(),
 
     criarEditorTabela({
       containerId: 'precos-taxas-adicionais', endpoint: 'taxas-adicionais', titulo: 'Taxas Adicionais',
@@ -2165,7 +2365,7 @@ async function carregarTabelaPrecos(){
     }),
   ]);
 
-  const [filiaisParaColeta, veiculosParaColeta] = await filiaisVeiculosPromise;
+  const [filiaisParaColeta, veiculosParaColeta, pracasParaPedagio] = await filiaisVeiculosPromise;
 
   // Estas dependem das opções de filial/veículo acima pros <select> das
   // colunas -- rodam em paralelo entre si também.
@@ -2217,6 +2417,31 @@ async function carregarTabelaPrecos(){
         {campo: 'estado_origem', label: 'Estado de origem (UF, ou "*")', tipo: 'select', opcoes: ['*', ...UFS_BRASIL]},
         {campo: 'cidade_destino', label: 'Cidade de destino (ou "*")', tipo: 'text'},
         {campo: 'filial_escala', label: 'Filial obrigatória de passagem', tipo: 'select', opcoes: filiaisParaColeta.map(f => f.nome)},
+        {campo: 'observacao', label: 'Observação', tipo: 'text'},
+      ],
+    }),
+
+    criarEditorTabela({
+      containerId: 'precos-pedagios-rota', endpoint: 'pedagios-rota',
+      titulo: 'Pedágios por Rota (praças que cada corredor atravessa — o valor final soma todas)',
+      colunas: [
+        {campo: 'cidade_origem', label: 'Cidade de origem (ou "*")', tipo: 'text'},
+        {campo: 'cidade_destino', label: 'Cidade de destino (ou "*")', tipo: 'text'},
+        {
+          campo: 'praca_id', label: 'Praça de pedágio', tipo: 'select', numerico: true,
+          opcoes: pracasParaPedagio.map(p => ({value: p.id, label: `${p.rodovia} — ${p.nome}`})),
+        },
+        {campo: 'observacao', label: 'Observação', tipo: 'text'},
+      ],
+    }),
+
+    criarEditorTabela({
+      containerId: 'precos-distancias-fixas', endpoint: 'distancias-fixas',
+      titulo: 'Distâncias Fixas por Corredor (sobrepõe o cálculo automático de rota)',
+      colunas: [
+        {campo: 'cidade_origem', label: 'Cidade de origem (ou "*")', tipo: 'text'},
+        {campo: 'cidade_destino', label: 'Cidade de destino (ou "*")', tipo: 'text'},
+        {campo: 'distancia_km', label: 'Distância (km)', tipo: 'number', step: '1'},
         {campo: 'observacao', label: 'Observação', tipo: 'text'},
       ],
     }),

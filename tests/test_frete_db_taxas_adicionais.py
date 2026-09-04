@@ -9,10 +9,9 @@ contagem relativa (antes/depois), não `len(...) == 1`. Usa o fixture
 `banco_temporario` (conftest.py) — nunca toca no frete.db real.
 """
 
-import sqlite3
-
 import pytest
 
+import db_conexao
 import frete_db as db
 
 
@@ -31,12 +30,12 @@ def test_inserir_e_listar_taxa_adicional(banco_temporario):
 
 def test_nome_duplicado_da_conflito(banco_temporario):
     db.inserir_taxa_adicional("Seguro Extra", "percentual", 0.40)
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(db_conexao.ConflitoIntegridade):
         db.inserir_taxa_adicional("Seguro Extra", "fixo", 20.00)
 
 
 def test_tipo_invalido_da_erro(banco_temporario):
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(db_conexao.ConflitoIntegridade):
         db.inserir_taxa_adicional("Seguro Extra", "porcentagem", 0.40)
 
 

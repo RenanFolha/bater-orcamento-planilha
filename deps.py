@@ -6,13 +6,13 @@ de sessão, e os helpers genéricos de criar/atualizar/excluir usados pelos
 endpoints CRUD de /admin/* (ver routers/admin_precos.py).
 """
 
-import sqlite3
 from typing import Callable
 
 from fastapi import Depends, HTTPException, Request
 from pydantic import BaseModel
 
 import auth_service as auth
+import db_conexao
 import frete_service as fs
 
 COOKIE_SESSAO = "frete_session"
@@ -59,7 +59,7 @@ def admin_criar(
 ) -> dict:
     try:
         novo_id = inserir_fn(**payload.model_dump())
-    except sqlite3.IntegrityError as exc:
+    except db_conexao.ConflitoIntegridade as exc:
         detail = msg_conflito(exc) if callable(msg_conflito) else msg_conflito
         raise HTTPException(status_code=409, detail=detail) from exc
     if reload:
@@ -72,7 +72,7 @@ def admin_atualizar(
 ) -> dict:
     try:
         atualizar_fn(id_, **payload.model_dump())
-    except sqlite3.IntegrityError as exc:
+    except db_conexao.ConflitoIntegridade as exc:
         detail = msg_conflito(exc) if callable(msg_conflito) else msg_conflito
         raise HTTPException(status_code=409, detail=detail) from exc
     if reload:

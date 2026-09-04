@@ -434,6 +434,47 @@ def _buscar_rota_no_historico(origem: str, destino: str, veiculo: str | None) ->
     return None
 
 
+def _pedagio_local(
+    cidade_origem: str | None, cidade_destino: str | None, veiculo: str | None
+) -> tuple[float, list[str]] | None:
+    """Tenta achar o pedágio a partir do catálogo de praças cadastrado
+    (ver frete_service.pedagio_rota_aplicavel) — mais preciso que a
+    estimativa genérica do Google (sabe a rodovia/concessionária real e o
+    número de eixos do veículo), por isso tem prioridade sobre ela quando
+    encontrado. Precisa do veículo (pra saber o número de eixos, ver
+    Veiculo.numero_eixos) — sem ele não dá pra escolher o preço certo na
+    tabela da concessionária, então cai pra estimativa do Google/manual."""
+    if not veiculo or not veiculo.strip():
+        return None
+    v = fs.parametros.veiculos.get(veiculo.strip().lower())
+    if v is None or v.numero_eixos <= 0:
+        return None
+    return fs.pedagio_rota_aplicavel(fs.parametros, cidade_origem, cidade_destino, v.numero_eixos)
+
+
+async def _rota_ou_fixa(
+    client: httpx.AsyncClient, lat1: float, lon1: float, lat2: float, lon2: float,
+    cidade_origem: str | None, cidade_destino: str | None,
+) -> dict:
+    """Antes de calcular a rota de verdade (rede), checa se existe uma
+    distância fixa cadastrada pra esse par origem/destino (ver
+    frete_service.distancia_fixa_aplicavel) — corredores onde a rota
+    real usada na prática (ex: com travessia de balsa) é bem diferente
+    da rota 100% rodoviária que o serviço de mapa calcularia (ex: Belém
+    -> Manaus: rodoviário puro dá uma volta enorme porque a BR-319 não é
+    confiável, mas a rota real com balsa é bem mais curta). Usada tanto
+    pra rota direta quanto pra cada perna de uma Prioridade de Rota."""
+    fixa = fs.distancia_fixa_aplicavel(fs.parametros, cidade_origem, cidade_destino)
+    if fixa is not None:
+        return {
+            "distancia_km": fixa.distancia_km,
+            "duracao_min": round(fixa.distancia_km / _VELOCIDADE_MEDIA_KMH * 60),
+            "pedagio_valor": None,
+            "pedagio_moeda": None,
+        }
+    return await _rota(client, lat1, lon1, lat2, lon2)
+
+
 async def calcular_distancia(origem: str, destino: str, veiculo: str | None = None) -> dict:
     """Distância rodoviária entre dois endereços em texto livre. Antes de
     chamar o serviço de geolocalização, verifica se essa rota + veículo já
@@ -460,11 +501,17 @@ async def calcular_distancia(origem: str, destino: str, veiculo: str | None = No
     reaproveitada = _buscar_rota_no_historico(origem, destino, veiculo)
     if reaproveitada is not None:
         distancia_km = reaproveitada["distancia_km"]
+        pedagio_valor, pedagio_moeda, pedagio_pracas = None, None, []
+        pedagio_local = _pedagio_local(reaproveitada["origem_resumo"], reaproveitada["destino_resumo"], veiculo)
+        if pedagio_local is not None:
+            pedagio_valor, pedagio_pracas = pedagio_local
+            pedagio_moeda = "BRL"
         return {
             "distancia_km": distancia_km,
             "duracao_min": round(distancia_km / _VELOCIDADE_MEDIA_KMH * 60),
-            "pedagio_valor": None,
-            "pedagio_moeda": None,
+            "pedagio_valor": pedagio_valor,
+            "pedagio_moeda": pedagio_moeda,
+            "pedagio_pracas": pedagio_pracas,
             "origem_resolvido": reaproveitada["origem_resumo"],
             "destino_resolvido": reaproveitada["destino_resumo"],
         }
@@ -485,27 +532,42 @@ async def calcular_distancia(origem: str, destino: str, veiculo: str | None = No
                 ) from e
 
             lat_e, lon_e = await coordenadas_filial(client, filial_escala)
-            perna1 = await _rota(client, lat1, lon1, lat_e, lon_e)
-            perna2 = await _rota(client, lat_e, lon_e, lat2, lon2)
+            perna1 = await _rota_ou_fixa(client, lat1, lon1, lat_e, lon_e, nome1, filial_escala.nome)
+            perna2 = await _rota_ou_fixa(client, lat_e, lon_e, lat2, lon2, filial_escala.nome, nome2)
 
             pedagio_valor = None
             if perna1["pedagio_valor"] is not None or perna2["pedagio_valor"] is not None:
                 pedagio_valor = round((perna1["pedagio_valor"] or 0) + (perna2["pedagio_valor"] or 0), 2)
+            pedagio_moeda = perna1["pedagio_moeda"] or perna2["pedagio_moeda"]
+            pedagio_pracas = []
+
+            pedagio_local = _pedagio_local(nome1, nome2, veiculo)
+            if pedagio_local is not None:
+                pedagio_valor, pedagio_pracas = pedagio_local
+                pedagio_moeda = "BRL"
 
             return {
                 "distancia_km": round(perna1["distancia_km"] + perna2["distancia_km"]),
                 "duracao_min": round(perna1["duracao_min"] + perna2["duracao_min"]),
                 "pedagio_valor": pedagio_valor,
-                "pedagio_moeda": perna1["pedagio_moeda"] or perna2["pedagio_moeda"],
+                "pedagio_moeda": pedagio_moeda,
+                "pedagio_pracas": pedagio_pracas,
                 "origem_resolvido": nome1,
                 "destino_resolvido": nome2,
                 "prioridade_rota": filial_escala.nome,
             }
 
-        rota = await _rota(client, lat1, lon1, lat2, lon2)
+        rota = await _rota_ou_fixa(client, lat1, lon1, lat2, lon2, nome1, nome2)
+
+    pedagio_pracas = []
+    pedagio_local = _pedagio_local(nome1, nome2, veiculo)
+    if pedagio_local is not None:
+        rota = {**rota, "pedagio_valor": pedagio_local[0], "pedagio_moeda": "BRL"}
+        pedagio_pracas = pedagio_local[1]
 
     return {
         **rota,
+        "pedagio_pracas": pedagio_pracas,
         "origem_resolvido": nome1,
         "destino_resolvido": nome2,
     }

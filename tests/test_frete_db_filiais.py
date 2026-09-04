@@ -13,10 +13,9 @@ _seed_se_vazio em frete_db.py), então os testes checam contagem
 relativa (antes/depois), não `len(...) == 1`.
 """
 
-import sqlite3
-
 import pytest
 
+import db_conexao
 import frete_db as db
 
 
@@ -35,7 +34,7 @@ def test_inserir_e_listar_filial(banco_temporario):
 
 def test_nome_duplicado_da_conflito(banco_temporario):
     db.inserir_filial("Recife", "Rua Nova, 100, Recife, PE")
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(db_conexao.ConflitoIntegridade):
         db.inserir_filial("Recife", "Outro endereço qualquer")
 
 

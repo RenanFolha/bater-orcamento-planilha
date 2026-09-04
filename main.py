@@ -29,10 +29,11 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 import auth_service as auth
+import db_conexao
 import frete_db as db
 import frete_service as fs
 import geo_service as geo
-from routers import admin_precos, admin_usuarios, historico, orcamento, parametros
+from routers import admin_banco, admin_precos, admin_usuarios, historico, orcamento, parametros
 from routers import auth as auth_router
 from routers import geo as geo_router
 
@@ -87,6 +88,7 @@ app.include_router(historico.router)
 app.include_router(parametros.router)
 app.include_router(admin_precos.router)
 app.include_router(admin_usuarios.router)
+app.include_router(admin_banco.router)
 
 
 @app.get("/favicon.ico", include_in_schema=False)
@@ -106,11 +108,17 @@ def raiz():
 
 @app.get("/api/status", tags=["Status"])
 def status():
+    cfg = db_conexao.config_sem_senha()
+    if cfg["tipo"] == "sqlite":
+        banco = cfg.get("sqlite_path") or db.DB_PATH
+    else:
+        banco = f"{cfg['tipo']}://{cfg.get('host', '')}/{cfg.get('banco', '')}"
     return {
         "status": "ok",
         "servico": "API de Orçamento de Frete",
         "versao": app.version,
-        "banco": str(db.DB_PATH),
+        "banco": banco,
+        "banco_tipo": cfg["tipo"],
         "geo_provider": "google" if geo.usando_google() else "osm",
     }
 

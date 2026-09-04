@@ -10,10 +10,9 @@ exata). Usa o fixture `banco_temporario` (conftest.py) — nunca toca
 no frete.db real.
 """
 
-import sqlite3
-
 import pytest
 
+import db_conexao
 import frete_db as db
 
 
@@ -33,7 +32,7 @@ def test_inserir_e_listar_transportadora_terceirizada(banco_temporario):
 
 def test_mesma_transportadora_mesma_cidade_da_conflito(banco_temporario):
     db.inserir_transportadora_terceirizada("Rápido Norte", "Manaus", "ambos", 450.00)
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(db_conexao.ConflitoIntegridade):
         db.inserir_transportadora_terceirizada("Rápido Norte", "Manaus", "ambos", 480.00)
 
 
@@ -52,7 +51,7 @@ def test_nome_diferente_mesma_cidade_nao_conflita(banco_temporario):
 
 
 def test_tipo_invalido_da_erro(banco_temporario):
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(db_conexao.ConflitoIntegridade):
         db.inserir_transportadora_terceirizada("Rápido Norte", "Manaus", "retirada", 450.00)
 
 
@@ -68,7 +67,7 @@ def test_atualizar_transportadora_terceirizada(banco_temporario):
 def test_atualizar_transportadora_terceirizada_nao_pode_roubar_combinacao_de_outra_linha(banco_temporario):
     db.inserir_transportadora_terceirizada("Rápido Norte", "Manaus", "ambos", 450.00)
     id2 = db.inserir_transportadora_terceirizada("Rápido Norte", "Belém", "ambos", 400.00)
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(db_conexao.ConflitoIntegridade):
         db.atualizar_transportadora_terceirizada(id2, "Rápido Norte", "Manaus", "ambos", 400.00)
 
 

@@ -8,10 +8,9 @@ taxa (`nome`), não mais por linha inteira. Usa o fixture
 `banco_temporario` (conftest.py) — nunca toca no frete.db real.
 """
 
-import sqlite3
-
 import pytest
 
+import db_conexao
 import frete_db as db
 
 
@@ -40,13 +39,13 @@ def test_mesma_cidade_taxa_diferente_nao_conflita(banco_temporario):
 
 def test_cidade_repetida_na_mesma_taxa_da_conflito(banco_temporario):
     db.inserir_taxa_regional("Manaus, Boa Vista", "Área de Risco", "fixo", 30.0)
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(db_conexao.ConflitoIntegridade):
         db.inserir_taxa_regional("Boa Vista, Belém", "Área de Risco", "fixo", 30.0)
 
 
 def test_cidade_repetida_case_insensitive_da_conflito(banco_temporario):
     db.inserir_taxa_regional("Manaus", "Zona Franca", "fixo", 50.0)
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(db_conexao.ConflitoIntegridade):
         db.inserir_taxa_regional("MANAUS", "zona franca", "fixo", 60.0)
 
 
@@ -62,7 +61,7 @@ def test_atualizar_taxa_regional_pode_reusar_suas_proprias_cidades(banco_tempora
 def test_atualizar_taxa_regional_nao_pode_roubar_cidade_de_outra_linha(banco_temporario):
     db.inserir_taxa_regional("Manaus", "Área de Risco", "fixo", 30.0)
     id2 = db.inserir_taxa_regional("Belém", "Área de Risco", "fixo", 30.0)
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(db_conexao.ConflitoIntegridade):
         db.atualizar_taxa_regional(id2, "Belém, Manaus", "Área de Risco", "fixo", 30.0)
 
 
@@ -73,7 +72,7 @@ def test_excluir_taxa_regional(banco_temporario):
 
 
 def test_inserir_sem_cidade_da_erro(banco_temporario):
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(db_conexao.ConflitoIntegridade):
         db.inserir_taxa_regional("   ", "Zona Franca", "fixo", 50.0)
 
 

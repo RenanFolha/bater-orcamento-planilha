@@ -134,6 +134,10 @@ class Veiculo:
     # realidade de carregamento diferente (ex: Carreta aproveita mais %
     # que uma Van). Antes era um valor fixo de 80% pra todos.
     percentual_capacidade_util: float = 80
+    # Usado só pra achar o preço certo nas praças de pedágio cadastradas
+    # (ver pedagio_rota_aplicavel) -- 0 = não cadastrado, o veículo fica
+    # de fora do cálculo automático de pedágio até ser preenchido.
+    numero_eixos: int = 0
 
 
 @dataclass
@@ -183,6 +187,29 @@ class PrioridadeRota:
     filial_escala: str
 
 
+@dataclass
+class PracaPedagio:
+    id: int
+    nome: str
+    rodovia: str
+    concessionaria: str
+    valores_por_eixo: dict[int, float]  # {2: 12.4, 3: 18.6, ...}
+
+
+@dataclass
+class PedagioRota:
+    cidade_origem: str  # ou "*"
+    cidade_destino: str
+    praca_id: int
+
+
+@dataclass
+class DistanciaFixa:
+    cidade_origem: str  # ou "*"
+    cidade_destino: str
+    distancia_km: float
+
+
 class ParametrosFrete:
     """Mantém em memória os parâmetros lidos do banco."""
 
@@ -194,6 +221,9 @@ class ParametrosFrete:
         self.taxas_regionais: list[TaxaRegional] = []
         self.taxas_balsa: list[TaxaBalsa] = []
         self.prioridades_rota: list[PrioridadeRota] = []
+        self.pracas_pedagio: dict[int, PracaPedagio] = {}
+        self.pedagios_rota: list[PedagioRota] = []
+        self.distancias_fixas: list[DistanciaFixa] = []
         self.coleta_cidades_fixas: list[ColetaCidadeFixa] = []
         self.faixas_coleta: list[FaixaDistancia] = []
         self.categorias: dict[str, Categoria] = {}
@@ -212,7 +242,7 @@ class ParametrosFrete:
                 r["nome"].strip().lower(): Veiculo(
                     r["nome"], r["de"], r["ate"], r["tarifa_km"], r["valor_tonelada_excedente"],
                     r["tarifa_km_retorno"], r["tarifa_km_manutencao"], r["capacidade_m3"],
-                    r["percentual_capacidade_util"],
+                    r["percentual_capacidade_util"], r["numero_eixos"],
                 )
                 for r in conn.execute("SELECT * FROM veiculos")
             }
@@ -238,6 +268,21 @@ class ParametrosFrete:
             self.prioridades_rota = [
                 PrioridadeRota(r["estado_origem"], r["cidade_destino"], r["filial_escala"])
                 for r in conn.execute("SELECT * FROM prioridades_rota")
+            ]
+            self.pracas_pedagio = {
+                r["id"]: PracaPedagio(
+                    r["id"], r["nome"], r["rodovia"], r["concessionaria"],
+                    {n: r[f"valor_eixo_{n}"] for n in db.EIXOS_PEDAGIO},
+                )
+                for r in conn.execute("SELECT * FROM pracas_pedagio")
+            }
+            self.pedagios_rota = [
+                PedagioRota(r["cidade_origem"], r["cidade_destino"], r["praca_id"])
+                for r in conn.execute("SELECT * FROM pedagios_rota")
+            ]
+            self.distancias_fixas = [
+                DistanciaFixa(r["cidade_origem"], r["cidade_destino"], r["distancia_km"])
+                for r in conn.execute("SELECT * FROM distancias_fixas")
             ]
             self.coleta_cidades_fixas = [
                 ColetaCidadeFixa(r["filial_origem"], r["cidade_destino"], r["veiculo"], r["valor_fixo"])
@@ -616,6 +661,79 @@ def prioridade_rota_aplicavel(
         if _campo_bate_curinga(e_uf, uf_o) and _campo_bate_curinga(e_d, cid_d):
             especificidade = (e_uf != CORINGA_ROTA) + (e_d != CORINGA_ROTA)
             candidatas.append((especificidade, e))
+    if not candidatas:
+        return None
+    return max(candidatas, key=lambda par: par[0])[1]
+
+
+def pedagio_rota_aplicavel(
+    p: "ParametrosFrete", cidade_origem: str | None, cidade_destino: str | None, numero_eixos: int
+) -> tuple[float, list[str]] | None:
+    """Soma o pedágio das praças cadastradas (ver /admin/pracas-pedagio e
+    /admin/pedagios-rota) pro corredor cidade_origem -> cidade_destino,
+    direcional (mesma regra de _taxa_balsa_aplicavel: ida e volta são
+    cotações independentes) e com o mesmo mecanismo de curinga "*" e
+    especificidade -- mas, diferente de taxa de balsa, quando várias
+    linhas de pedagios_rota batem no corredor mais específico, TODAS
+    (não só uma) entram na soma: um corredor normalmente atravessa mais
+    de uma praça.
+
+    Devolve (total, [nomes das praças usadas]), ou None se não houver
+    nenhum corredor cadastrado pra essa rota (deixa o chamador cair pra
+    estimativa do Google/valor manual) ou se numero_eixos não tiver preço
+    cadastrado em nenhuma das praças do corredor (0 é tratado como "não
+    cadastrado", não como pedágio grátis)."""
+    par = _normalizar_par_cidades(cidade_origem, cidade_destino)
+    if par is None or numero_eixos <= 0:
+        return None
+    cid_o, cid_d = par
+    candidatas = []
+    for pr in p.pedagios_rota:
+        pr_o, pr_d = db.normalizar_texto(pr.cidade_origem), db.normalizar_texto(pr.cidade_destino)
+        if _campo_bate_curinga(pr_o, cid_o) and _campo_bate_curinga(pr_d, cid_d):
+            especificidade = (pr_o != CORINGA_ROTA) + (pr_d != CORINGA_ROTA)
+            candidatas.append((especificidade, pr))
+    if not candidatas:
+        return None
+    maior_especificidade = max(especificidade for especificidade, _ in candidatas)
+    vencedoras = [pr for especificidade, pr in candidatas if especificidade == maior_especificidade]
+
+    total = 0.0
+    pracas_usadas = []
+    for pr in vencedoras:
+        praca = p.pracas_pedagio.get(pr.praca_id)
+        if praca is None:
+            continue
+        valor = praca.valores_por_eixo.get(numero_eixos) or 0
+        if valor > 0:
+            total += valor
+            pracas_usadas.append(praca.nome)
+    if not pracas_usadas:
+        return None
+    return round(total, 2), pracas_usadas
+
+
+def distancia_fixa_aplicavel(
+    p: "ParametrosFrete", cidade_origem: str | None, cidade_destino: str | None
+) -> DistanciaFixa | None:
+    """Retorna a distância fixa cadastrada (ver /admin/distancias-fixas)
+    pro corredor cidade_origem -> cidade_destino, se houver — usada por
+    geo_service pra sobrepor o cálculo automático (rodoviário via OSRM/
+    Google) quando a rota real usada na prática é bem diferente (ex:
+    trecho com travessia de balsa, mais curto que contornar de estrada
+    — o cálculo automático não sabe considerar isso). Direcional e com
+    curinga "*", mesmo mecanismo de _taxa_balsa_aplicavel; quando mais
+    de uma linha bate, vence a mais específica."""
+    par = _normalizar_par_cidades(cidade_origem, cidade_destino)
+    if par is None:
+        return None
+    cid_o, cid_d = par
+    candidatas = []
+    for df in p.distancias_fixas:
+        df_o, df_d = db.normalizar_texto(df.cidade_origem), db.normalizar_texto(df.cidade_destino)
+        if _campo_bate_curinga(df_o, cid_o) and _campo_bate_curinga(df_d, cid_d):
+            especificidade = (df_o != CORINGA_ROTA) + (df_d != CORINGA_ROTA)
+            candidatas.append((especificidade, df))
     if not candidatas:
         return None
     return max(candidatas, key=lambda par: par[0])[1]

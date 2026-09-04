@@ -172,12 +172,21 @@ Em cima disso somam-se:
   passa a ser a soma origem → filial de escala + filial de escala →
   destino. Também aceita `"*"` em estado e destino, com a mesma regra de
   especificidade da Taxa de Balsa.
+- **Distância Fixa por Corredor** — quando a rota **cidade de origem →
+  cidade de destino** bate com uma linha cadastrada em
+  `/admin/distancias-fixas`, usa esse valor de km no lugar do cálculo
+  automático (rodoviário via OSRM/Google) — útil quando a rota real
+  usada na prática (ex: com travessia de balsa) é bem mais curta que a
+  rota 100% rodoviária que o serviço de mapa calcularia. Vale tanto pra
+  rota direta quanto pra cada perna de uma Prioridade de Rota. Mesma
+  regra de direção/curinga/especificidade da Taxa de Balsa.
 - **Taxa de coleta** — quando há retirada no cliente (frota própria,
   veja abaixo) ou o valor combinado com a transportadora, quando a
   coleta é terceirizada.
 - **Entrega terceirizada** — valor combinado com a transportadora,
   quando a entrega final não é feita pela frota própria.
-- **Pedágio** — estimado (Google Maps) ou digitado manualmente.
+- **Pedágio** — na ordem de prioridade: (1) catálogo de praças cadastrado
+  (ver abaixo), (2) estimativa do Google Maps, (3) digitado manualmente.
 - **Manutenção e retorno vazio** — `tarifa_km_manutencao × (distância +
   distância_coleta + distância_retorno)` (sobre toda distância que a
   frota própria roda: ida com carga, coleta no cliente — quando não é
@@ -195,6 +204,39 @@ frete_total = frete_ajustado + coleta + entrega_terceirizada
 > As tabelas antigas de "tipo de frete" (`faixas_peso`/`faixas_distancia`)
 > continuam existindo no banco por compatibilidade, mas não são mais
 > usadas no cálculo — o veículo assumiu esse papel.
+
+### Pedágio: catálogo de praças por número de eixos
+
+Além da estimativa genérica do Google Maps, dá pra cadastrar um catálogo
+real de praças de pedágio (rodovia, concessionária, preço por número de
+eixos do veículo — igual às tabelas publicadas pelas concessionárias) e
+ligar cada corredor (cidade de origem → cidade de destino) às praças que
+ele atravessa:
+
+- **Veículos** ganham um campo **Nº de eixos** (`/admin/veiculos`) — é
+  ele que decide qual coluna de preço usar em cada praça. Veículo sem
+  número de eixos cadastrado (0) fica de fora do cálculo automático.
+- **Praças de Pedágio** (`/admin/pracas-pedagio`) — catálogo com nome,
+  rodovia, concessionária e um preço por número de eixos (2 a 9). Pode
+  ser cadastrado manualmente na tela ou importado em lote via CSV
+  (`POST /admin/pracas-pedagio/importar-csv`, mesmo formato publicado
+  pelas concessionárias — uma linha por praça, uma coluna por número de
+  eixos; faz upsert por nome+rodovia, então reimportar uma tabela
+  atualizada só ajusta os valores que mudaram).
+- **Pedágios por Rota** (`/admin/pedagios-rota`) — liga um corredor
+  direcional (cidade_origem → cidade_destino, aceita `"*"` como curinga,
+  mesma regra de especificidade da Taxa de Balsa) a uma ou mais praças
+  do catálogo. Um corredor normalmente atravessa mais de uma praça — o
+  valor final do pedágio é a **soma** de todas as praças do corredor
+  mais específico que bater com a rota.
+
+Quando `/geo/distancia` já sabe o veículo (peso/paletes/transporte
+informados) e existe um corredor cadastrado pra aquela rota, o pedágio
+calculado a partir do catálogo **sobrepõe** a estimativa do Google Maps
+— é mais preciso, porque vem do preço real da concessionária pro
+veículo escolhido, não de uma estimativa genérica. Sem corredor
+cadastrado, cai de volta pra estimativa do Google (ou fica em branco,
+editável manualmente, sem `GOOGLE_MAPS_API_KEY`).
 
 ## Como funciona o frete com filial/retirada/entrega
 
@@ -290,9 +332,11 @@ da requisição:
   `/admin/transportadoras-terceirizadas`) em vez da frota própria — o
   valor combinado (`valor_coleta_terceirizada`/`valor_entrega_terceirizada`)
   substitui o cálculo por faixa/km desse trecho.
-- `pedagio`: valor estimado de pedágio da rota (preenchido automaticamente
-  pelo Google Maps quando `GOOGLE_MAPS_API_KEY` está configurada, editável
-  na tela).
+- `pedagio`: valor do pedágio da rota (preenchido automaticamente por
+  `/geo/distancia` — catálogo de praças cadastrado quando existir um
+  corredor pra rota, senão a estimativa do Google Maps quando
+  `GOOGLE_MAPS_API_KEY` está configurada — ver seção "Pedágio: catálogo
+  de praças por número de eixos"; sempre editável na tela).
 - `distancia_retorno`: distância (km) do retorno vazio do veículo, do
   destino até a filial mais próxima — só quando a entrega é feita direto
   ao cliente pela frota própria. Cobrada pela `tarifa_km_retorno` do
@@ -342,9 +386,23 @@ para estimar `distancia_retorno` no orçamento (cobrada pela
 {"endereco_destino": "Rua Augusta, 500, São Paulo, SP"}
 ```
 
-### `GET /parametros/{categorias|transportes|slas|filiais|veiculos|taxas-adicionais|faixas-coleta|transportadoras-terceirizadas}`
+### `GET /parametros/{categorias|transportes|slas|filiais|veiculos|taxas-adicionais|faixas-coleta|transportadoras-terceirizadas|pracas-pedagio}`
 Listam os valores atuais de cada tabela — úteis para montar campos de
 seleção em qualquer sistema que consuma essa API.
+
+### `GET|POST|PUT|DELETE /admin/pracas-pedagio` e `/admin/pedagios-rota`
+CRUD do catálogo de praças de pedágio e dos corredores que as ligam —
+ver "Pedágio: catálogo de praças por número de eixos". Exigem login de
+administrador, igual aos outros endpoints `/admin/*`.
+
+### `POST /admin/pracas-pedagio/importar-csv`
+Importa/atualiza em lote o catálogo de praças a partir de um CSV (texto
+já lido no navegador, não multipart) — `{"conteudo": "nome,rodovia,..."}`.
+Faz upsert por nome+rodovia; devolve `{"criadas", "atualizadas", "erros"}`.
+
+### `GET|POST|PUT|DELETE /admin/distancias-fixas`
+CRUD de distâncias fixas por corredor — ver "Distância Fixa por
+Corredor" acima. Exige login de administrador.
 
 ### `POST /admin/reload`
 Recarrega os parâmetros direto do banco `frete.db`, sem reiniciar o
@@ -371,8 +429,17 @@ um administrador ativo — tentar remover, desativar ou rebaixar o
 último retorna `422`. Senhas (criação, edição e troca de senha) exigem
 no mínimo 8 caracteres.
 
-> Todas as rotas `/admin/*` (Tabela de Preços, `/admin/reload` e
-> `/admin/usuarios`) exigem login como administrador. `/historico`
+### `GET /admin/banco-dados`, `POST /admin/banco-dados/testar`, `POST /admin/banco-dados/aplicar`
+Configuração de qual banco de dados a API usa — ver "Banco de dados
+configurável" abaixo. `GET` devolve a config ativa (nunca a senha).
+`POST .../testar` tenta conectar sem aplicar nada. `POST .../aplicar`
+cria o schema no banco novo, migra todos os dados do banco atual pra
+ele e só então troca a config ativa (se qualquer etapa falhar, o banco
+em uso continua sendo o de antes).
+
+> Todas as rotas `/admin/*` (Tabela de Preços, `/admin/reload`,
+> `/admin/usuarios` e `/admin/banco-dados`) exigem login como
+> administrador. `/historico`
 > exige login (qualquer papel) para listar/salvar/ver — mas só quem
 > salvou o orçamento (a conta logada, não o texto livre do campo
 > "Responsável") ou um administrador pode excluir um registro do
@@ -387,6 +454,38 @@ no mínimo 8 caracteres.
 > IP quanto por usuário — protege contra força bruta mesmo quando várias
 > pessoas dividem o mesmo IP (rede corporativa) ou quando o ataque tenta
 > vários usuários a partir de IPs diferentes.
+
+## Banco de dados configurável (SQLite / SQL Server / MySQL / PostgreSQL)
+
+Por padrão o sistema usa SQLite (arquivo `frete.db` local, como sempre
+funcionou — nenhuma configuração extra necessária). Pela tela
+Configurações → "Banco de dados", um administrador pode trocar pra um
+servidor SQL Server, MySQL ou PostgreSQL:
+
+1. Escolha o tipo e preencha host/porta/banco/usuário/senha.
+2. Clique em **"Testar conexão"** — confirma que dá pra conectar sem
+   mudar nada ainda.
+3. Clique em **"Migrar dados e aplicar"** — cria o schema no banco
+   novo, copia **todos** os dados já cadastrados (filiais, veículos,
+   taxas, histórico de orçamentos etc.) pra ele, e só então a API passa
+   a usar esse banco novo — sem precisar reiniciar o processo. Se
+   qualquer etapa falhar, o banco em uso continua sendo o anterior.
+
+**Pré-requisitos:**
+- SQL Server exige o **ODBC Driver 17 ou 18 for SQL Server** instalado
+  no sistema operacional (não é um pacote Python — [baixe aqui](https://learn.microsoft.com/sql/connect/odbc/download-odbc-driver-for-sql-server)).
+  MySQL e PostgreSQL não exigem nada além do `pip install -r requirements.txt`.
+- A config ativa (incluindo host/usuário/senha, se houver) fica em
+  `db_config.json` na raiz do projeto — arquivo local, fora do git,
+  **sem criptografia** (mesma exposição que o `frete.db` sempre teve).
+  Sem esse arquivo, o padrão é SQLite normalmente.
+
+**Limitação conhecida:** o ambiente onde este recurso foi construído
+não tinha SQL Server/MySQL/PostgreSQL disponíveis pra testar contra um
+servidor de verdade — a sintaxe de cada dialeto foi escrita com base no
+padrão documentado de cada um, mas só é confirmada de fato na tela
+"Testar conexão". Se der erro de sintaxe/driver na primeira vez que
+usar com um desses bancos, é esperado precisar de um ajuste fino.
 
 ## Sobre os serviços de mapa (Nominatim + OSRM, ou Google Maps)
 

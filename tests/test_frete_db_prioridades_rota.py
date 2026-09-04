@@ -8,10 +8,9 @@ case-sensitive no SQLite. Usa o fixture `banco_temporario`
 (conftest.py) -- nunca toca no frete.db real.
 """
 
-import sqlite3
-
 import pytest
 
+import db_conexao
 import frete_db as db
 
 
@@ -33,7 +32,7 @@ def test_direcao_invertida_nao_conflita(banco_temporario):
 
 def test_mesma_rota_da_conflito(banco_temporario):
     db.inserir_prioridade_rota("sp", "Manaus", "Belem")
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(db_conexao.ConflitoIntegridade):
         db.inserir_prioridade_rota("SP", "manaus", "Belem")  # case-insensitive
 
 

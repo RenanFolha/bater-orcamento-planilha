@@ -141,6 +141,12 @@ class VeiculoIn(BaseModel):
         description="% de capacidade_m3 que pode realmente ser ocupada (o resto fica de margem — carga não "
                      "empilha 100% perfeita, precisa espaço pra amarração etc.)",
     )
+    numero_eixos: int = Field(
+        0, ge=0,
+        description="Número de eixos do veículo — usado pra achar o preço certo nas praças de pedágio "
+                     "cadastradas (/admin/pracas-pedagio); 0 = não cadastrado, o veículo fica de fora do "
+                     "cálculo automático de pedágio",
+    )
     observacao: str = ""
 
 
@@ -176,6 +182,76 @@ class PrioridadeRotaIn(BaseModel):
     cidade_destino: str = Field(..., min_length=1, description="Cidade de destino da rota — direcional. Também aceita '*'")
     filial_escala: str = Field(..., min_length=1, description="Filial cadastrada por onde a rota é obrigada a passar antes do destino (ver /parametros/filiais) — a distância do frete passa a ser origem→filial + filial→destino")
     observacao: str = ""
+
+
+class PracaPedagioIn(BaseModel):
+    nome: str = Field(..., min_length=1, description="Nome da praça de pedágio (ex: 'Praça 5 - km 123')")
+    rodovia: str = Field(..., min_length=1, description="Rodovia onde fica a praça (ex: 'BR-101')")
+    concessionaria: str = Field(..., min_length=1, description="Concessionária responsável pela rodovia")
+    uf: str = ""
+    km: str = Field("", description="Km da rodovia onde fica a praça — texto livre, só informativo")
+    valor_eixo_2: float = Field(0, ge=0, description="Preço pra veículos de 2 eixos")
+    valor_eixo_3: float = Field(0, ge=0, description="Preço pra veículos de 3 eixos")
+    valor_eixo_4: float = Field(0, ge=0, description="Preço pra veículos de 4 eixos")
+    valor_eixo_5: float = Field(0, ge=0, description="Preço pra veículos de 5 eixos")
+    valor_eixo_6: float = Field(0, ge=0, description="Preço pra veículos de 6 eixos")
+    valor_eixo_7: float = Field(0, ge=0, description="Preço pra veículos de 7 eixos")
+    valor_eixo_8: float = Field(0, ge=0, description="Preço pra veículos de 8 eixos")
+    valor_eixo_9: float = Field(0, ge=0, description="Preço pra veículos de 9 eixos")
+    observacao: str = ""
+
+
+class PedagioRotaIn(BaseModel):
+    cidade_origem: str = Field(
+        ..., min_length=1,
+        description="Cidade de origem do corredor, ou '*' pra valer de qualquer origem",
+    )
+    cidade_destino: str = Field(
+        ..., min_length=1,
+        description="Cidade de destino do corredor — direcional: só se aplica nesse sentido (cadastre outra "
+                     "linha pra volta, se as praças forem diferentes). Também aceita '*'",
+    )
+    praca_id: int = Field(..., description="Praça de pedágio (ver /admin/pracas-pedagio) que esse corredor atravessa")
+    observacao: str = ""
+
+
+class DistanciaFixaIn(BaseModel):
+    cidade_origem: str = Field(
+        ..., min_length=1,
+        description="Cidade de origem do corredor, ou '*' pra valer de qualquer origem",
+    )
+    cidade_destino: str = Field(
+        ..., min_length=1,
+        description="Cidade de destino do corredor — direcional. Também aceita '*'",
+    )
+    distancia_km: float = Field(
+        ..., gt=0,
+        description="Distância (km) a usar pra esse corredor no lugar do cálculo automático (rodoviário via "
+                     "OSRM/Google) — útil quando a rota real usada na prática (ex: com travessia de balsa) é "
+                     "bem diferente da rota 100% rodoviária que o serviço de mapa calcularia",
+    )
+    observacao: str = ""
+
+
+class BancoDadosConfigIn(BaseModel):
+    tipo: str = Field(
+        ..., pattern="^(sqlite|sqlserver|mysql|postgresql)$",
+        description="Tipo de banco: 'sqlite' (arquivo local, padrão), 'sqlserver', 'mysql' ou 'postgresql'",
+    )
+    sqlite_path: str = Field("", description="Caminho do arquivo .db — só usado quando tipo == 'sqlite'")
+    host: str = ""
+    porta: int = Field(0, ge=0, le=65535)
+    banco: str = ""
+    usuario: str = ""
+    senha: str = ""
+
+
+class ImportarPracasPedagioRequest(BaseModel):
+    conteudo: str = Field(
+        ..., min_length=1,
+        description="Conteúdo bruto do CSV (texto do arquivo lido no navegador) — ver "
+                     "frete_db.importar_pracas_pedagio_csv para o formato esperado",
+    )
 
 
 class ColetaCidadeFixaIn(BaseModel):

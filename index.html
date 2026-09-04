@@ -380,6 +380,9 @@
         <div class="card precos-card" id="precos-taxas-regionais"></div>
         <div class="card precos-card" id="precos-taxas-balsa"></div>
         <div class="card precos-card" id="precos-prioridades-rota"></div>
+        <div class="card precos-card" id="precos-pracas-pedagio"></div>
+        <div class="card precos-card" id="precos-pedagios-rota"></div>
+        <div class="card precos-card" id="precos-distancias-fixas"></div>
         <div class="card precos-card" id="precos-transportadoras-terceirizadas"></div>
         <div class="card precos-card" id="precos-faixas-coleta"></div>
         <div class="card precos-card" id="precos-categorias"></div>
@@ -498,6 +501,60 @@
             <div class="line"><span>Versão</span><span id="config-versao">-</span></div>
             <div class="line"><span>Serviço de geolocalização</span><span id="config-geo-provider">-</span></div>
             <div class="line"><span>Banco de dados</span><span id="config-db-path">-</span></div>
+          </div>
+        </div>
+
+        <div class="card precos-card">
+          <div class="card-head"><h2>Banco de dados</h2><span class="tag" id="bd-tipo-atual-tag">…</span></div>
+          <div class="card-body">
+            <p style="font-size:12.5px;color:var(--text-dim);line-height:1.6;margin:0 0 14px;">
+              Por padrão o sistema usa um arquivo SQLite local. Pra apontar pra um servidor SQL Server, MySQL
+              ou PostgreSQL, preencha os dados abaixo, teste a conexão e confirme a migração — todos os
+              dados já cadastrados (filiais, veículos, histórico etc.) são copiados pro banco novo
+              automaticamente, e só depois disso a API passa a usar ele.
+            </p>
+            <div class="row2-enderecos">
+              <div class="field">
+                <label for="bd-tipo">Tipo de banco</label>
+                <select id="bd-tipo">
+                  <option value="sqlite">SQLite (arquivo local)</option>
+                  <option value="sqlserver">SQL Server</option>
+                  <option value="mysql">MySQL</option>
+                  <option value="postgresql">PostgreSQL</option>
+                </select>
+              </div>
+              <div class="field" id="bd-campo-sqlite_path">
+                <label for="bd-sqlite_path">Caminho do arquivo .db</label>
+                <input type="text" id="bd-sqlite_path" placeholder="Deixe em branco pra usar o caminho padrão">
+              </div>
+            </div>
+            <div class="row2" id="bd-campos-servidor" style="display:none;">
+              <div class="field">
+                <label for="bd-host">Host</label>
+                <input type="text" id="bd-host" placeholder="Ex: 192.168.0.10">
+              </div>
+              <div class="field">
+                <label for="bd-porta">Porta</label>
+                <input type="number" id="bd-porta" placeholder="Ex: 5432">
+              </div>
+              <div class="field">
+                <label for="bd-banco">Nome do banco</label>
+                <input type="text" id="bd-banco">
+              </div>
+              <div class="field">
+                <label for="bd-usuario">Usuário</label>
+                <input type="text" id="bd-usuario">
+              </div>
+              <div class="field">
+                <label for="bd-senha">Senha</label>
+                <input type="password" id="bd-senha" autocomplete="new-password">
+              </div>
+            </div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:6px;">
+              <button type="button" class="btn-geo" id="btn-testar-banco"><i class="ti ti-plug-connected"></i> Testar conexão</button>
+              <button type="button" class="btn-geo" id="btn-aplicar-banco"><i class="ti ti-database-export"></i> Migrar dados e aplicar</button>
+            </div>
+            <div class="geo-status" id="banco-dados-status"></div>
           </div>
         </div>
 
