@@ -600,6 +600,56 @@ def test_aliquota_icms_resolve_uf_de_endereco_curto_cidade_uf(parametros):
     assert achada.aliquota == pytest.approx(12.0)
 
 
+def test_pis_cofins_aplica_gross_up_no_frete_total(parametros):
+    # Mesmo raciocínio do gross-up de ICMS: o frete sem imposto (220)
+    # precisa continuar sendo 90,75% do frete final quando a alíquota é
+    # 9,25% -- 220 / (1 - 0,0925), não um acréscimo simples "por fora".
+    parametros.aliquota_pis_cofins = 9.25
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        cidade_origem="São Paulo, SP, Brasil", cidade_destino="Curitiba, PR, Brasil",
+    )
+    calc = resultado["calculos_intermediarios"]
+    esperado = 220.0 / (1 - 0.0925)  # == 220 / 0.9075
+    assert calc["frete_sem_pis_cofins"] == pytest.approx(220.0)
+    assert calc["aliquota_pis_cofins_pct"] == pytest.approx(9.25)
+    assert calc["valor_pis_cofins"] == pytest.approx(esperado - 220.0, abs=0.01)
+    assert resultado["resultado"]["frete_total"] == pytest.approx(esperado, abs=0.01)
+
+
+def test_pis_cofins_e_aplicado_antes_do_icms(parametros):
+    # PIS/COFINS entra primeiro (gross-up sobre o frete base), e o ICMS
+    # incide por cima do frete que já saiu com PIS/COFINS embutido --
+    # não dos dois impostos somados "por fora" nem do ICMS calculado
+    # sobre o frete base original.
+    parametros.aliquota_pis_cofins = 9.25
+    parametros.aliquotas_icms.append(fs.AliquotaIcms(estado_origem="SP", estado_destino="RJ", aliquota=12.0))
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        cidade_origem="São Paulo, SP, Brasil", cidade_destino="Rio de Janeiro, RJ, Brasil",
+    )
+    calc = resultado["calculos_intermediarios"]
+    frete_com_pis_cofins = 220.0 / (1 - 0.0925)
+    frete_com_icms = frete_com_pis_cofins / (1 - 0.12)
+    assert calc["frete_sem_pis_cofins"] == pytest.approx(220.0)
+    assert calc["frete_sem_icms"] == pytest.approx(frete_com_pis_cofins, abs=0.01)
+    assert resultado["resultado"]["frete_total"] == pytest.approx(frete_com_icms, abs=0.01)
+
+
+def test_sem_aliquota_pis_cofins_frete_total_fica_igual(parametros):
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        cidade_origem="São Paulo, SP, Brasil", cidade_destino="Curitiba, PR, Brasil",
+    )
+    calc = resultado["calculos_intermediarios"]
+    assert calc["aliquota_pis_cofins_pct"] == pytest.approx(0.0)
+    assert calc["valor_pis_cofins"] == pytest.approx(0.0)
+    assert resultado["resultado"]["frete_total"] == pytest.approx(220.0)
+
+
 def test_sem_aliquota_cadastrada_frete_total_fica_igual(parametros):
     resultado = fs.calcular_orcamento(
         peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,

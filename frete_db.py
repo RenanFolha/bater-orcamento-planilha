@@ -257,6 +257,17 @@ CREATE TABLE IF NOT EXISTS aliquotas_icms (
     UNIQUE(estado_origem, estado_destino)
 );
 
+CREATE TABLE IF NOT EXISTS aliquota_pis_cofins (
+    -- Alíquota federal única de PIS/COFINS (não varia por UF, diferente
+    -- do ICMS) -- aplicada "por dentro" (gross-up) sobre o frete_total
+    -- ANTES do ICMS (ver frete_service.calcular_orcamento). Tabela
+    -- singleton: sempre tem exatamente 1 linha (id=1), editada por
+    -- UPDATE em vez de INSERT/DELETE (ver atualizar_aliquota_pis_cofins).
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    aliquota REAL NOT NULL,
+    observacao TEXT DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS pracas_pedagio (
     -- Catálogo de praças de pedágio, com preço por número de eixos do
     -- veículo (padrão real das tabelas publicadas pelas concessionárias
@@ -509,6 +520,12 @@ def _seed_se_vazio(conn: sqlite3.Connection):
     # própria.
 
     _seed_aliquotas_icms_interestadual(conn)
+
+    if conn.execute("SELECT COUNT(*) FROM aliquota_pis_cofins").fetchone()[0] == 0:
+        conn.execute(
+            "INSERT INTO aliquota_pis_cofins (id, aliquota, observacao) VALUES (1, ?, ?)",
+            (9.25, "Regime não-cumulativo (PIS 1,65% + COFINS 7,6%) — ajuste conforme o regime tributário da empresa"),
+        )
 
 
 # UFs do Sul e do Sudeste, exceto o Espírito Santo -- de acordo com a
@@ -948,6 +965,12 @@ CREATE TABLE aliquotas_icms (
     aliquota REAL NOT NULL,
     observacao TEXT DEFAULT '',
     UNIQUE(estado_origem, estado_destino)
+);
+
+CREATE TABLE aliquota_pis_cofins (
+    id INT PRIMARY KEY,
+    aliquota REAL NOT NULL,
+    observacao TEXT DEFAULT ''
 );
 
 CREATE TABLE pracas_pedagio (
@@ -1790,6 +1813,19 @@ def atualizar_aliquota_icms(id_, estado_origem, estado_destino, aliquota, observ
 def excluir_aliquota_icms(id_):
     with get_connection() as conn:
         conn.execute("DELETE FROM aliquotas_icms WHERE id=?", (id_,))
+
+
+def obter_aliquota_pis_cofins() -> dict:
+    with get_connection() as conn:
+        return dict(conn.execute("SELECT * FROM aliquota_pis_cofins WHERE id = 1").fetchone())
+
+
+def atualizar_aliquota_pis_cofins(aliquota: float, observacao: str = ""):
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE aliquota_pis_cofins SET aliquota=?, observacao=? WHERE id = 1",
+            (aliquota, observacao),
+        )
 
 
 EIXOS_PEDAGIO = list(range(2, 10))  # números de eixos suportados nas praças de pedágio (2 a 9)

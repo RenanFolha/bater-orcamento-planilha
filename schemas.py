@@ -192,6 +192,11 @@ class AliquotaIcmsIn(BaseModel):
     observacao: str = ""
 
 
+class AliquotaPisCofinsIn(BaseModel):
+    aliquota: float = Field(..., ge=0, lt=100, description="Alíquota federal única de PIS/COFINS em % — aplicada 'por dentro' (gross-up) sobre o frete, antes do ICMS")
+    observacao: str = ""
+
+
 class PracaPedagioIn(BaseModel):
     nome: str = Field(..., min_length=1, description="Nome da praça de pedágio (ex: 'Praça 5 - km 123')")
     rodovia: str = Field(..., min_length=1, description="Rodovia onde fica a praça (ex: 'BR-101')")

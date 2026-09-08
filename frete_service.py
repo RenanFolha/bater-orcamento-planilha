@@ -233,6 +233,7 @@ class ParametrosFrete:
         self.pedagios_rota: list[PedagioRota] = []
         self.distancias_fixas: list[DistanciaFixa] = []
         self.aliquotas_icms: list[AliquotaIcms] = []
+        self.aliquota_pis_cofins: float = 0.0
         self.coleta_cidades_fixas: list[ColetaCidadeFixa] = []
         self.faixas_coleta: list[FaixaDistancia] = []
         self.categorias: dict[str, Categoria] = {}
@@ -297,6 +298,9 @@ class ParametrosFrete:
                 AliquotaIcms(r["estado_origem"], r["estado_destino"], r["aliquota"])
                 for r in conn.execute("SELECT * FROM aliquotas_icms")
             ]
+            self.aliquota_pis_cofins = conn.execute(
+                "SELECT aliquota FROM aliquota_pis_cofins WHERE id = 1"
+            ).fetchone()["aliquota"]
             self.coleta_cidades_fixas = [
                 ColetaCidadeFixa(r["filial_origem"], r["cidade_destino"], r["veiculo"], r["valor_fixo"])
                 for r in conn.execute("SELECT * FROM coleta_cidades_fixas ORDER BY id")
@@ -1036,12 +1040,29 @@ def calcular_orcamento(
         + custo_retorno
     )
 
-    # ICMS — "por dentro" (gross-up): o frete_total acima ainda não tem o
-    # imposto embutido, então achamos a alíquota da rota (UF origem -> UF
-    # destino, ver aliquota_icms_aplicavel) e recalculamos o frete de modo
-    # que ele já saia com o imposto incluso (frete_com_icms * (1 -
-    # aliquota/100) = frete_sem_icms) -- diferente de um simples acréscimo
-    # percentual "por fora".
+    # PIS/COFINS — "por dentro" (gross-up), igual ao ICMS abaixo, mas com
+    # alíquota federal única (não varia por UF, ver
+    # ParametrosFrete.aliquota_pis_cofins) e aplicado ANTES do ICMS: o
+    # ICMS incide sobre o frete já com PIS/COFINS embutido, não o
+    # contrário.
+    frete_sem_pis_cofins = frete_total
+    valor_pis_cofins = 0.0
+    aliquota_pis_cofins_pct = p.aliquota_pis_cofins
+    if aliquota_pis_cofins_pct > 0:
+        if aliquota_pis_cofins_pct >= 100:
+            raise FreteConfigError(
+                f"Alíquota de PIS/COFINS cadastrada ({aliquota_pis_cofins_pct}%) inválida — deve ser menor que 100%."
+            )
+        frete_total = frete_sem_pis_cofins / (1 - aliquota_pis_cofins_pct / 100)
+        valor_pis_cofins = frete_total - frete_sem_pis_cofins
+
+    # ICMS — "por dentro" (gross-up): o frete_total acima (já com
+    # PIS/COFINS embutido) ainda não tem o ICMS embutido, então achamos a
+    # alíquota da rota (UF origem -> UF destino, ver
+    # aliquota_icms_aplicavel) e recalculamos o frete de modo que ele já
+    # saia com o imposto incluso (frete_com_icms * (1 - aliquota/100) =
+    # frete_sem_icms) -- diferente de um simples acréscimo percentual
+    # "por fora".
     frete_sem_icms = frete_total
     valor_icms = 0.0
     icms_aplicavel = aliquota_icms_aplicavel(p, cidade_origem, cidade_destino)
@@ -1118,6 +1139,9 @@ def calcular_orcamento(
             "taxa_balsa": detalhe_balsa,
             "custo_balsa": round(custo_balsa, 2),
             "balsa_outro_veiculo": balsa_outro_veiculo or None,
+            "aliquota_pis_cofins_pct": aliquota_pis_cofins_pct,
+            "frete_sem_pis_cofins": round(frete_sem_pis_cofins, 2),
+            "valor_pis_cofins": round(valor_pis_cofins, 2),
             "uf_origem_icms": icms_aplicavel and _uf_de_origem_ou_destino(p, cidade_origem) or None,
             "uf_destino_icms": icms_aplicavel and _uf_de_origem_ou_destino(p, cidade_destino) or None,
             "aliquota_icms_pct": aliquota_icms_pct,

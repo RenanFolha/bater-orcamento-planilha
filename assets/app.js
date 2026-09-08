@@ -90,6 +90,11 @@ const MEMORIA_CALCULO_CAMPOS = [
   {chave: 'balsa_outro_veiculo', rotulo: 'Taxa de balsa cadastrada só p/ outro veículo', tipo: 'lista_veiculos'},
   {chave: 'custo_balsa', rotulo: 'Custo de balsa', tipo: 'brl'},
 
+  {header: 'PIS/COFINS'},
+  {chave: 'aliquota_pis_cofins_pct', rotulo: 'Alíquota de PIS/COFINS', tipo: 'pct'},
+  {chave: 'frete_sem_pis_cofins', rotulo: 'Frete sem PIS/COFINS', tipo: 'brl'},
+  {chave: 'valor_pis_cofins', rotulo: 'Valor do PIS/COFINS (gross-up)', tipo: 'brl'},
+
   {header: 'ICMS'},
   {chave: 'uf_origem_icms', rotulo: 'UF de origem', tipo: 'texto'},
   {chave: 'uf_destino_icms', rotulo: 'UF de destino', tipo: 'texto'},
@@ -1063,6 +1068,15 @@ form.addEventListener('submit', async (ev) => {
     }else{
       linhaTaxas.style.display = 'none';
       blocoDetalheTaxas.style.display = 'none';
+    }
+
+    const linhaPisCofins = document.getElementById('linha-pis-cofins');
+    if(calc.valor_pis_cofins > 0){
+      document.getElementById('d-pis-cofins').textContent = fmtBRL(calc.valor_pis_cofins);
+      linhaPisCofins.title = `${calc.aliquota_pis_cofins_pct}%, aplicado por dentro sobre ${fmtBRL(calc.frete_sem_pis_cofins)}`;
+      linhaPisCofins.style.display = 'flex';
+    }else{
+      linhaPisCofins.style.display = 'none';
     }
 
     const linhaIcms = document.getElementById('linha-icms');
@@ -2208,6 +2222,47 @@ const configPracasPedagio = {
 // Pedágio e reanexa o bloco de import CSV embaixo dele -- criarEditorTabela
 // substitui todo o innerHTML do container, então o bloco de import precisa
 // ser reanexado toda vez.
+async function carregarBlocoPisCofins(){
+  const aliquotaInput = document.getElementById('pis-cofins-aliquota');
+  const observacaoInput = document.getElementById('pis-cofins-observacao');
+  const statusEl = document.getElementById('pis-cofins-status');
+  const btn = document.getElementById('btn-salvar-pis-cofins');
+
+  try{
+    const res = await fetch(`${API_BASE}/admin/pis-cofins`);
+    const data = await res.json();
+    aliquotaInput.value = data.aliquota;
+    observacaoInput.value = data.observacao || '';
+  }catch(e){
+    statusEl.className = 'geo-status err';
+    statusEl.textContent = 'Falha ao carregar a alíquota de PIS/COFINS.';
+  }
+
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    statusEl.className = 'geo-status';
+    statusEl.textContent = 'Salvando...';
+    try{
+      const res = await fetch(`${API_BASE}/admin/pis-cofins`, {
+        method: 'PUT', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          aliquota: parseFloat(aliquotaInput.value) || 0,
+          observacao: observacaoInput.value,
+        }),
+      });
+      const data = await res.json();
+      if(!res.ok) throw new Error(data.detail || 'Falha ao salvar.');
+      statusEl.classList.add('ok');
+      statusEl.textContent = 'Alíquota salva com sucesso.';
+    }catch(e){
+      statusEl.classList.add('err');
+      statusEl.textContent = e.message;
+    }finally{
+      btn.disabled = false;
+    }
+  });
+}
+
 async function carregarBlocoPracasPedagio(){
   await criarEditorTabela(configPracasPedagio);
   montarImportCsvPracasPedagio();
@@ -2303,6 +2358,7 @@ async function carregarTabelaPrecos(){
     }),
 
     carregarBlocoPracasPedagio(),
+    carregarBlocoPisCofins(),
 
     criarEditorTabela({
       containerId: 'precos-taxas-adicionais', endpoint: 'taxas-adicionais', titulo: 'Taxas Adicionais',

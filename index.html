@@ -337,6 +337,7 @@
               <div class="line" id="linha-taxas-regionais" style="display:none;"><span>Taxas regionais</span><span id="d-taxas-regionais">-</span></div>
               <div class="line" id="linha-taxa-balsa" style="display:none;"><span>Balsa</span><span id="d-taxa-balsa">-</span></div>
               <div class="line" id="linha-taxas" style="display:none;"><span>Taxas adicionais</span><span id="d-taxas">-</span></div>
+              <div class="line" id="linha-pis-cofins" style="display:none;"><span>PIS/COFINS</span><span id="d-pis-cofins">-</span></div>
               <div class="line" id="linha-icms" style="display:none;"><span>ICMS</span><span id="d-icms">-</span></div>
               <div class="line total-line"><span>Frete total</span><span id="d-total">-</span></div>
             </div>
@@ -381,6 +382,30 @@
         <div class="card precos-card" id="precos-taxas-regionais"></div>
         <div class="card precos-card" id="precos-taxas-balsa"></div>
         <div class="card precos-card" id="precos-prioridades-rota"></div>
+        <div class="card precos-card">
+          <div class="card-head"><h2>PIS/COFINS</h2></div>
+          <div class="card-body">
+            <p style="font-size:12.5px;color:var(--text-dim);line-height:1.6;margin:0 0 14px;">
+              Alíquota federal única (não varia por UF), aplicada "por dentro" (gross-up) sobre o frete
+              base, antes do ICMS.
+            </p>
+            <div class="row2-enderecos">
+              <div class="field">
+                <label for="pis-cofins-aliquota">Alíquota (%)</label>
+                <input type="number" id="pis-cofins-aliquota" step="0.01" min="0" max="99.99">
+              </div>
+              <div class="field">
+                <label for="pis-cofins-observacao">Observação</label>
+                <input type="text" id="pis-cofins-observacao">
+              </div>
+            </div>
+            <div style="margin-top:6px;">
+              <button type="button" class="btn-geo" id="btn-salvar-pis-cofins"><i class="ti ti-device-floppy"></i> Salvar</button>
+            </div>
+            <div class="geo-status" id="pis-cofins-status"></div>
+          </div>
+        </div>
+
         <div class="card precos-card" id="precos-aliquotas-icms"></div>
         <div class="card precos-card" id="precos-pracas-pedagio"></div>
         <div class="card precos-card" id="precos-pedagios-rota"></div>

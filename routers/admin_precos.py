@@ -11,6 +11,7 @@ import frete_service as fs
 from deps import admin_atualizar, admin_criar, admin_excluir, exigir_admin
 from schemas import (
     AliquotaIcmsIn,
+    AliquotaPisCofinsIn,
     CategoriaIn,
     ColetaCidadeFixaIn,
     DistanciaFixaIn,
@@ -255,6 +256,18 @@ def admin_atualizar_aliquota_icms(id_: int, payload: AliquotaIcmsIn, usuario: di
 @router.delete("/aliquotas-icms/{id_}")
 def admin_excluir_aliquota_icms(id_: int, usuario: dict = Depends(exigir_admin)):
     return admin_excluir(db.excluir_aliquota_icms, id_)
+
+
+@router.get("/pis-cofins")
+def admin_obter_pis_cofins(usuario: dict = Depends(exigir_admin)):
+    return db.obter_aliquota_pis_cofins()
+
+
+@router.put("/pis-cofins")
+def admin_atualizar_pis_cofins(payload: AliquotaPisCofinsIn, usuario: dict = Depends(exigir_admin)):
+    db.atualizar_aliquota_pis_cofins(payload.aliquota, payload.observacao)
+    fs.carregar_parametros()
+    return db.obter_aliquota_pis_cofins()
 
 
 @router.get("/pracas-pedagio")

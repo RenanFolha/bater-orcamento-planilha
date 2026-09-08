@@ -89,3 +89,22 @@ def test_curinga_aceito_como_uf(tabela_icms_vazia):
     id_ = db.inserir_aliquota_icms("*", "*", 18.0, "alíquota padrão de fallback")
     assert id_ is not None
     assert db.listar_aliquotas_icms_admin()[0]["estado_origem"] == "*"
+
+
+def test_banco_novo_nasce_com_pis_cofins_semeado(banco_temporario):
+    linha = db.obter_aliquota_pis_cofins()
+    assert linha["aliquota"] == 9.25
+
+
+def test_atualizar_aliquota_pis_cofins(banco_temporario):
+    db.atualizar_aliquota_pis_cofins(3.65, "trocado pro regime cumulativo")
+    linha = db.obter_aliquota_pis_cofins()
+    assert linha["aliquota"] == 3.65
+    assert linha["observacao"] == "trocado pro regime cumulativo"
+
+
+def test_pis_cofins_seed_nao_roda_de_novo_se_ja_tiver_linha(banco_temporario):
+    db.atualizar_aliquota_pis_cofins(3.65, "customizada")
+    db.init_db()
+    linha = db.obter_aliquota_pis_cofins()
+    assert linha["aliquota"] == 3.65

@@ -286,7 +286,7 @@ ORDEM_TABELAS = (
     "categorias", "transportes", "slas", "filiais", "veiculos",
     "faixas_km_veiculo", "taxas_adicionais", "coleta_cidades_fixas",
     "transportadoras_terceirizadas", "taxas_regionais", "taxas_balsa",
-    "prioridades_rota", "aliquotas_icms", "pracas_pedagio", "pedagios_rota", "distancias_fixas",
+    "prioridades_rota", "aliquotas_icms", "aliquota_pis_cofins", "pracas_pedagio", "pedagios_rota", "distancias_fixas",
     "usuarios", "sessoes", "orcamentos_historico",
 )
 
