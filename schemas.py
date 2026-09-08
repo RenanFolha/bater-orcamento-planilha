@@ -117,6 +117,7 @@ class SlaIn(BaseModel):
 class FilialIn(BaseModel):
     nome: str = Field(..., min_length=1)
     endereco: str = Field(..., min_length=1)
+    uf: str = Field("", description="UF (sigla) onde a filial fica — usada pelo cálculo de ICMS quando a origem/destino do frete é essa filial")
 
 
 class VeiculoIn(BaseModel):
@@ -181,6 +182,13 @@ class PrioridadeRotaIn(BaseModel):
     estado_origem: str = Field(..., min_length=1, description="UF de origem da rota (ex: 'SP'), ou '*' pra valer de qualquer estado")
     cidade_destino: str = Field(..., min_length=1, description="Cidade de destino da rota — direcional. Também aceita '*'")
     filial_escala: str = Field(..., min_length=1, description="Filial cadastrada por onde a rota é obrigada a passar antes do destino (ver /parametros/filiais) — a distância do frete passa a ser origem→filial + filial→destino")
+    observacao: str = ""
+
+
+class AliquotaIcmsIn(BaseModel):
+    estado_origem: str = Field(..., min_length=1, description="UF de origem da rota (ex: 'SP'), ou '*' pra valer de qualquer estado")
+    estado_destino: str = Field(..., min_length=1, description="UF de destino da rota (ex: 'RJ'), ou '*' pra valer de qualquer estado")
+    aliquota: float = Field(..., ge=0, lt=100, description="Alíquota de ICMS em % — aplicada 'por dentro' (gross-up) sobre o frete total já calculado")
     observacao: str = ""
 
 

@@ -535,6 +535,83 @@ def test_prioridade_rota_nao_aplicada_quando_uf_origem_nao_bate(parametros):
     assert achada is None
 
 
+def test_aliquota_icms_curinga_vale_para_qualquer_uf(parametros):
+    parametros.aliquotas_icms.append(fs.AliquotaIcms(estado_origem="*", estado_destino="*", aliquota=18.0))
+    achada = fs.aliquota_icms_aplicavel(parametros, "São Paulo, SP, Brasil", "Curitiba, PR, Brasil")
+    assert achada is not None
+    assert achada.aliquota == pytest.approx(18.0)
+
+
+def test_aliquota_icms_linha_especifica_vence_curinga(parametros):
+    parametros.aliquotas_icms.append(fs.AliquotaIcms(estado_origem="*", estado_destino="*", aliquota=18.0))
+    parametros.aliquotas_icms.append(fs.AliquotaIcms(estado_origem="SP", estado_destino="RJ", aliquota=12.0))
+    achada = fs.aliquota_icms_aplicavel(parametros, "São Paulo, SP, Brasil", "Rio de Janeiro, RJ, Brasil")
+    assert achada.aliquota == pytest.approx(12.0)
+
+
+def test_aliquota_icms_nao_aplicada_quando_rota_nao_bate(parametros):
+    parametros.aliquotas_icms.append(fs.AliquotaIcms(estado_origem="SP", estado_destino="RJ", aliquota=12.0))
+    achada = fs.aliquota_icms_aplicavel(parametros, "São Paulo, SP, Brasil", "Curitiba, PR, Brasil")
+    assert achada is None
+
+
+def test_aliquota_icms_aplica_gross_up_no_frete_total(parametros):
+    # Gross-up "por dentro": o frete sem imposto (220) precisa continuar
+    # sendo 88% do frete final quando a alíquota é 12% -- ou seja, o
+    # frete final é 220 / (1 - 0.12) = 250, não um acréscimo simples de
+    # 220 * 1.12 = 246.40.
+    parametros.aliquotas_icms.append(fs.AliquotaIcms(estado_origem="SP", estado_destino="RJ", aliquota=12.0))
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        cidade_origem="São Paulo, SP, Brasil", cidade_destino="Rio de Janeiro, RJ, Brasil",
+    )
+    calc = resultado["calculos_intermediarios"]
+    assert calc["frete_sem_icms"] == pytest.approx(220.0)
+    assert calc["aliquota_icms_pct"] == pytest.approx(12.0)
+    assert calc["valor_icms"] == pytest.approx(30.0, abs=0.01)
+    assert resultado["resultado"]["frete_total"] == pytest.approx(250.0, abs=0.01)
+
+
+def test_aliquota_icms_resolve_uf_da_filial_quando_origem_e_so_o_nome(parametros):
+    # Quando a origem do orçamento é "Filial", o front manda só o nome da
+    # filial (sem endereço, ver payload.cidade_origem em
+    # routers/orcamento.py) -- o endereço cadastrado da filial normalmente
+    # é só rua/número/bairro/CEP, sem cidade/UF (o nome da filial já é a
+    # "cidade de referência"), então precisa usar a UF cadastrada
+    # explicitamente na filial (fs.Filial.uf) em vez de tentar extrair do
+    # texto do endereço.
+    parametros.filiais["campinas"] = fs.Filial(
+        "Campinas", "Rua Exemplo, 100, bairro Tal", None, None, uf="SP",
+    )
+    parametros.aliquotas_icms.append(fs.AliquotaIcms(estado_origem="SP", estado_destino="RJ", aliquota=12.0))
+    achada = fs.aliquota_icms_aplicavel(parametros, "Campinas", "Rio de Janeiro, RJ, Brasil")
+    assert achada is not None
+    assert achada.aliquota == pytest.approx(12.0)
+
+
+def test_aliquota_icms_resolve_uf_de_endereco_curto_cidade_uf(parametros):
+    # Endereço digitado à mão sem passar pelo geocodificador -- só
+    # "Cidade, UF" (2 segmentos), formato que cidade_e_uf sozinho não
+    # reconhece (exige o formato completo do geocodificador).
+    parametros.aliquotas_icms.append(fs.AliquotaIcms(estado_origem="SP", estado_destino="RJ", aliquota=12.0))
+    achada = fs.aliquota_icms_aplicavel(parametros, "São Paulo, SP", "Rio de Janeiro, RJ")
+    assert achada is not None
+    assert achada.aliquota == pytest.approx(12.0)
+
+
+def test_sem_aliquota_cadastrada_frete_total_fica_igual(parametros):
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        cidade_origem="São Paulo, SP, Brasil", cidade_destino="Curitiba, PR, Brasil",
+    )
+    calc = resultado["calculos_intermediarios"]
+    assert calc["aliquota_icms_pct"] == pytest.approx(0.0)
+    assert calc["valor_icms"] == pytest.approx(0.0)
+    assert resultado["resultado"]["frete_total"] == pytest.approx(220.0)
+
+
 def test_coleta_fixa_avisa_outro_veiculo_quando_nao_bate(parametros):
     parametros.coleta_cidades_fixas = [
         fs.ColetaCidadeFixa(filial_origem="SP", cidade_destino="Alguma Cidade", veiculo="Carreta", valor_fixo=50.0),

@@ -112,6 +112,13 @@ CREATE TABLE IF NOT EXISTS filiais (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     nome TEXT NOT NULL UNIQUE,
     endereco TEXT NOT NULL,
+    -- UF onde a filial fica -- o endereço cadastrado normalmente é só rua/
+    -- número/bairro/CEP (o nome da filial já funciona como "cidade de
+    -- referência", ver comentário na tela de admin), sem cidade/UF no
+    -- texto, então não dá pra extrair a UF dele (ver
+    -- frete_service._uf_de_origem_ou_destino). Usado pelo cálculo de ICMS
+    -- quando a origem/destino do frete é uma filial.
+    uf TEXT NOT NULL DEFAULT '',
     latitude REAL,
     longitude REAL
 );
@@ -232,6 +239,22 @@ CREATE TABLE IF NOT EXISTS prioridades_rota (
     filial_escala TEXT NOT NULL,
     observacao TEXT DEFAULT '',
     UNIQUE(estado_origem, cidade_destino)
+);
+
+CREATE TABLE IF NOT EXISTS aliquotas_icms (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- Matriz de alíquotas de ICMS por UF de origem -> UF de destino,
+    -- aplicada "por dentro" (gross-up) sobre o frete_total já calculado:
+    -- frete_com_icms = frete_total / (1 - aliquota/100) (ver
+    -- frete_service.aliquota_icms_aplicavel e calcular_orcamento).
+    -- estado_origem e estado_destino aceitam "*" como curinga (mesmo
+    -- mecanismo de taxas_balsa/prioridades_rota) -- quando mais de uma
+    -- linha bate na mesma rota, vence a mais específica.
+    estado_origem TEXT NOT NULL,
+    estado_destino TEXT NOT NULL,
+    aliquota REAL NOT NULL,
+    observacao TEXT DEFAULT '',
+    UNIQUE(estado_origem, estado_destino)
 );
 
 CREATE TABLE IF NOT EXISTS pracas_pedagio (
@@ -485,6 +508,57 @@ def _seed_se_vazio(conn: sqlite3.Connection):
     # combinado por cidade, quando a operação não for feita pela frota
     # própria.
 
+    _seed_aliquotas_icms_interestadual(conn)
+
+
+# UFs do Sul e do Sudeste, exceto o Espírito Santo -- de acordo com a
+# Resolução do Senado Federal nº 22/1989, quem vende a partir desses 6
+# estados cobra 7% de ICMS em QUALQUER venda interestadual (pra qualquer
+# outro UF); os outros 21 estados cobram 12% em qualquer venda
+# interestadual. Confirmado contra a tabela de referência "ICMS.jpeg" na
+# raiz do projeto -- usada também pra pegar a alíquota interna (mesmo
+# estado) de cada UF abaixo.
+_UF_SUL_SUDESTE_MENOS_ES = {"SP", "RJ", "MG", "PR", "SC", "RS"}
+
+# Alíquota interna (ICMS dentro do mesmo estado, não interestadual) de
+# cada UF -- fonte: tabela de referência "ICMS.jpeg" na raiz do projeto.
+_ALIQUOTA_ICMS_INTERNA_POR_UF = {
+    "AC": 17.0, "AL": 17.0, "AM": 18.0, "AP": 18.0, "BA": 18.0, "CE": 17.0,
+    "DF": 18.0, "ES": 17.0, "GO": 17.0, "MA": 18.0, "MT": 17.0, "MS": 18.0,
+    "MG": 18.0, "PA": 17.0, "PB": 18.0, "PR": 18.0, "PE": 18.0, "PI": 17.0,
+    "RN": 18.0, "RS": 18.0, "RJ": 19.0, "RO": 17.0, "RR": 17.0, "SC": 17.0,
+    "SP": 18.0, "SE": 18.0, "TO": 18.0,
+}
+
+def _seed_aliquotas_icms_interestadual(conn: sqlite3.Connection):
+    """Popula a matriz de ICMS só na primeira vez que a tabela
+    aliquotas_icms existir vazia (não sobrescreve o que já foi
+    cadastrado/editado) -- uma linha "origem -> *" por UF com a alíquota
+    interestadual (7% pras 6 UFs do Sul/Sudeste exceto ES, 12% pras
+    outras 21, pra qualquer destino) mais uma linha "origem -> própria UF"
+    com a alíquota interna de cada estado — mais específica, então vence a
+    genérica "-> *" quando origem e destino calculados forem a mesma UF
+    (ver especificidade em frete_service.aliquota_icms_aplicavel). Fonte:
+    tabela de referência "ICMS.jpeg" na raiz do projeto.
+
+    É só um ponto de partida: a alíquota efetiva real pode variar por NCM
+    e regime tributário do destinatário (Simples Nacional, contribuinte ou
+    não) e substituição tributária/DIFAL. Revise com a contabilidade antes
+    de usar pra cobrar cliente de verdade."""
+    if conn.execute("SELECT COUNT(*) FROM aliquotas_icms").fetchone()[0] > 0:
+        return
+    obs_interestadual = "Alíquota interestadual (Resolução do Senado 22/1989), fonte: tabela ICMS.jpeg do projeto — revisar exceções por NCM/regime tributário"
+    obs_interna = "Alíquota interna (mesmo estado), fonte: tabela ICMS.jpeg do projeto — revisar exceções por NCM/regime tributário"
+    linhas = []
+    for uf, aliquota_interna in _ALIQUOTA_ICMS_INTERNA_POR_UF.items():
+        aliquota_interestadual = 7.0 if uf in _UF_SUL_SUDESTE_MENOS_ES else 12.0
+        linhas.append((uf, "*", aliquota_interestadual, obs_interestadual))
+        linhas.append((uf, uf, aliquota_interna, obs_interna))
+    conn.executemany(
+        "INSERT INTO aliquotas_icms (estado_origem, estado_destino, aliquota, observacao) VALUES (?,?,?,?)",
+        linhas,
+    )
+
 
 def _coluna_existe(conn: sqlite3.Connection, tabela: str, coluna: str) -> bool:
     colunas = {row["name"] for row in conn.execute(f"PRAGMA table_info({tabela})")}
@@ -615,6 +689,8 @@ def _migrar_colunas(conn: sqlite3.Connection):
         _migrar_coleta_cidades_fixas_lista(conn)
     _migrar_taxas_regionais_lista(conn)
     _migrar_transportadoras_terceirizadas_unique(conn)
+    if not _coluna_existe(conn, "filiais", "uf"):
+        conn.execute("ALTER TABLE filiais ADD COLUMN uf TEXT NOT NULL DEFAULT ''")
     if not _coluna_existe(conn, "veiculos", "de"):
         conn.execute("ALTER TABLE veiculos ADD COLUMN de REAL NOT NULL DEFAULT 0")
     if not _coluna_existe(conn, "veiculos", "ate"):
@@ -780,6 +856,7 @@ CREATE TABLE filiais (
     id {PK},
     nome VARCHAR(255) NOT NULL UNIQUE,
     endereco TEXT NOT NULL,
+    uf VARCHAR(10) NOT NULL DEFAULT '',
     latitude REAL,
     longitude REAL
 );
@@ -862,6 +939,15 @@ CREATE TABLE prioridades_rota (
     filial_escala TEXT NOT NULL,
     observacao TEXT DEFAULT '',
     UNIQUE(estado_origem, cidade_destino)
+);
+
+CREATE TABLE aliquotas_icms (
+    id {PK},
+    estado_origem VARCHAR(10) NOT NULL,
+    estado_destino VARCHAR(10) NOT NULL,
+    aliquota REAL NOT NULL,
+    observacao TEXT DEFAULT '',
+    UNIQUE(estado_origem, estado_destino)
 );
 
 CREATE TABLE pracas_pedagio (
@@ -975,24 +1061,24 @@ def listar_filiais_admin() -> list[dict]:
         return [dict(r) for r in conn.execute("SELECT * FROM filiais ORDER BY nome")]
 
 
-def inserir_filial(nome: str, endereco: str):
+def inserir_filial(nome: str, endereco: str, uf: str = ""):
     with get_connection() as conn:
         cur = conn.execute(
-            "INSERT INTO filiais (nome, endereco, latitude, longitude) VALUES (?,?,NULL,NULL)",
-            (nome, endereco),
+            "INSERT INTO filiais (nome, endereco, uf, latitude, longitude) VALUES (?,?,?,NULL,NULL)",
+            (nome, endereco, uf),
         )
         return cur.lastrowid
 
 
-def atualizar_filial(id_: int, nome: str, endereco: str):
+def atualizar_filial(id_: int, nome: str, endereco: str, uf: str = ""):
     # Sempre limpa latitude/longitude ao editar — o endereço pode ter
     # mudado, então força uma nova geocodificação na próxima vez que a
     # filial for usada num cálculo, em vez de ficar com coordenadas
     # desatualizadas em cache.
     with get_connection() as conn:
         conn.execute(
-            "UPDATE filiais SET nome=?, endereco=?, latitude=NULL, longitude=NULL WHERE id=?",
-            (nome, endereco, id_),
+            "UPDATE filiais SET nome=?, endereco=?, uf=?, latitude=NULL, longitude=NULL WHERE id=?",
+            (nome, endereco, uf, id_),
         )
 
 
@@ -1647,6 +1733,63 @@ def atualizar_prioridade_rota(id_, estado_origem, cidade_destino, filial_escala,
 def excluir_prioridade_rota(id_):
     with get_connection() as conn:
         conn.execute("DELETE FROM prioridades_rota WHERE id=?", (id_,))
+
+
+def listar_aliquotas_icms_admin() -> list[dict]:
+    with get_connection() as conn:
+        return [
+            dict(r) for r in conn.execute(
+                "SELECT * FROM aliquotas_icms ORDER BY estado_origem, estado_destino"
+            )
+        ]
+
+
+def _aliquota_icms_duplicada(
+    conn: sqlite3.Connection, estado_origem: str, estado_destino: str, ignorar_id: int | None = None,
+) -> bool:
+    """Mesmo motivo da checagem equivalente em prioridades_rota: a UNIQUE
+    do SQLite é case-sensitive, mas a aplicação compara em minúsculas (ver
+    frete_service.aliquota_icms_aplicavel)."""
+    query = (
+        "SELECT 1 FROM aliquotas_icms WHERE LOWER(estado_origem) = LOWER(?) "
+        "AND LOWER(estado_destino) = LOWER(?)"
+    )
+    params = [estado_origem.strip(), estado_destino.strip()]
+    if ignorar_id is not None:
+        query += " AND id != ?"
+        params.append(ignorar_id)
+    return conn.execute(query, params).fetchone() is not None
+
+
+def inserir_aliquota_icms(estado_origem, estado_destino, aliquota, observacao=""):
+    with get_connection() as conn:
+        if _aliquota_icms_duplicada(conn, estado_origem, estado_destino):
+            raise db_conexao.ConflitoIntegridade(
+                f"já existe uma alíquota de ICMS cadastrada de '{estado_origem}' → '{estado_destino}'"
+            )
+        cur = conn.execute(
+            "INSERT INTO aliquotas_icms (estado_origem, estado_destino, aliquota, observacao) "
+            "VALUES (?,?,?,?)",
+            (estado_origem, estado_destino, aliquota, observacao),
+        )
+        return cur.lastrowid
+
+
+def atualizar_aliquota_icms(id_, estado_origem, estado_destino, aliquota, observacao=""):
+    with get_connection() as conn:
+        if _aliquota_icms_duplicada(conn, estado_origem, estado_destino, ignorar_id=id_):
+            raise db_conexao.ConflitoIntegridade(
+                f"já existe uma alíquota de ICMS cadastrada de '{estado_origem}' → '{estado_destino}'"
+            )
+        conn.execute(
+            "UPDATE aliquotas_icms SET estado_origem=?, estado_destino=?, aliquota=?, observacao=? WHERE id=?",
+            (estado_origem, estado_destino, aliquota, observacao, id_),
+        )
+
+
+def excluir_aliquota_icms(id_):
+    with get_connection() as conn:
+        conn.execute("DELETE FROM aliquotas_icms WHERE id=?", (id_,))
 
 
 EIXOS_PEDAGIO = list(range(2, 10))  # números de eixos suportados nas praças de pedágio (2 a 9)

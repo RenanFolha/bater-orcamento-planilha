@@ -90,6 +90,13 @@ const MEMORIA_CALCULO_CAMPOS = [
   {chave: 'balsa_outro_veiculo', rotulo: 'Taxa de balsa cadastrada só p/ outro veículo', tipo: 'lista_veiculos'},
   {chave: 'custo_balsa', rotulo: 'Custo de balsa', tipo: 'brl'},
 
+  {header: 'ICMS'},
+  {chave: 'uf_origem_icms', rotulo: 'UF de origem', tipo: 'texto'},
+  {chave: 'uf_destino_icms', rotulo: 'UF de destino', tipo: 'texto'},
+  {chave: 'aliquota_icms_pct', rotulo: 'Alíquota de ICMS', tipo: 'pct'},
+  {chave: 'frete_sem_icms', rotulo: 'Frete sem ICMS', tipo: 'brl'},
+  {chave: 'valor_icms', rotulo: 'Valor do ICMS (gross-up)', tipo: 'brl'},
+
   {header: 'Resultado'},
   {chave: 'frete_total', rotulo: 'Frete total', tipo: 'brl'},
   {chave: 'prazo_estimado_dias_uteis', rotulo: 'Prazo estimado', tipo: 'dias'},
@@ -1058,6 +1065,15 @@ form.addEventListener('submit', async (ev) => {
       blocoDetalheTaxas.style.display = 'none';
     }
 
+    const linhaIcms = document.getElementById('linha-icms');
+    if(calc.valor_icms > 0){
+      document.getElementById('d-icms').textContent = fmtBRL(calc.valor_icms);
+      linhaIcms.title = `${calc.uf_origem_icms} → ${calc.uf_destino_icms} (${calc.aliquota_icms_pct}%, aplicado por dentro sobre ${fmtBRL(calc.frete_sem_icms)})`;
+      linhaIcms.style.display = 'flex';
+    }else{
+      linhaIcms.style.display = 'none';
+    }
+
     document.getElementById('d-total').textContent = fmtBRL(result.frete_total);
 
     resultEmpty.style.display = 'none';
@@ -1775,7 +1791,6 @@ async function criarEditorTabela({containerId, endpoint, titulo, colunas, campoM
       countTag.textContent = 'erro';
       return;
     }
-    atualizarContagem();
 
     // Uma linha por item, com os botões Salvar/Excluir já ligados --
     // extraída pra função porque também é usada pra inserir a(s) linha(s)
@@ -1845,6 +1860,7 @@ async function criarEditorTabela({containerId, endpoint, titulo, colunas, campoM
     }
 
     itens.forEach(item => tbody.appendChild(criarLinhaItem(item)));
+    atualizarContagem();
 
     // Linha para adicionar um novo registro
     const trNova = document.createElement('tr');
@@ -2265,6 +2281,7 @@ async function carregarTabelaPrecos(){
       colunas: [
         {campo: 'nome', label: 'Nome (usado como cidade de referência)', tipo: 'text'},
         {campo: 'endereco', label: 'Endereço completo (rua, número, bairro, cidade, UF, CEP)', tipo: 'text'},
+        {campo: 'uf', label: 'UF (usada no cálculo de ICMS)', tipo: 'select', opcoes: [{value: '', label: '(nenhuma)'}, ...UFS_BRASIL]},
       ],
     }),
 
@@ -2417,6 +2434,17 @@ async function carregarTabelaPrecos(){
         {campo: 'estado_origem', label: 'Estado de origem (UF, ou "*")', tipo: 'select', opcoes: ['*', ...UFS_BRASIL]},
         {campo: 'cidade_destino', label: 'Cidade de destino (ou "*")', tipo: 'text'},
         {campo: 'filial_escala', label: 'Filial obrigatória de passagem', tipo: 'select', opcoes: filiaisParaColeta.map(f => f.nome)},
+        {campo: 'observacao', label: 'Observação', tipo: 'text'},
+      ],
+    }),
+
+    criarEditorTabela({
+      containerId: 'precos-aliquotas-icms', endpoint: 'aliquotas-icms',
+      titulo: 'ICMS por Rota (UF de origem → UF de destino — aplicado "por dentro"/gross-up sobre o frete total)',
+      colunas: [
+        {campo: 'estado_origem', label: 'UF de origem (ou "*")', tipo: 'select', opcoes: ['*', ...UFS_BRASIL]},
+        {campo: 'estado_destino', label: 'UF de destino (ou "*")', tipo: 'select', opcoes: ['*', ...UFS_BRASIL]},
+        {campo: 'aliquota', label: 'Alíquota (%)', tipo: 'number', step: '0.01'},
         {campo: 'observacao', label: 'Observação', tipo: 'text'},
       ],
     }),

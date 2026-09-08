@@ -10,6 +10,7 @@ import frete_db as db
 import frete_service as fs
 from deps import admin_atualizar, admin_criar, admin_excluir, exigir_admin
 from schemas import (
+    AliquotaIcmsIn,
     CategoriaIn,
     ColetaCidadeFixaIn,
     DistanciaFixaIn,
@@ -228,6 +229,32 @@ def admin_atualizar_prioridade_rota(id_: int, payload: PrioridadeRotaIn, usuario
 @router.delete("/prioridades-rota/{id_}")
 def admin_excluir_prioridade_rota(id_: int, usuario: dict = Depends(exigir_admin)):
     return admin_excluir(db.excluir_prioridade_rota, id_)
+
+
+@router.get("/aliquotas-icms")
+def admin_listar_aliquotas_icms(usuario: dict = Depends(exigir_admin)):
+    return db.listar_aliquotas_icms_admin()
+
+
+@router.post("/aliquotas-icms")
+def admin_criar_aliquota_icms(payload: AliquotaIcmsIn, usuario: dict = Depends(exigir_admin)):
+    return admin_criar(
+        db.inserir_aliquota_icms, payload,
+        f"Já existe uma alíquota de ICMS cadastrada de '{payload.estado_origem}' → '{payload.estado_destino}'.",
+    )
+
+
+@router.put("/aliquotas-icms/{id_}")
+def admin_atualizar_aliquota_icms(id_: int, payload: AliquotaIcmsIn, usuario: dict = Depends(exigir_admin)):
+    return admin_atualizar(
+        db.atualizar_aliquota_icms, id_, payload,
+        f"Já existe uma alíquota de ICMS cadastrada de '{payload.estado_origem}' → '{payload.estado_destino}'.",
+    )
+
+
+@router.delete("/aliquotas-icms/{id_}")
+def admin_excluir_aliquota_icms(id_: int, usuario: dict = Depends(exigir_admin)):
+    return admin_excluir(db.excluir_aliquota_icms, id_)
 
 
 @router.get("/pracas-pedagio")

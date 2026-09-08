@@ -116,6 +116,7 @@ class Filial:
     endereco: str
     latitude: float | None
     longitude: float | None
+    uf: str = ""  # UF onde a filial fica (ver comentário na tabela filiais) -- usado pelo cálculo de ICMS
 
 
 @dataclass
@@ -210,6 +211,13 @@ class DistanciaFixa:
     distancia_km: float
 
 
+@dataclass
+class AliquotaIcms:
+    estado_origem: str  # UF (sigla), ou "*"
+    estado_destino: str  # UF (sigla), ou "*"
+    aliquota: float  # % aplicada "por dentro" (gross-up) sobre o frete_total
+
+
 class ParametrosFrete:
     """Mantém em memória os parâmetros lidos do banco."""
 
@@ -224,6 +232,7 @@ class ParametrosFrete:
         self.pracas_pedagio: dict[int, PracaPedagio] = {}
         self.pedagios_rota: list[PedagioRota] = []
         self.distancias_fixas: list[DistanciaFixa] = []
+        self.aliquotas_icms: list[AliquotaIcms] = []
         self.coleta_cidades_fixas: list[ColetaCidadeFixa] = []
         self.faixas_coleta: list[FaixaDistancia] = []
         self.categorias: dict[str, Categoria] = {}
@@ -284,6 +293,10 @@ class ParametrosFrete:
                 DistanciaFixa(r["cidade_origem"], r["cidade_destino"], r["distancia_km"])
                 for r in conn.execute("SELECT * FROM distancias_fixas")
             ]
+            self.aliquotas_icms = [
+                AliquotaIcms(r["estado_origem"], r["estado_destino"], r["aliquota"])
+                for r in conn.execute("SELECT * FROM aliquotas_icms")
+            ]
             self.coleta_cidades_fixas = [
                 ColetaCidadeFixa(r["filial_origem"], r["cidade_destino"], r["veiculo"], r["valor_fixo"])
                 for r in conn.execute("SELECT * FROM coleta_cidades_fixas ORDER BY id")
@@ -306,7 +319,7 @@ class ParametrosFrete:
                 for r in conn.execute("SELECT * FROM slas")
             }
             self.filiais = {
-                r["nome"].strip().lower(): Filial(r["nome"], r["endereco"], r["latitude"], r["longitude"])
+                r["nome"].strip().lower(): Filial(r["nome"], r["endereco"], r["latitude"], r["longitude"], r["uf"])
                 for r in conn.execute("SELECT * FROM filiais")
             }
 
@@ -666,6 +679,62 @@ def prioridade_rota_aplicavel(
     return max(candidatas, key=lambda par: par[0])[1]
 
 
+def _uf_de_origem_ou_destino(p: "ParametrosFrete", texto: str | None) -> str:
+    """UF de um texto de origem/destino de frete, que pode ser um endereço
+    resolvido pelo geocodificador ("Cidade, Estado, Brasil", ver cidade_e_uf)
+    ou só o nome de uma filial cadastrada (ex: quando a origem do orçamento é
+    "Filial", o front manda só o nome, sem endereço completo — ver
+    payload.cidade_origem em routers/orcamento.py). Nesse segundo caso, usa a
+    UF cadastrada na própria filial (tabela filiais) em vez de tentar
+    extrair da string do endereço: o endereço da filial normalmente é só
+    rua/número/bairro/CEP (o nome da filial já é a "cidade de referência"),
+    sem cidade/UF no texto, então cidade_e_uf não acharia nada nele.
+
+    Terceiro caso: endereço digitado à mão no formato curto "Cidade, UF"
+    (2 segmentos só) — cidade_e_uf exige 3+ segmentos (formato de
+    geocodificador completo, ver seu docstring) e devolve UF vazia pra
+    esse formato, então cai pra um fallback local aqui: se o último
+    segmento separado por vírgula for exatamente uma sigla de UF
+    reconhecida, usa ela direto."""
+    if not texto:
+        return ""
+    filial = p.filiais.get(texto.strip().lower())
+    if filial and filial.uf:
+        return filial.uf
+    _, uf = cidade_e_uf(texto)
+    if uf:
+        return uf
+    ultimo_segmento = texto.rsplit(",", 1)[-1].strip().lower()
+    return ultimo_segmento.upper() if ultimo_segmento in _UFS_BR_SIGLAS else ""
+
+
+def aliquota_icms_aplicavel(
+    p: "ParametrosFrete", cidade_origem: str | None, cidade_destino: str | None
+) -> AliquotaIcms | None:
+    """Retorna a alíquota de ICMS cadastrada pra rota estado_origem ->
+    estado_destino, se houver — usada por calcular_orcamento pra aplicar o
+    imposto "por dentro" (gross-up) sobre o frete_total. Ambos os lados são
+    comparados pela UF (ver _uf_de_origem_ou_destino), e aceitam "*" como
+    curinga, mesmo mecanismo de _taxa_balsa_aplicavel — quando mais de uma
+    linha bate, vence a mais específica."""
+    if not cidade_origem or not cidade_destino:
+        return None
+    uf_origem = _uf_de_origem_ou_destino(p, cidade_origem)
+    uf_destino = _uf_de_origem_ou_destino(p, cidade_destino)
+    if not uf_origem or not uf_destino:
+        return None
+    uf_o, uf_d = db.normalizar_texto(uf_origem), db.normalizar_texto(uf_destino)
+    candidatas = []
+    for a in p.aliquotas_icms:
+        a_o, a_d = db.normalizar_texto(a.estado_origem), db.normalizar_texto(a.estado_destino)
+        if _campo_bate_curinga(a_o, uf_o) and _campo_bate_curinga(a_d, uf_d):
+            especificidade = (a_o != CORINGA_ROTA) + (a_d != CORINGA_ROTA)
+            candidatas.append((especificidade, a))
+    if not candidatas:
+        return None
+    return max(candidatas, key=lambda par: par[0])[1]
+
+
 def pedagio_rota_aplicavel(
     p: "ParametrosFrete", cidade_origem: str | None, cidade_destino: str | None, numero_eixos: int
 ) -> tuple[float, list[str]] | None:
@@ -967,6 +1036,24 @@ def calcular_orcamento(
         + custo_retorno
     )
 
+    # ICMS — "por dentro" (gross-up): o frete_total acima ainda não tem o
+    # imposto embutido, então achamos a alíquota da rota (UF origem -> UF
+    # destino, ver aliquota_icms_aplicavel) e recalculamos o frete de modo
+    # que ele já saia com o imposto incluso (frete_com_icms * (1 -
+    # aliquota/100) = frete_sem_icms) -- diferente de um simples acréscimo
+    # percentual "por fora".
+    frete_sem_icms = frete_total
+    valor_icms = 0.0
+    icms_aplicavel = aliquota_icms_aplicavel(p, cidade_origem, cidade_destino)
+    aliquota_icms_pct = icms_aplicavel.aliquota if icms_aplicavel else 0.0
+    if aliquota_icms_pct > 0:
+        if aliquota_icms_pct >= 100:
+            raise FreteConfigError(
+                f"Alíquota de ICMS cadastrada ({aliquota_icms_pct}%) inválida — deve ser menor que 100%."
+            )
+        frete_total = frete_sem_icms / (1 - aliquota_icms_pct / 100)
+        valor_icms = frete_total - frete_sem_icms
+
     return {
         "entrada": {
             "peso_kg": peso,
@@ -1031,6 +1118,11 @@ def calcular_orcamento(
             "taxa_balsa": detalhe_balsa,
             "custo_balsa": round(custo_balsa, 2),
             "balsa_outro_veiculo": balsa_outro_veiculo or None,
+            "uf_origem_icms": icms_aplicavel and _uf_de_origem_ou_destino(p, cidade_origem) or None,
+            "uf_destino_icms": icms_aplicavel and _uf_de_origem_ou_destino(p, cidade_destino) or None,
+            "aliquota_icms_pct": aliquota_icms_pct,
+            "frete_sem_icms": round(frete_sem_icms, 2),
+            "valor_icms": round(valor_icms, 2),
         },
         "resultado": {
             "frete_total": round(frete_total, 2),
