@@ -555,6 +555,17 @@ def test_admin_banco_dados_get_nao_devolve_senha(client):
 
 
 def test_admin_banco_dados_testar_driver_ausente_da_422(client):
+    # Mesmo raciocínio de test_conectar_sem_driver_instalado_da_erro_amigavel
+    # em test_db_conexao.py: só faz sentido testar o fallback de driver
+    # ausente se o psycopg2 de fato não estiver instalado neste ambiente.
+    import importlib
+    try:
+        importlib.import_module("psycopg2")
+    except ImportError:
+        pass
+    else:
+        pytest.skip("psycopg2 está instalado neste ambiente — o teste de driver ausente não se aplica")
+
     _login(client)
     r = client.post("/admin/banco-dados/testar", json={
         "tipo": "postgresql", "host": "x", "porta": 5432, "banco": "x", "usuario": "x", "senha": "x",

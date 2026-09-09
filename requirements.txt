@@ -8,6 +8,6 @@ openpyxl==3.1.5
 # continua funcionando normalmente com SQLite (padrão, nenhuma dependência
 # extra). Só ficam realmente necessários se você usar a tela Configurações
 # → "Banco de dados" pra trocar o tipo de banco.
-pyodbc==5.2.0        # SQL Server — também exige o ODBC Driver 17/18 for SQL Server instalado no SO
+pyodbc==5.3.0        # SQL Server — também exige o ODBC Driver 17/18 for SQL Server instalado no SO
 pymysql==1.1.1        # MySQL
-psycopg2-binary==2.9.10  # PostgreSQL
+psycopg2-binary==2.9.12  # PostgreSQL
