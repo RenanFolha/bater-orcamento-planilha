@@ -21,7 +21,6 @@ import auth_service as auth
 import db_conexao
 import frete_db as db
 
-
 # ============================================================
 # _traduzir_placeholders
 # ============================================================

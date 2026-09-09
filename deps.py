@@ -6,7 +6,7 @@ de sessão, e os helpers genéricos de criar/atualizar/excluir usados pelos
 endpoints CRUD de /admin/* (ver routers/admin_precos.py).
 """
 
-from typing import Callable
+from collections.abc import Callable
 
 from fastapi import Depends, HTTPException, Request
 from pydantic import BaseModel

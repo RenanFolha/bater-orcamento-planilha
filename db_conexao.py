@@ -70,7 +70,7 @@ def config_padrao() -> dict:
 def carregar_config() -> dict:
     if not os.path.exists(DB_CONFIG_PATH):
         return config_padrao()
-    with open(DB_CONFIG_PATH, "r", encoding="utf-8") as f:
+    with open(DB_CONFIG_PATH, encoding="utf-8") as f:
         dados = json.load(f)
     cfg = config_padrao()
     cfg.update(dados)
