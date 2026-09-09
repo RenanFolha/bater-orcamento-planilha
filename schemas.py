@@ -6,7 +6,13 @@ Centralizados aqui para main.py e os routers não precisarem duplicar
 definição de schema.
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+_UFS_BR_SIGLAS = {
+    "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS",
+    "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC",
+    "SP", "SE", "TO",
+}
 
 
 class PaleteIn(BaseModel):
@@ -117,7 +123,19 @@ class SlaIn(BaseModel):
 class FilialIn(BaseModel):
     nome: str = Field(..., min_length=1)
     endereco: str = Field(..., min_length=1)
-    uf: str = Field("", description="UF (sigla) onde a filial fica — usada pelo cálculo de ICMS quando a origem/destino do frete é essa filial")
+    uf: str = Field(
+        ...,
+        description="UF (sigla) onde a filial fica — obrigatória: sem ela o cálculo de ICMS não acha a alíquota da rota e o imposto some do orçamento silenciosamente",
+        examples=["SP"],
+    )
+
+    @field_validator("uf")
+    @classmethod
+    def validar_uf(cls, v: str) -> str:
+        v = v.strip().upper()
+        if v not in _UFS_BR_SIGLAS:
+            raise ValueError(f"UF {v!r} inválida — informe a sigla de um estado brasileiro (ex: SP, RJ, MG).")
+        return v
 
 
 class VeiculoIn(BaseModel):

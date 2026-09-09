@@ -2338,7 +2338,7 @@ async function carregarTabelaPrecos(){
       colunas: [
         {campo: 'nome', label: 'Nome (usado como cidade de referência)', tipo: 'text'},
         {campo: 'endereco', label: 'Endereço completo (rua, número, bairro, cidade, UF, CEP)', tipo: 'text'},
-        {campo: 'uf', label: 'UF (usada no cálculo de ICMS)', tipo: 'select', opcoes: [{value: '', label: '(nenhuma)'}, ...UFS_BRASIL]},
+        {campo: 'uf', label: 'UF (obrigatória — usada no cálculo de ICMS)', tipo: 'select', opcoes: [{value: '', label: 'Selecione a UF...'}, ...UFS_BRASIL]},
       ],
     }),
 
