@@ -360,23 +360,23 @@ function atualizarCubagem(){
     `peso considerado no cálculo: ${pesoConsiderado.toFixed(2)} kg (peso ${qualPesa}).`;
 }
 
-// Caminho inverso: cliente só passou a cubagem (volume em m³) — a
-// gente preenche Comprimento/Largura/Altura sozinho, assumindo uma caixa
-// cúbica (lados iguais). Isso não muda o valor do frete: o cálculo só
-// usa o produto comprimento×largura×altura, então qualquer combinação
-// de dimensões que dê o mesmo volume chega no mesmo resultado — só
-// precisamos preencher os 3 campos porque o formulário pede eles.
+// Caminho inverso: cliente só passou a cubagem (volume em m³) — mostramos
+// como sugestão uma caixa cúbica (lados iguais) equivalente a esse volume,
+// só de referência. Não mexe em Comprimento/Largura/Altura nem no cálculo
+// do frete: quem quiser usar a sugestão precisa copiar os valores à mão.
 function aplicarCubagemManual(){
   const input = document.getElementById('cubagem-manual');
+  const info = document.getElementById('cubagem-manual-info');
   const volumeM3 = parseFloat(input.value);
-  if(!volumeM3 || volumeM3 <= 0) return;
+  if(!volumeM3 || volumeM3 <= 0){
+    info.textContent = '';
+    return;
+  }
 
   const volumeCm3 = volumeM3 * 1000000;
   const lado = Math.cbrt(volumeCm3);
-  document.getElementById('comprimento').value = lado.toFixed(2);
-  document.getElementById('largura').value = lado.toFixed(2);
-  document.getElementById('altura').value = lado.toFixed(2);
-  atualizarCubagem();
+  info.className = 'cep-info ok';
+  info.textContent = `Sugestão: caixa cúbica de ${lado.toFixed(2)} × ${lado.toFixed(2)} × ${lado.toFixed(2)} cm (mesmo volume). Copie pros campos acima se quiser usar no cálculo.`;
 }
 const origemFilialSel = document.getElementById('origem-filial');
 const origemEnderecoWrap = document.getElementById('origem-endereco-wrap');
