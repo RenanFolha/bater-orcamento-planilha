@@ -2231,11 +2231,13 @@ async function carregarBlocoPisCofins(){
   try{
     const res = await fetch(`${API_BASE}/admin/pis-cofins`);
     const data = await res.json();
+    if(!res.ok) throw new Error(data.detail || 'Falha ao carregar a alíquota de PIS/COFINS.');
     aliquotaInput.value = data.aliquota;
     observacaoInput.value = data.observacao || '';
   }catch(e){
     statusEl.className = 'geo-status err';
-    statusEl.textContent = 'Falha ao carregar a alíquota de PIS/COFINS.';
+    statusEl.textContent = e.message;
+    btn.disabled = true;
   }
 
   btn.addEventListener('click', async () => {

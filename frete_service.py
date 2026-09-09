@@ -298,9 +298,10 @@ class ParametrosFrete:
                 AliquotaIcms(r["estado_origem"], r["estado_destino"], r["aliquota"])
                 for r in conn.execute("SELECT * FROM aliquotas_icms")
             ]
-            self.aliquota_pis_cofins = conn.execute(
+            linha_pis_cofins = conn.execute(
                 "SELECT aliquota FROM aliquota_pis_cofins WHERE id = 1"
-            ).fetchone()["aliquota"]
+            ).fetchone()
+            self.aliquota_pis_cofins = linha_pis_cofins["aliquota"] if linha_pis_cofins else 0.0
             self.coleta_cidades_fixas = [
                 ColetaCidadeFixa(r["filial_origem"], r["cidade_destino"], r["veiculo"], r["valor_fixo"])
                 for r in conn.execute("SELECT * FROM coleta_cidades_fixas ORDER BY id")

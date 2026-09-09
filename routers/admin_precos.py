@@ -265,6 +265,10 @@ def admin_obter_pis_cofins(usuario: dict = Depends(exigir_admin)):
 
 @router.put("/pis-cofins")
 def admin_atualizar_pis_cofins(payload: AliquotaPisCofinsIn, usuario: dict = Depends(exigir_admin)):
+    # Não usa o helper admin_atualizar (feito pra CRUD com id e possível
+    # 409 de UNIQUE) porque aliquota_pis_cofins é singleton -- sem id de
+    # rota e sem constraint que gere ConflitoIntegridade. O reload de
+    # parâmetros abaixo é o mesmo que o helper faria após um update.
     db.atualizar_aliquota_pis_cofins(payload.aliquota, payload.observacao)
     fs.carregar_parametros()
     return db.obter_aliquota_pis_cofins()
