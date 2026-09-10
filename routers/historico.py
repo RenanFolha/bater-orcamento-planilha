@@ -53,6 +53,7 @@ def _buscar_historico_com_dados(codigo: str) -> dict:
     if not registro:
         raise HTTPException(status_code=404, detail=f"Orçamento '{codigo}' não encontrado no histórico.")
     registro["dados"] = json.loads(registro.pop("dados_json") or "{}")
+    registro["alteracoes"] = db.listar_alteracoes_historico(registro["id"])
     return registro
 
 
@@ -110,7 +111,10 @@ def atualizar_pedagio(id_: int, payload: AtualizarPedagioHistoricoRequest, usuar
     if isinstance(dados.get("payload"), dict):
         dados["payload"]["pedagio"] = novo_pedagio
 
-    db.atualizar_pedagio_historico(id_, frete_total_novo, json.dumps(dados, ensure_ascii=False))
+    db.atualizar_pedagio_historico(
+        id_, frete_total_novo, json.dumps(dados, ensure_ascii=False),
+        pedagio_antigo=pedagio_antigo, pedagio_novo=novo_pedagio, alterado_por=usuario["username"],
+    )
     return {"status": "ok", "pedagio": novo_pedagio, "frete_total": frete_total_novo}
 
 

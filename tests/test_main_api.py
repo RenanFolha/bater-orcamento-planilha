@@ -196,6 +196,26 @@ def test_historico_atualizar_pedagio_recalcula_frete_total(client):
     assert detalhe["dados"]["payload"]["pedagio"] == 25.0
 
 
+def test_historico_atualizar_pedagio_registra_alteracao(client):
+    _login(client)
+    codigo, hist_id = _salvar_historico_com_pedagio(client, pedagio=10.0, frete_total=100.0)
+
+    detalhe_antes = client.get(f"/historico/{codigo}").json()
+    assert detalhe_antes["alteracoes"] == []
+
+    r = client.put(f"/historico/{hist_id}/pedagio", json={"pedagio": 25.0})
+    assert r.status_code == 200, r.text
+
+    detalhe = client.get(f"/historico/{codigo}").json()
+    assert len(detalhe["alteracoes"]) == 1
+    alteracao = detalhe["alteracoes"][0]
+    assert alteracao["campo"] == "pedagio"
+    assert alteracao["valor_antigo"] == pytest.approx(10.0)
+    assert alteracao["valor_novo"] == pytest.approx(25.0)
+    assert alteracao["alterado_por"] == "admin"
+    assert alteracao["alterado_em"]
+
+
 def test_historico_atualizar_pedagio_rejeita_valor_negativo(client):
     _login(client)
     _codigo, hist_id = _salvar_historico_com_pedagio(client, pedagio=10.0, frete_total=100.0)

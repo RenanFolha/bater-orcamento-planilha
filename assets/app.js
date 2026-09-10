@@ -2091,6 +2091,26 @@ function renderizarDetalheHistorico(registro){
   }
 
   renderizarMemoriaCalculo(registro.dados?.resultado, 'detalhe-memoria-calculo', false);
+  renderizarAlteracoesHistorico(registro.alteracoes || []);
+}
+
+const CAMPOS_ALTERACAO_HISTORICO = { pedagio: 'Pedágio' };
+
+function renderizarAlteracoesHistorico(alteracoes){
+  const card = document.getElementById('detalhe-alteracoes-card');
+  if(!alteracoes.length){
+    card.style.display = 'none';
+    return;
+  }
+  card.style.display = '';
+  document.getElementById('detalhe-alteracoes').innerHTML = alteracoes.map(a => {
+    const campo = CAMPOS_ALTERACAO_HISTORICO[a.campo] || a.campo;
+    const quando = new Date(a.alterado_em).toLocaleString('pt-BR');
+    return `<div class="line">
+      <span>${esc(campo)} alterado por ${esc(a.alterado_por || '—')} em ${esc(quando)}</span>
+      <span>${esc(fmtBRL(a.valor_antigo))} → ${esc(fmtBRL(a.valor_novo))}</span>
+    </div>`;
+  }).join('');
 }
 
 async function abrirDetalheHistorico(codigo){

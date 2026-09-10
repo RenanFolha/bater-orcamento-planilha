@@ -364,6 +364,16 @@ CREATE TABLE IF NOT EXISTS orcamentos_historico (
     dados_json TEXT NOT NULL DEFAULT '{}',
     criado_por TEXT NOT NULL DEFAULT ''
 );
+
+CREATE TABLE IF NOT EXISTS orcamentos_historico_alteracoes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    historico_id INTEGER NOT NULL REFERENCES orcamentos_historico(id) ON DELETE CASCADE,
+    campo TEXT NOT NULL,
+    valor_antigo REAL,
+    valor_novo REAL,
+    alterado_por TEXT NOT NULL DEFAULT '',
+    alterado_em TEXT NOT NULL
+);
 """
 
 
@@ -1044,6 +1054,16 @@ CREATE TABLE orcamentos_historico (
     status VARCHAR(30) NOT NULL DEFAULT 'Fechado',
     dados_json TEXT NOT NULL DEFAULT '{}',
     criado_por TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE orcamentos_historico_alteracoes (
+    id {PK},
+    historico_id INTEGER NOT NULL REFERENCES orcamentos_historico(id) ON DELETE CASCADE,
+    campo VARCHAR(255) NOT NULL,
+    valor_antigo REAL,
+    valor_novo REAL,
+    alterado_por VARCHAR(255) NOT NULL DEFAULT '',
+    alterado_em TEXT NOT NULL
 );
 """
 
@@ -2154,17 +2174,45 @@ def excluir_orcamento_historico(id_: int):
         conn.execute("DELETE FROM orcamentos_historico WHERE id=?", (id_,))
 
 
-def atualizar_pedagio_historico(id_: int, frete_total: float, dados_json: str):
+def atualizar_pedagio_historico(
+    id_: int, frete_total: float, dados_json: str,
+    pedagio_antigo: float, pedagio_novo: float, alterado_por: str = "",
+):
     """Usado só pra corrigir o pedágio de um orçamento já salvo (ex: o
     valor estimado pelo Google Maps na hora da cotação estava errado) —
     ver routers/historico.py, que recalcula frete_total e o dados_json
     antes de chamar essa função. Não mexe em mais nenhum campo do
-    orçamento salvo."""
+    orçamento salvo, além de registrar a alteração em
+    orcamentos_historico_alteracoes (ver listar_alteracoes_historico) pra
+    manter rastro de quem mudou o quê."""
     with get_connection() as conn:
         conn.execute(
             "UPDATE orcamentos_historico SET frete_total=?, dados_json=? WHERE id=?",
             (frete_total, dados_json, id_),
         )
+        conn.execute(
+            """INSERT INTO orcamentos_historico_alteracoes
+               (historico_id, campo, valor_antigo, valor_novo, alterado_por, alterado_em)
+               VALUES (?,?,?,?,?,?)""",
+            (id_, "pedagio", pedagio_antigo, pedagio_novo, alterado_por,
+             datetime.now().isoformat(timespec="seconds")),
+        )
+
+
+def listar_alteracoes_historico(historico_id: int) -> list[dict]:
+    """Histórico de edições feitas num orçamento salvo (ver
+    atualizar_pedagio_historico) — usado pra mostrar no detalhe do
+    orçamento (GET /historico/{codigo}) o que foi alterado depois de
+    salvo, com valor antigo/novo, quem e quando."""
+    with get_connection() as conn:
+        return [
+            dict(r) for r in conn.execute(
+                """SELECT campo, valor_antigo, valor_novo, alterado_por, alterado_em
+                   FROM orcamentos_historico_alteracoes
+                   WHERE historico_id = ? ORDER BY id""",
+                (historico_id,),
+            )
+        ]
 
 
 # ============================================================
