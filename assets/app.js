@@ -981,8 +981,6 @@ form.addEventListener('submit', async (ev) => {
     document.getElementById('d-peso-exc').textContent = `${calc.peso_excedente_kg} kg`;
     document.getElementById('d-custo-peso-exc').textContent = fmtBRL(calc.custo_peso_excedente);
     document.getElementById('d-base').textContent = fmtBRL(calc.frete_base);
-    document.getElementById('d-mult').textContent =
-      `${fmtMult(calc.multiplicador_categoria)} × ${fmtMult(calc.multiplicador_transporte)} × ${fmtMult(calc.multiplicador_sla)}`;
     document.getElementById('d-ajustado').textContent = fmtBRL(calc.frete_ajustado);
 
     const linhaColeta = document.getElementById('linha-coleta');
