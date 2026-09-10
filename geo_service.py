@@ -408,7 +408,17 @@ def _buscar_rota_no_historico(origem: str, destino: str, veiculo: str | None) ->
     Sem o veículo não dá pra reaproveitar (retorna None sempre): pedágio
     varia por categoria de veículo, e é isso que vai ser cacheado junto com
     a distância mais adiante — então rota+veículo diferentes contam como
-    "não é a mesma cotação", mesmo que a rota geográfica seja idêntica."""
+    "não é a mesma cotação", mesmo que a rota geográfica seja idêntica.
+
+    Também não reaproveita quando existe Prioridade de Rota ou Distância
+    Fixa cadastrada pra esse par de cidades (ver
+    frete_service.destino_tem_prioridade_rota_cadastrada e
+    distancia_fixa_aplicavel): esses cadastros podem ter sido
+    criados/corrigidos DEPOIS de uma cotação antiga já salva (ex: destino
+    Manaus cotado antes de existir a escala obrigatória por Belém com
+    travessia de balsa) — reaproveitar essa distância antiga às cegas
+    manteria a rota errada (terrestre direta) pra sempre nas cotações
+    seguintes da mesma rota+veículo, mesmo depois do cadastro corrigido."""
     if not veiculo or not veiculo.strip():
         return None
     veiculo_alvo = veiculo.strip().lower()
@@ -416,6 +426,12 @@ def _buscar_rota_no_historico(origem: str, destino: str, veiculo: str | None) ->
     cidade_o, _ = fs.cidade_e_uf(origem)
     cidade_d, _ = fs.cidade_e_uf(destino)
     if not cidade_o or not cidade_d:
+        return None
+    if (
+        fs.destino_tem_prioridade_rota_cadastrada(fs.parametros, cidade_d)
+        or fs.distancia_fixa_aplicavel(fs.parametros, origem, destino) is not None
+        or fs.distancia_fixa_aplicavel(fs.parametros, destino, origem) is not None
+    ):
         return None
     cidade_o, cidade_d = cidade_o.strip().lower(), cidade_d.strip().lower()
 

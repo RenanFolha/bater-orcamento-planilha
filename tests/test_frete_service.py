@@ -814,3 +814,82 @@ def test_distancia_fixa_curinga_e_especificidade(parametros):
     # origem diferente só bate no curinga
     achado2 = fs.distancia_fixa_aplicavel(parametros, "Fortaleza, CE, Brasil", "Manaus, Amazonas, Brasil")
     assert achado2.distancia_km == 3000
+
+
+def test_distancia_balsa_km_rota_direta(parametros):
+    parametros.distancias_fixas = [fs.DistanciaFixa("Belém", "Manaus", 2096)]
+    km = fs.distancia_balsa_km(parametros, "Belém, Pará, Brasil", "Manaus, Amazonas, Brasil", prioridade_rota=None)
+    assert km == 2096
+
+
+def test_distancia_balsa_km_via_prioridade_de_rota(parametros):
+    # Com escala obrigatória (prioridade_rota = nome da filial), a
+    # distância fixa é checada na perna filial->destino, não na rota
+    # origem->destino inteira (que nem bateria: São Paulo -> Manaus não
+    # tem corredor cadastrado).
+    parametros.distancias_fixas = [fs.DistanciaFixa("Belém", "Manaus", 2096)]
+    km = fs.distancia_balsa_km(
+        parametros, "São Paulo, SP, Brasil", "Manaus, Amazonas, Brasil", prioridade_rota="Belém",
+    )
+    assert km == 2096
+
+
+def test_distancia_balsa_km_sem_corredor_cadastrado(parametros):
+    km = fs.distancia_balsa_km(parametros, "São Paulo, SP, Brasil", "Curitiba, PR, Brasil", prioridade_rota=None)
+    assert km == 0.0
+
+
+def test_calcular_orcamento_nao_cobra_tarifa_de_estrada_na_travessia_de_balsa(parametros):
+    # Cenário do bug relatado: distância total Belém->Manaus é 2096 km,
+    # todos com travessia de balsa (sem corredor rodoviário) -- a tarifa
+    # por km do veículo (rodoviária) não pode incidir sobre nenhum desses
+    # km, só a taxa de balsa (fixa, já cadastrada em taxas_balsa) entra na
+    # conta. Sem a correção, custo_km cobraria a viagem inteira como se
+    # fosse rodovia, dobrando a cobrança da travessia.
+    parametros.distancias_fixas = [fs.DistanciaFixa("Belém", "Manaus", 2096)]
+    parametros.taxas_balsa = [
+        fs.TaxaBalsa(cidade_origem="*", cidade_destino="Manaus", veiculo="VUC", tipo="fixo", valor=7110.58),
+    ]
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=2096, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        cidade_origem="Belém, Pará, Brasil", cidade_destino="Manaus, Amazonas, Brasil",
+    )
+    calc = resultado["calculos_intermediarios"]
+    assert calc["distancia_balsa_km"] == 2096
+    assert calc["distancia_faturavel_km"] == 0
+    assert calc["custo_km"] == pytest.approx(0.0)
+    assert calc["custo_balsa"] == pytest.approx(7110.58)
+
+
+def test_calcular_orcamento_cobra_so_a_perna_rodoviaria_quando_ha_escala_por_balsa(parametros):
+    # Origem fora do Pará: a perna origem->Belém continua rodoviária
+    # (cobrada por km normalmente), só a perna Belém->Manaus (balsa) sai
+    # do cálculo de custo_km/manutenção -- distancia aqui já vem somada
+    # (como faria geo_service.calcular_distancia): 900 km de estrada até
+    # Belém + 2096 km de balsa até Manaus = 2996 km.
+    parametros.distancias_fixas = [fs.DistanciaFixa("Belém", "Manaus", 2096)]
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=2996, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        cidade_origem="São Paulo, SP, Brasil", cidade_destino="Manaus, Amazonas, Brasil",
+        prioridade_rota="Belém",
+    )
+    calc = resultado["calculos_intermediarios"]
+    assert calc["distancia_balsa_km"] == 2096
+    assert calc["distancia_faturavel_km"] == 900
+    assert calc["custo_km"] == pytest.approx(900 * 2.0)  # tarifa_km do VUC no fixture = 2.0
+
+
+def test_calcular_orcamento_sem_corredor_de_balsa_cobra_distancia_inteira(parametros):
+    # Sem nenhuma distância fixa cadastrada pra essa rota, comportamento
+    # de sempre: tarifa por km incide sobre a distância inteira.
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=300, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        cidade_origem="São Paulo, SP, Brasil", cidade_destino="Curitiba, PR, Brasil",
+    )
+    calc = resultado["calculos_intermediarios"]
+    assert calc["distancia_balsa_km"] == 0
+    assert calc["distancia_faturavel_km"] == 300
+    assert calc["custo_km"] == pytest.approx(300 * 2.0)

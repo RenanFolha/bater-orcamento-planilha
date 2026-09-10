@@ -242,6 +242,40 @@ def test_calcular_distancia_reaproveitada_do_historico_tambem_usa_pedagio_local(
     assert resultado["pedagio_pracas"] == ["Praça 5"]
 
 
+def test_nao_reaproveita_historico_quando_ha_distancia_fixa_cadastrada(banco_temporario, monkeypatch):
+    # Cenário real: um orçamento Belém->Manaus foi cotado e salvo ANTES de
+    # existir a distância fixa (balsa) cadastrada pra essa rota -- guardou
+    # a rota terrestre real (3031 km, via BR-319). Depois, alguém cadastra
+    # a distância fixa correta (2096 km, balsa). Reaproveitar o histórico
+    # às cegas manteria a rota terrestre errada pra sempre nas cotações
+    # seguintes -- por isso não pode reaproveitar quando há distância fixa
+    # cadastrada pro par de cidades, mesmo que o histórico bata.
+    _salvar_rota("Belém", "Manaus", 3031, veiculo="Carreta")
+
+    p = fs.ParametrosFrete()
+    p.filiais = {}
+    p.prioridades_rota = []
+    p.distancias_fixas = [fs.DistanciaFixa("Belém", "Manaus", 2096)]
+    monkeypatch.setattr(fs, "parametros", p)
+
+    assert geo._buscar_rota_no_historico("Belém", "Manaus", "Carreta") is None
+
+
+def test_nao_reaproveita_historico_quando_ha_prioridade_rota_cadastrada(banco_temporario, monkeypatch):
+    # Mesma ideia, mas pro caso de uma rota completa (ex: Campinas->Manaus)
+    # cotada antes de existir a Prioridade de Rota (escala obrigatória por
+    # Belém) cadastrada pro destino Manaus.
+    _salvar_rota("Campinas", "Manaus", 5810, veiculo="Carreta")
+
+    p = fs.ParametrosFrete()
+    p.filiais = {"belém": fs.Filial("Belém", "Centro, Belém, PA, Brasil", None, None)}
+    p.prioridades_rota = [fs.PrioridadeRota(estado_origem="*", cidade_destino="Manaus", filial_escala="Belém")]
+    p.distancias_fixas = []
+    monkeypatch.setattr(fs, "parametros", p)
+
+    assert geo._buscar_rota_no_historico("Campinas", "Manaus", "Carreta") is None
+
+
 def test_calcular_distancia_usa_distancia_fixa_na_rota_direta(banco_temporario, monkeypatch):
     # Distância fixa cadastrada (ver frete_service.distancia_fixa_aplicavel)
     # sobrepõe o cálculo rodoviário de verdade -- útil quando a rota real

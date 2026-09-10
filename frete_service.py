@@ -684,6 +684,26 @@ def prioridade_rota_aplicavel(
     return max(candidatas, key=lambda par: par[0])[1]
 
 
+def destino_tem_prioridade_rota_cadastrada(p: "ParametrosFrete", cidade_destino: str | None) -> bool:
+    """True se existe alguma Prioridade de Rota cadastrada pra essa cidade
+    de destino, em qualquer estado de origem (ignora a UF, ao contrário de
+    prioridade_rota_aplicavel). Usada só por
+    geo_service._buscar_rota_no_historico pra decidir se pode confiar numa
+    distância reaproveitada do histórico: a prioridade pode ter sido
+    cadastrada DEPOIS de uma cotação antiga já salva (ex: destino Manaus
+    cotado antes de existir a escala obrigatória por Belém), e reaproveitar
+    essa distância antiga às cegas manteria a rota errada (terrestre
+    direta) pra sempre nas cotações seguintes."""
+    cid_d = _cidade_da_retirada(cidade_destino) if cidade_destino else None
+    if not cid_d:
+        return False
+    cid_d = db.normalizar_texto(cid_d)
+    return any(
+        _campo_bate_curinga(db.normalizar_texto(e.cidade_destino), cid_d)
+        for e in p.prioridades_rota
+    )
+
+
 def _uf_de_origem_ou_destino(p: "ParametrosFrete", texto: str | None) -> str:
     """UF de um texto de origem/destino de frete, que pode ser um endereço
     resolvido pelo geocodificador ("Cidade, Estado, Brasil", ver cidade_e_uf)
@@ -813,6 +833,29 @@ def distancia_fixa_aplicavel(
     return max(candidatas, key=lambda par: par[0])[1]
 
 
+def distancia_balsa_km(
+    p: "ParametrosFrete", cidade_origem: str | None, cidade_destino: str | None, prioridade_rota: str | None,
+) -> float:
+    """Quantos km da distância total do frete correspondem a um trecho com
+    distância fixa cadastrada (travessia de balsa, ver
+    distancia_fixa_aplicavel) — usado por calcular_orcamento pra excluir
+    esse trecho do cálculo de custo_km/custo_manutencao (tarifa por km
+    rodado). O veículo não roda esse trecho, vai de balsa: cobrar tarifa
+    de estrada por cima dele, além da taxa de balsa (custo_balsa) já
+    cadastrada pra essa rota, cobraria a mesma travessia duas vezes.
+
+    Quando o frete passou por uma Prioridade de Rota (escala obrigatória,
+    ex: destino Manaus via filial em Belém — prioridade_rota traz o nome
+    dessa filial), a distância fixa é checada na perna filial->destino,
+    não na rota origem->destino inteira. Sem prioridade de rota, checa a
+    rota direta."""
+    fixa = (
+        distancia_fixa_aplicavel(p, prioridade_rota, cidade_destino) if prioridade_rota
+        else distancia_fixa_aplicavel(p, cidade_origem, cidade_destino)
+    )
+    return fixa.distancia_km if fixa else 0.0
+
+
 def _taxa_balsa_outros_veiculos(
     p: "ParametrosFrete", cidade_origem: str | None, cidade_destino: str | None, veiculo_atual: str
 ) -> list[str]:
@@ -921,8 +964,15 @@ def calcular_orcamento(
     peso_cubado = selecao.peso_cubado
     peso_considerado = selecao.peso_considerado
 
-    tarifa_km_usada, faixa_km_aplicada = p.tarifa_km_efetiva(v, distancia)
-    custo_km = tarifa_km_usada * distancia
+    # Km com travessia de balsa (ver distancia_balsa_km) não é rodado pelo
+    # veículo -- não entra na tarifa por km (nem na faixa que a determina)
+    # nem na manutenção, senão a travessia seria cobrada duas vezes: uma
+    # aqui como se fosse estrada, outra como custo_balsa mais abaixo.
+    balsa_km = distancia_balsa_km(p, cidade_origem, cidade_destino, prioridade_rota)
+    distancia_faturavel = max(distancia - balsa_km, 0.0)
+
+    tarifa_km_usada, faixa_km_aplicada = p.tarifa_km_efetiva(v, distancia_faturavel)
+    custo_km = tarifa_km_usada * distancia_faturavel
     # Peso excedente = quanto o peso considerado passa do "até" (limite
     # superior) da faixa do próprio veículo escolhido — normalmente é
     # zero, porque o veículo já foi escolhido pra cobrir esse peso
@@ -949,7 +999,7 @@ def calcular_orcamento(
     # em si, então não entram nos multiplicadores de
     # categoria/transporte/SLA.
     distancia_coleta_propria = 0 if coleta_terceirizada else distancia_coleta
-    custo_manutencao = v.tarifa_km_manutencao * (distancia + distancia_coleta_propria + distancia_retorno)
+    custo_manutencao = v.tarifa_km_manutencao * (distancia_faturavel + distancia_coleta_propria + distancia_retorno)
     custo_retorno = v.tarifa_km_retorno * distancia_retorno
 
     # Taxas adicionais (fixas em R$ ou % do valor da mercadoria)
@@ -1083,8 +1133,9 @@ def calcular_orcamento(
             "distancia_km": round(distancia),
             # Nome da filial de escala obrigatória usada pra calcular a
             # distância acima (ver geo_service.calcular_distancia +
-            # frete_service.prioridade_rota_aplicavel) — só informativo,
-            # não entra em nenhuma conta daqui pra frente.
+            # frete_service.prioridade_rota_aplicavel) — também usada pra
+            # achar a distância com travessia de balsa dentro dessa
+            # distância total (ver distancia_balsa_km abaixo).
             "rota_obrigatoria": prioridade_rota or None,
             "distancia_coleta_km": round(distancia_coleta),
             "valor_mercadoria": round(valor_mercadoria, 2),
@@ -1107,6 +1158,8 @@ def calcular_orcamento(
                 round(volume_total_m3 / (v.capacidade_m3 * (v.percentual_capacidade_util / 100)) * 100, 1)
                 if v.capacidade_m3 > 0 else None
             ),
+            "distancia_balsa_km": round(balsa_km),
+            "distancia_faturavel_km": round(distancia_faturavel),
             "tarifa_km_veiculo": tarifa_km_usada,
             "faixa_km_aplicada": faixa_km_aplicada,
             "custo_km": round(custo_km, 2),
@@ -1127,7 +1180,7 @@ def calcular_orcamento(
             "entrega_terceirizada": entrega_terceirizada,
             "transportadora_entrega_nome": transportadora_entrega_nome if entrega_terceirizada else None,
             "pedagio": round(pedagio, 2),
-            "distancia_manutencao_km": round(distancia + distancia_coleta_propria + distancia_retorno),
+            "distancia_manutencao_km": round(distancia_faturavel + distancia_coleta_propria + distancia_retorno),
             "custo_manutencao": round(custo_manutencao, 2),
             "tarifa_km_manutencao": v.tarifa_km_manutencao,
             "custo_retorno": round(custo_retorno, 2),
