@@ -94,7 +94,16 @@
     padding:24px 20px 20px;
     white-space:nowrap;
   }
-  .brand-logo{display:block;width:24px;height:24px;object-fit:contain;flex-shrink:0;order:2;}
+  .brand-logo{
+    display:block;width:24px;height:24px;flex-shrink:0;order:2;
+    background-image:url('/assets/supersonic-logo-dark.png');
+    background-size:contain;background-repeat:no-repeat;background-position:center;
+  }
+  /* Logo com hexágono branco (feito pra fundo escuro) fica invisível em
+     cima do sidebar claro -- troca pra variante com o hexágono em azul-
+     marinho, que segue o data-theme já aplicado antes do primeiro paint
+     (ver script no <head>), sem flash de logo errado. */
+  :root[data-theme="light"] .brand-logo{background-image:url('/assets/supersonic-logo-light.png');}
   .brand-word{font-family:var(--font-sans);font-weight:800;font-size:15px;letter-spacing:1.6px;color:var(--text-strong);white-space:nowrap;order:1;}
   .sidebar.collapsed .brand-word{display:none;}
   .sidebar.collapsed .brand{justify-content:center;padding:20px 0 16px;}
