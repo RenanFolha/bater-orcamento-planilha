@@ -291,6 +291,24 @@
                 </div>
               </div>
 
+              <div class="section-label">Custos Extras</div>
+              <div id="bloco-custos-extras">
+                <div class="field">
+                  <div class="idx">·</div>
+                  <div>
+                    <label>Categorias aplicáveis (selecione uma ou mais)</label>
+                    <div class="seg-toggle" id="custos-extras-categorias" style="flex-wrap:wrap;">
+                      <button type="button" class="seg-btn" data-categoria="Paletização">Paletização</button>
+                      <button type="button" class="seg-btn" data-categoria="Carga">Carga</button>
+                      <button type="button" class="seg-btn" data-categoria="Descarga">Descarga</button>
+                      <button type="button" class="seg-btn" data-categoria="Entrega Adicional">Entrega Adicional</button>
+                      <button type="button" class="seg-btn" data-categoria="Diversos">Diversos</button>
+                    </div>
+                  </div>
+                </div>
+                <div id="lista-valores-custos-extras"></div>
+              </div>
+
             </form>
           </div>
           <div class="submit-bar">
@@ -348,6 +366,7 @@
               <div class="line" id="linha-taxas-regionais" style="display:none;"><span>Taxa fluvial (RCA)</span><span id="d-taxas-regionais">-</span></div>
               <div class="line" id="linha-taxa-balsa" style="display:none;"><span>Balsa</span><span id="d-taxa-balsa">-</span></div>
               <div class="line" id="linha-taxas" style="display:none;"><span>Taxas adicionais</span><span id="d-taxas">-</span></div>
+              <div class="line" id="linha-custos-extras" style="display:none;"><span>Custos extras</span><span id="d-custos-extras">-</span></div>
               <div class="line" id="linha-pis-cofins" style="display:none;"><span>PIS/COFINS</span><span id="d-pis-cofins">-</span></div>
               <div class="line" id="linha-icms" style="display:none;"><span>ICMS</span><span id="d-icms">-</span></div>
               <div class="line total-line"><span>Frete total</span><span id="d-total">-</span></div>
@@ -355,6 +374,10 @@
             <div class="breakdown" id="bloco-detalhe-taxas" style="display:none;">
               <h3>Detalhe das taxas adicionais</h3>
               <div id="lista-detalhe-taxas"></div>
+            </div>
+            <div class="breakdown" id="bloco-detalhe-custos-extras" style="display:none;">
+              <h3>Detalhe dos custos extras</h3>
+              <div id="lista-detalhe-custos-extras"></div>
             </div>
             <div style="padding:12px 20px;border-top:1px solid var(--border-soft);">
               <button type="button" id="btn-toggle-memoria" style="width:100%;background:none;border:1px dashed var(--border);border-radius:7px;padding:9px;font-size:11.5px;color:var(--text-dim);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;">

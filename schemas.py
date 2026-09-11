@@ -22,6 +22,11 @@ class PaleteIn(BaseModel):
     quantidade: int = Field(1, ge=1, description="Quantidade de paletes idênticos com essas mesmas dimensões — evita repetir a mesma linha várias vezes", examples=[1])
 
 
+class CustoExtraIn(BaseModel):
+    categoria: str = Field(..., description="Categoria do custo extra (ver frete_service.CATEGORIAS_CUSTO_EXTRA)", examples=["Paletização"])
+    valor: float = Field(..., ge=0, description="Valor do custo extra em R$, digitado na hora do orçamento", examples=[50])
+
+
 class OrcamentoRequest(BaseModel):
     peso: float = Field(..., gt=0, description="Peso real da mercadoria em kg", examples=[8])
     paletes: list[PaleteIn] = Field(
@@ -46,6 +51,7 @@ class OrcamentoRequest(BaseModel):
     pedagio: float = Field(0, ge=0, description="Valor estimado de pedágio da rota em R$ (preenchido automaticamente pelo Google Maps quando disponível, editável)")
     distancia_retorno: float = Field(0, ge=0, description="Distância (km) do retorno vazio do veículo, do destino até a filial mais próxima — só quando a entrega é feita direto ao cliente pela frota própria")
     prioridade_rota: str = Field("", description="Nome da filial de escala obrigatória usada no trajeto (preenchido automaticamente por /geo/distancia quando a rota bate uma prioridade de rota cadastrada) — só para exibir na memória de cálculo, não afeta o valor do frete")
+    custos_extras: list[CustoExtraIn] = Field(default_factory=list, description="Custos extras escolhidos pra este orçamento (categoria + valor em R$), somados ao frete antes do PIS/COFINS e do ICMS")
 
 
 class DistanciaRequest(BaseModel):

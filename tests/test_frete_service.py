@@ -401,6 +401,43 @@ def test_taxa_regional_lista_de_cidades_aplica_em_qualquer_uma(parametros):
         assert resultado["calculos_intermediarios"]["custo_taxas_regionais"] == pytest.approx(30.0)
 
 
+def test_custo_extra_soma_ao_frete_e_aparece_no_detalhamento(parametros):
+    sem_extra = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=100,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+    )
+    com_extra = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=100,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        custos_extras=[{"categoria": "Paletização", "valor": 40.0}, {"categoria": "Carga", "valor": 10.0}],
+    )
+    calc = com_extra["calculos_intermediarios"]
+    assert calc["custo_extra_total"] == pytest.approx(50.0)
+    assert calc["custos_extras"] == [
+        {"categoria": "Paletização", "valor_aplicado": 40.0},
+        {"categoria": "Carga", "valor_aplicado": 10.0},
+    ]
+    assert com_extra["resultado"]["frete_total"] > sem_extra["resultado"]["frete_total"]
+
+
+def test_custo_extra_categoria_invalida_gera_erro(parametros):
+    with pytest.raises(fs.FreteInputError):
+        fs.calcular_orcamento(
+            peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=100,
+            categoria="Geral", transporte="Rodoviário", sla="Padrão",
+            custos_extras=[{"categoria": "Categoria Inventada", "valor": 10.0}],
+        )
+
+
+def test_custo_extra_valor_negativo_gera_erro(parametros):
+    with pytest.raises(fs.FreteInputError):
+        fs.calcular_orcamento(
+            peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=100,
+            categoria="Geral", transporte="Rodoviário", sla="Padrão",
+            custos_extras=[{"categoria": "Diversos", "valor": -10.0}],
+        )
+
+
 def test_taxa_balsa_aplicada_na_direcao_e_veiculo_certos(parametros):
     # peso=50 escolhe o veículo "VUC" no fixture de teste (única faixa que cobre 50kg)
     resultado = fs.calcular_orcamento(

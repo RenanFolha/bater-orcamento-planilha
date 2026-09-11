@@ -74,6 +74,13 @@ def _valor_taxa(tipo: str, valor: float, valor_mercadoria: float) -> float:
     return valor_mercadoria * (valor / 100) if tipo == "percentual" else valor
 
 
+# Custo extra: categorias fixas escolhidas por orçamento (não é um
+# catálogo cadastrável como as taxas adicionais) — a pessoa que cota
+# marca quais categorias se aplicam e digita o valor (R$) de cada uma na
+# hora, ver calcular_orcamento.
+CATEGORIAS_CUSTO_EXTRA = ["Paletização", "Carga", "Descarga", "Entrega Adicional", "Diversos"]
+
+
 class FreteConfigError(Exception):
     """Erro ao ler/validar os parâmetros do banco."""
 
@@ -928,6 +935,7 @@ def calcular_orcamento(
     pedagio: float = 0,
     distancia_retorno: float = 0,
     prioridade_rota: str | None = None,
+    custos_extras: list[dict] | None = None,
 ) -> dict:
     if peso <= 0:
         raise FreteInputError("Peso deve ser maior que zero.")
@@ -952,6 +960,15 @@ def calcular_orcamento(
         raise FreteInputError("Valor de pedágio não pode ser negativo.")
     if distancia_retorno < 0:
         raise FreteInputError("Distância de retorno não pode ser negativa.")
+    custos_extras = custos_extras or []
+    for custo_extra in custos_extras:
+        if custo_extra.get("categoria") not in CATEGORIAS_CUSTO_EXTRA:
+            opcoes = ", ".join(CATEGORIAS_CUSTO_EXTRA)
+            raise FreteInputError(
+                f"Categoria de custo extra '{custo_extra.get('categoria')}' inválida. Opções: {opcoes}"
+            )
+        if custo_extra.get("valor", 0) < 0:
+            raise FreteInputError("Valor de custo extra não pode ser negativo.")
 
     p = parametros
     transp = p.buscar_transporte(transporte)
@@ -1001,6 +1018,17 @@ def calcular_orcamento(
     distancia_coleta_propria = 0 if coleta_terceirizada else distancia_coleta
     custo_manutencao = v.tarifa_km_manutencao * (distancia_faturavel + distancia_coleta_propria + distancia_retorno)
     custo_retorno = v.tarifa_km_retorno * distancia_retorno
+
+    # Custo extra: categorias escolhidas na hora do orçamento (ver
+    # CATEGORIAS_CUSTO_EXTRA), cada uma com um valor em R$ digitado pela
+    # pessoa que cota — diferente das taxas adicionais abaixo, não vem de
+    # um catálogo com valor pré-cadastrado.
+    detalhe_custos_extras = []
+    custo_extra_total = 0.0
+    for custo_extra in custos_extras:
+        valor_aplicado = round(custo_extra.get("valor", 0), 2)
+        custo_extra_total += valor_aplicado
+        detalhe_custos_extras.append({"categoria": custo_extra["categoria"], "valor_aplicado": valor_aplicado})
 
     # Taxas adicionais (fixas em R$ ou % do valor da mercadoria)
     detalhe_taxas = []
@@ -1086,6 +1114,7 @@ def calcular_orcamento(
         + custo_taxas_adicionais
         + custo_taxas_regionais
         + custo_balsa
+        + custo_extra_total
         + pedagio
         + custo_manutencao
         + custo_retorno
@@ -1186,6 +1215,8 @@ def calcular_orcamento(
             "custo_retorno": round(custo_retorno, 2),
             "tarifa_km_retorno": v.tarifa_km_retorno,
             "distancia_retorno_km": round(distancia_retorno),
+            "custos_extras": detalhe_custos_extras or None,
+            "custo_extra_total": round(custo_extra_total, 2),
             "taxas_adicionais": detalhe_taxas,
             "custo_taxas_adicionais": round(custo_taxas_adicionais, 2),
             "taxas_regionais": detalhe_taxas_regionais,

@@ -77,6 +77,8 @@ const MEMORIA_CALCULO_CAMPOS = [
   {chave: 'custo_retorno', rotulo: 'Custo de retorno vazio', tipo: 'brl'},
 
   {header: 'Taxas'},
+  {chave: 'custos_extras', rotulo: 'Custos extras aplicados', tipo: 'lista_custo_extra'},
+  {chave: 'custo_extra_total', rotulo: 'Total de custos extras', tipo: 'brl'},
   {chave: 'taxas_adicionais', rotulo: 'Taxas adicionais aplicadas', tipo: 'lista_taxa'},
   {chave: 'custo_taxas_adicionais', rotulo: 'Total de taxas adicionais', tipo: 'brl'},
   {chave: 'taxas_regionais', rotulo: 'Taxa fluvial (RCA) aplicada', tipo: 'lista_taxa_regional'},
@@ -127,6 +129,10 @@ function _formatarValorMemoria(v, tipo){
         : 'não aplicada';
     case 'lista_veiculos':
       return (v && v.length) ? v.join(', ') : '—';
+    case 'lista_custo_extra':
+      return (v && v.length)
+        ? v.map(c => `${c.categoria} = ${fmtBRL(c.valor_aplicado)}`).join('; ')
+        : 'nenhum';
     default: return String(v);
   }
 }
@@ -963,6 +969,7 @@ form.addEventListener('submit', async (ev) => {
     entrega_terceirizada: destinoEntregaTerceirizada,
     transportadora_entrega_nome: transportadoraEntrega ? transportadoraEntrega.nome : '',
     valor_entrega_terceirizada: transportadoraEntrega ? transportadoraEntrega.valor : 0,
+    custos_extras: coletarCustosExtras(),
   };
 
   btn.disabled = true;
@@ -1145,6 +1152,20 @@ form.addEventListener('submit', async (ev) => {
       blocoDetalheTaxas.style.display = 'none';
     }
 
+    const linhaCustosExtras = document.getElementById('linha-custos-extras');
+    const blocoDetalheCustosExtras = document.getElementById('bloco-detalhe-custos-extras');
+    if(calc.custo_extra_total > 0){
+      document.getElementById('d-custos-extras').textContent = fmtBRL(calc.custo_extra_total);
+      linhaCustosExtras.style.display = 'flex';
+      document.getElementById('lista-detalhe-custos-extras').innerHTML = (calc.custos_extras || []).map(c =>
+        `<div class="line"><span>${esc(c.categoria)}</span><span>${fmtBRL(c.valor_aplicado)}</span></div>`
+      ).join('');
+      blocoDetalheCustosExtras.style.display = 'block';
+    }else{
+      linhaCustosExtras.style.display = 'none';
+      blocoDetalheCustosExtras.style.display = 'none';
+    }
+
     const linhaPisCofins = document.getElementById('linha-pis-cofins');
     if(calc.valor_pis_cofins > 0){
       document.getElementById('d-pis-cofins').textContent = fmtBRL(calc.valor_pis_cofins);
@@ -1190,6 +1211,46 @@ document.getElementById('toggle-servico').addEventListener('click', () => {
   icon.classList.toggle('ti-chevron-right', !abrindo);
   icon.classList.toggle('ti-chevron-down', abrindo);
 });
+
+// Categorias de custo extra marcadas nesse orçamento (multiselect via
+// botões que ligam/desligam "active") -- cada uma marcada ganha uma linha
+// com campo de valor (R$) digitado na hora, sem catálogo pré-cadastrado
+// (ver frete_service.CATEGORIAS_CUSTO_EXTRA). coletarCustosExtras() lê o
+// estado atual na hora de montar o payload do cálculo.
+const listaValoresCustosExtras = document.getElementById('lista-valores-custos-extras');
+function idValorCustoExtra(categoria){
+  return `custo-extra-valor-${categoria.replace(/\s+/g, '-')}`;
+}
+document.getElementById('custos-extras-categorias').addEventListener('click', (ev) => {
+  const btn = ev.target.closest('.seg-btn');
+  if(!btn) return;
+  const categoria = btn.dataset.categoria;
+  const ativo = btn.classList.toggle('active');
+  const linhaId = idValorCustoExtra(categoria);
+  if(ativo){
+    const div = document.createElement('div');
+    div.className = 'field';
+    div.id = linhaId;
+    div.innerHTML = `
+      <div class="idx">·</div>
+      <div>
+        <label>${esc(categoria)} (R$)</label>
+        <input type="text" inputmode="decimal" value="0,00" oninput="formatarMoedaDigitando(this)">
+      </div>
+    `;
+    listaValoresCustosExtras.appendChild(div);
+  }else{
+    document.getElementById(linhaId)?.remove();
+  }
+});
+
+function coletarCustosExtras(){
+  return [...document.querySelectorAll('#custos-extras-categorias .seg-btn.active')].map(btn => {
+    const categoria = btn.dataset.categoria;
+    const input = document.getElementById(idValorCustoExtra(categoria))?.querySelector('input');
+    return {categoria, valor: valorMoedaParaNumero(input ? input.value : '0')};
+  });
+}
 
 document.getElementById('btn-toggle-memoria').addEventListener('click', () => {
   const bloco = document.getElementById('bloco-memoria-calculo');
