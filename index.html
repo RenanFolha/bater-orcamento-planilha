@@ -480,6 +480,32 @@
                  style="font-family:var(--font-sans);font-size:12.5px;padding:9px 12px;border:1px solid var(--border);border-radius:6px;width:280px;background:var(--panel-alt);color:var(--text);outline:none;">
         </div>
 
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+          <select id="historico-filtro-status" style="font-family:var(--font-sans);font-size:12.5px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--panel-alt);color:var(--text);outline:none;">
+            <option value="">Status: todos</option>
+            <option value="Fechado">Fechado</option>
+            <option value="Pendente">Pendente</option>
+            <option value="Cancelado">Cancelado</option>
+          </select>
+          <select id="historico-filtro-responsavel" style="font-family:var(--font-sans);font-size:12.5px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--panel-alt);color:var(--text);outline:none;">
+            <option value="">Responsável: todos</option>
+          </select>
+          <select id="historico-filtro-veiculo" style="font-family:var(--font-sans);font-size:12.5px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--panel-alt);color:var(--text);outline:none;">
+            <option value="">Veículo: todos</option>
+          </select>
+          <label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-dim);">
+            De
+            <input type="date" id="historico-filtro-data-de" style="font-family:var(--font-sans);font-size:12.5px;padding:7px 9px;border:1px solid var(--border);border-radius:6px;background:var(--panel-alt);color:var(--text);outline:none;">
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-dim);">
+            Até
+            <input type="date" id="historico-filtro-data-ate" style="font-family:var(--font-sans);font-size:12.5px;padding:7px 9px;border:1px solid var(--border);border-radius:6px;background:var(--panel-alt);color:var(--text);outline:none;">
+          </label>
+          <button type="button" id="historico-filtro-limpar" style="font-family:var(--font-sans);font-size:12px;padding:8px 12px;border:1px dashed var(--border);border-radius:6px;background:none;color:var(--text-dim);cursor:pointer;">
+            Limpar filtros
+          </button>
+        </div>
+
         <div id="historico-lista-status" class="cep-info" style="margin-bottom:10px;"></div>
 
         <div class="card">

@@ -2134,7 +2134,8 @@ async function carregarHistorico(){
     if(!res.ok) throw new Error(`Erro HTTP ${res.status}`);
     historicoCache = await res.json();
     contagemEl.textContent = `${historicoCache.length} orçamento${historicoCache.length === 1 ? '' : 's'} salvo${historicoCache.length === 1 ? '' : 's'}`;
-    renderizarHistorico(historicoCache);
+    popularFiltrosHistorico(historicoCache);
+    aplicarFiltrosHistorico();
   }catch(e){
     contagemEl.textContent = 'Erro ao carregar o histórico.';
     listaEl.innerHTML = `<div style="padding:20px;color:var(--err);font-size:13px;">${esc(e.message)}</div>`;
@@ -2218,15 +2219,73 @@ function renderizarHistorico(lista){
   });
 }
 
-document.getElementById('historico-busca').addEventListener('input', (ev) => {
-  const termo = ev.target.value.trim().toLowerCase();
-  if(!termo){ renderizarHistorico(historicoCache); return; }
-  const filtrado = historicoCache.filter(o =>
-    (o.cliente || '').toLowerCase().includes(termo) ||
-    (o.codigo || '').toLowerCase().includes(termo) ||
-    (o.responsavel || '').toLowerCase().includes(termo)
-  );
+// Preenche os dropdowns de Responsável e Veículo só com valores que
+// aparecem de verdade no histórico carregado -- evita opção que nunca dá
+// resultado nenhum. Preserva a seleção atual se ela continuar entre as
+// opções novas (ex: depois de recarregar o histórico).
+function popularFiltrosHistorico(lista){
+  const selResponsavel = document.getElementById('historico-filtro-responsavel');
+  const selVeiculo = document.getElementById('historico-filtro-veiculo');
+  const valorAtualResp = selResponsavel.value;
+  const valorAtualVeic = selVeiculo.value;
+
+  const responsaveis = [...new Set(lista.map(o => o.responsavel).filter(Boolean))].sort();
+  const veiculos = [...new Set(lista.map(o => o.veiculo).filter(Boolean))].sort();
+
+  selResponsavel.innerHTML = '<option value="">Responsável: todos</option>' +
+    responsaveis.map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join('');
+  selVeiculo.innerHTML = '<option value="">Veículo: todos</option>' +
+    veiculos.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+
+  if(responsaveis.includes(valorAtualResp)) selResponsavel.value = valorAtualResp;
+  if(veiculos.includes(valorAtualVeic)) selVeiculo.value = valorAtualVeic;
+}
+
+// Combina a busca por texto com os filtros de status/responsável/veículo/
+// período -- todos em conjunto (E lógico), lendo direto dos controles do
+// DOM em vez de guardar o estado em variáveis separadas.
+function aplicarFiltrosHistorico(){
+  const termo = document.getElementById('historico-busca').value.trim().toLowerCase();
+  const status = document.getElementById('historico-filtro-status').value;
+  const responsavel = document.getElementById('historico-filtro-responsavel').value;
+  const veiculo = document.getElementById('historico-filtro-veiculo').value;
+  const dataDe = document.getElementById('historico-filtro-data-de').value;
+  const dataAte = document.getElementById('historico-filtro-data-ate').value;
+
+  const filtrado = historicoCache.filter(o => {
+    if(termo){
+      const bate = (o.cliente || '').toLowerCase().includes(termo) ||
+        (o.codigo || '').toLowerCase().includes(termo) ||
+        (o.responsavel || '').toLowerCase().includes(termo);
+      if(!bate) return false;
+    }
+    if(status && o.status !== status) return false;
+    if(responsavel && o.responsavel !== responsavel) return false;
+    if(veiculo && o.veiculo !== veiculo) return false;
+    if(dataDe || dataAte){
+      const dataOrc = (o.criado_em || '').slice(0, 10); // "AAAA-MM-DD", mesmo formato do <input type="date">
+      if(dataDe && dataOrc < dataDe) return false;
+      if(dataAte && dataOrc > dataAte) return false;
+    }
+    return true;
+  });
   renderizarHistorico(filtrado);
+}
+
+document.getElementById('historico-busca').addEventListener('input', aplicarFiltrosHistorico);
+document.getElementById('historico-filtro-status').addEventListener('change', aplicarFiltrosHistorico);
+document.getElementById('historico-filtro-responsavel').addEventListener('change', aplicarFiltrosHistorico);
+document.getElementById('historico-filtro-veiculo').addEventListener('change', aplicarFiltrosHistorico);
+document.getElementById('historico-filtro-data-de').addEventListener('change', aplicarFiltrosHistorico);
+document.getElementById('historico-filtro-data-ate').addEventListener('change', aplicarFiltrosHistorico);
+document.getElementById('historico-filtro-limpar').addEventListener('click', () => {
+  document.getElementById('historico-busca').value = '';
+  document.getElementById('historico-filtro-status').value = '';
+  document.getElementById('historico-filtro-responsavel').value = '';
+  document.getElementById('historico-filtro-veiculo').value = '';
+  document.getElementById('historico-filtro-data-de').value = '';
+  document.getElementById('historico-filtro-data-ate').value = '';
+  renderizarHistorico(historicoCache);
 });
 
 let detalheHistoricoCodigo = null;
@@ -2251,8 +2310,15 @@ function renderizarDetalheHistorico(registro){
   if(calc.distancia_retorno_km > 0){
     linhas.push(['KM de retorno vazio', `${calc.distancia_retorno_km} km`]);
   }
+  linhas.push(['Peso considerado', calc.peso_considerado_kg != null ? `${calc.peso_considerado_kg} kg` : '—']);
+  if(calc.custo_extra_total > 0){
+    const nomesCustosExtras = (calc.custos_extras || []).map(c => c.categoria).join(', ');
+    linhas.push(['Custos extras', `${fmtBRL(calc.custo_extra_total)}${nomesCustosExtras ? ` (${nomesCustosExtras})` : ''}`]);
+  }
+  if(calc.margem_lucro_pct != null){
+    linhas.push(['Margem de lucro', `${fmtBRL(calc.valor_margem_lucro)} (${calc.margem_lucro_pct}%)`]);
+  }
   linhas.push(
-    ['Peso considerado', calc.peso_considerado_kg != null ? `${calc.peso_considerado_kg} kg` : '—'],
     ['Valor da mercadoria', fmtBRL(registro.valor_mercadoria)],
     ['Frete total', fmtBRL(registro.frete_total)],
   );
