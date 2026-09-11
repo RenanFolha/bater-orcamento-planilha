@@ -628,6 +628,24 @@ def test_geo_distancia_sem_peso_nao_descobre_veiculo(client, monkeypatch):
     assert capturado["veiculo"] is None
 
 
+def test_geo_bloqueia_apos_muitas_chamadas_do_mesmo_ip(client, monkeypatch):
+    import routers.geo as geo_router
+
+    async def _calcular_distancia_fake(origem, destino, veiculo=None):
+        return {"distancia_km": 10, "duracao_min": 10, "pedagio_valor": None, "pedagio_moeda": None,
+                "origem_resolvido": origem, "destino_resolvido": destino}
+
+    monkeypatch.setattr(geo_router.geo, "calcular_distancia", _calcular_distancia_fake)
+    payload = {"origem": "Campinas, SP", "destino": "São Paulo, SP"}
+
+    for _ in range(geo_router._GEO_RATE_LIMITE_MAX):
+        assert client.post("/geo/distancia", json=payload).status_code == 200
+
+    r = client.post("/geo/distancia", json=payload)
+    assert r.status_code == 429
+    assert "Retry-After" in r.headers
+
+
 def test_admin_banco_dados_exige_admin(client):
     assert client.get("/admin/banco-dados").status_code == 401
     assert client.post("/admin/banco-dados/testar", json={"tipo": "sqlite"}).status_code == 401

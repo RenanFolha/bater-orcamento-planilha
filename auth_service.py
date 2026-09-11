@@ -63,6 +63,32 @@ def limpar_tentativas_falha(identificador: str):
     _tentativas_login.pop(identificador, None)
 
 
+# Rate limit genérico por identificador (ex: "geo:<ip>") -- mesma mecânica
+# em memória do bloqueio de login acima, mas com semântica diferente: conta
+# TODA chamada dentro da janela (sucesso ou erro), não só falhas, e cada
+# identificador tem seu próprio limite/janela (ver uso em routers/geo.py).
+# Protege endpoints públicos que disparam chamada externa (geocodificação)
+# contra abuso de um único IP -- sem isso, um script em loop consegue
+# gerar custo real (se usando Google Maps) ou estourar a política de uso
+# do Nominatim e derrubar a geocodificação pra todo mundo.
+_contadores_rate_limit: dict[str, list[float]] = defaultdict(list)
+
+
+def limite_generico_excedido(identificador: str, maximo: int, janela_segundos: int) -> int:
+    """Registra a chamada atual e retorna quantos segundos faltam até o
+    identificador poder chamar de novo, ou 0 se ainda estiver dentro do
+    limite (e já contabiliza essa chamada)."""
+    agora = time.monotonic()
+    limite = agora - janela_segundos
+    chamadas = [t for t in _contadores_rate_limit[identificador] if t > limite]
+    if len(chamadas) >= maximo:
+        _contadores_rate_limit[identificador] = chamadas
+        return max(0, round(janela_segundos - (agora - chamadas[0])))
+    chamadas.append(agora)
+    _contadores_rate_limit[identificador] = chamadas
+    return 0
+
+
 def gerar_hash_senha(senha: str) -> tuple[str, str]:
     salt = secrets.token_hex(16)
     hash_ = hashlib.pbkdf2_hmac(

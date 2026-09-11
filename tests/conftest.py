@@ -24,8 +24,10 @@ def _tentativas_login_limpas():
     tabela cruzada de identificador (IP/username) mesmo usando bancos
     temporários diferentes."""
     auth._tentativas_login.clear()
+    auth._contadores_rate_limit.clear()
     yield
     auth._tentativas_login.clear()
+    auth._contadores_rate_limit.clear()
 
 
 @pytest.fixture

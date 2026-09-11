@@ -2,13 +2,36 @@
 
 """Rotas de geolocalização: distância entre endereços e filial mais próxima."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
+import auth_service as auth
 import frete_service as fs
 import geo_service as geo
 from schemas import DistanciaRequest, EntregaRequest, RetiradaRequest, RetornoRequest
 
-router = APIRouter(prefix="/geo", tags=["Geolocalização"])
+# Limite de chamadas por IP -- essas rotas são públicas e cada uma dispara
+# uma requisição de verdade pro serviço de geolocalização (Nominatim/OSRM
+# ou Google Maps, se configurado); sem isso, nada impede um script em loop
+# de gerar custo real ou estourar a política de uso do provedor externo
+# (ver auth_service.limite_generico_excedido).
+_GEO_RATE_LIMITE_MAX = 30
+_GEO_RATE_LIMITE_JANELA_SEGUNDOS = 60
+
+
+def _limitar_taxa_geo(request: Request):
+    ip = request.client.host if request.client else "desconhecido"
+    espera = auth.limite_generico_excedido(
+        f"geo:{ip}", maximo=_GEO_RATE_LIMITE_MAX, janela_segundos=_GEO_RATE_LIMITE_JANELA_SEGUNDOS,
+    )
+    if espera:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Muitas requisições de geolocalização. Tente novamente em {espera} segundo(s).",
+            headers={"Retry-After": str(espera)},
+        )
+
+
+router = APIRouter(prefix="/geo", tags=["Geolocalização"], dependencies=[Depends(_limitar_taxa_geo)])
 
 
 @router.post("/distancia")
