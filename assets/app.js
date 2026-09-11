@@ -55,9 +55,7 @@ const MEMORIA_CALCULO_CAMPOS = [
   {chave: 'valor_tonelada_excedente', rotulo: 'Valor por tonelada excedente', tipo: 'brl'},
   {chave: 'custo_peso_excedente', rotulo: 'Custo do peso excedente', tipo: 'brl'},
   {chave: 'frete_base', rotulo: 'Frete base (custo/km + custo peso excedente)', tipo: 'brl'},
-
-  {header: 'Multiplicadores'},
-  {chave: 'frete_ajustado', rotulo: 'Frete ajustado (base × multiplicadores)', tipo: 'brl'},
+  {chave: 'frete_ajustado', rotulo: 'Frete ajustado', tipo: 'brl'},
 
   {header: 'Coleta e entrega'},
   {chave: 'coleta_terceirizada', rotulo: 'Coleta terceirizada?', tipo: 'bool'},
@@ -238,6 +236,13 @@ async function inicializarFormulario(){
     ]);
     carregouParametros = true;
     statusTag.textContent = 'Aguardando';
+    // "Geral" é a categoria padrão (multiplicador 1.00, sem cuidado
+    // especial) -- pré-seleciona pra cobrir o caso comum sem exigir que a
+    // pessoa escolha toda vez.
+    const categoriaSel = document.getElementById('categoria');
+    if([...categoriaSel.options].some(o => o.value === 'Geral')){
+      categoriaSel.value = 'Geral';
+    }
     atualizarCubagem();
   }catch(err){
     errorBox.textContent = 'Não foi possível carregar os parâmetros. Verifique se a API está ativa.';
@@ -403,6 +408,15 @@ let destinoEfetivoEnderecoResolvido = '';
 // entrega é terceirizada -- não entra no cálculo do frete (o custo é o valor
 // fixo da transportadora), só é exibido informativamente no detalhamento.
 let distanciaEntregaTerceirizadaKm = 0;
+// KM do último trecho (endereço do cliente -> filial mais próxima) quando a
+// entrega é feita pela frota própria direto no cliente -- vem da mesma
+// resolução usada pra sugerir a filial de retorno vazio (ver
+// calcularDistanciaEEndereco). Não existe uma distância de entrega separada
+// de verdade no cálculo (o trecho todo filial-origem -> cliente é uma rota
+// só, ver "distancia_km"); esse valor só serve pra estimar, no
+// detalhamento, quanto desse trecho é "transferência" e quanto é "entrega"
+// (proporção por km), sem mudar nenhum valor usado no cálculo do frete.
+let distanciaEntregaPropriaKm = 0;
 
 async function carregarFiliais(){
   const res = await fetch(`${API_BASE}/parametros/filiais`);
@@ -590,6 +604,7 @@ function resetarRetornoVazio(){
   destinoRetornoFilialSel.value = '';
   destinoRetornoInfo.textContent = '';
   destinoEfetivoEnderecoResolvido = '';
+  distanciaEntregaPropriaKm = 0;
 }
 
 // Usuário trocou manualmente a filial de retorno (o auto-sugerido nem
@@ -682,6 +697,7 @@ function invalidarRotaCalculada(){
   cidadeDestinoResolvida = '';
   prioridadeRotaResolvida = '';
   distanciaEntregaTerceirizadaKm = 0;
+  distanciaEntregaPropriaKm = 0;
   geoStatus.className = 'geo-status';
   geoStatus.textContent = '';
 }
@@ -708,6 +724,7 @@ async function calcularDistanciaEEndereco(){
   cidadeDestinoResolvida = '';
   prioridadeRotaResolvida = '';
   distanciaEntregaTerceirizadaKm = 0;
+  distanciaEntregaPropriaKm = 0;
 
   btnGeo.disabled = true;
   btnGeo.textContent = 'Calculando...';
@@ -790,6 +807,7 @@ async function calcularDistanciaEEndereco(){
       destinoRetornoWrap.style.display = '';
       if(resRet.ok){
         distanciaRetornoInput.value = dataRet.distancia_coleta_km;
+        distanciaEntregaPropriaKm = dataRet.distancia_coleta_km || 0;
         destinoRetornoFilialSel.value = dataRet.filial_mais_proxima;
         destinoRetornoInfo.className = 'cep-info ok';
         destinoRetornoInfo.textContent =
@@ -800,6 +818,7 @@ async function calcularDistanciaEEndereco(){
         // retorno não pôde ser estimado automaticamente; o usuário ainda
         // escolhe a filial manualmente no seletor.
         distanciaRetornoInput.value = 0;
+        distanciaEntregaPropriaKm = 0;
         destinoRetornoFilialSel.value = '';
         destinoRetornoInfo.className = 'cep-info err';
         destinoRetornoInfo.textContent =
@@ -989,11 +1008,23 @@ form.addEventListener('submit', async (ev) => {
       linhaKmColeta.style.display = 'none';
     }
 
-    document.getElementById('d-km-transferencia').textContent = `${data.entrada.distancia_km} km`;
+    // Quando a entrega é própria e direto no cliente, o trecho principal
+    // (data.entrada.distancia_km) já embute transferência + entrega numa
+    // rota só -- não existe uma distância de entrega calculada de verdade
+    // separada. distanciaEntregaPropriaKm (mesma resolução usada pra
+    // sugerir a filial de retorno vazio) serve só de estimativa pra
+    // mostrar essa proporção no detalhamento, sem mudar nenhum valor do
+    // cálculo em si.
+    const kmEntregaPropriaEstimado = Math.min(distanciaEntregaPropriaKm, data.entrada.distancia_km);
+    const kmTransferencia = kmEntregaPropriaEstimado > 0
+      ? Math.max(data.entrada.distancia_km - kmEntregaPropriaEstimado, 0)
+      : data.entrada.distancia_km;
+    document.getElementById('d-km-transferencia').textContent = `${kmTransferencia} km`;
 
     const linhaKmEntrega = document.getElementById('linha-km-entrega');
-    if(distanciaEntregaTerceirizadaKm > 0){
-      document.getElementById('d-km-entrega').textContent = `${distanciaEntregaTerceirizadaKm} km`;
+    const kmEntregaExibir = kmEntregaPropriaEstimado > 0 ? kmEntregaPropriaEstimado : distanciaEntregaTerceirizadaKm;
+    if(kmEntregaExibir > 0){
+      document.getElementById('d-km-entrega').textContent = `${kmEntregaExibir} km`;
       linhaKmEntrega.style.display = 'flex';
     }else{
       linhaKmEntrega.style.display = 'none';
@@ -1012,6 +1043,23 @@ form.addEventListener('submit', async (ev) => {
     document.getElementById('d-custo-peso-exc').textContent = fmtBRL(calc.custo_peso_excedente);
     document.getElementById('d-base').textContent = fmtBRL(calc.frete_base);
     document.getElementById('d-ajustado').textContent = fmtBRL(calc.frete_ajustado);
+
+    // Custo de entrega própria estimado (proporcional aos km) -- quebra o
+    // mesmo "Frete ajustado" acima entre transferência e entrega, só pra
+    // exibição; a soma das duas partes é sempre igual ao frete ajustado.
+    const linhaCustoTransferencia = document.getElementById('linha-custo-transferencia');
+    const linhaCustoEntregaPropria = document.getElementById('linha-custo-entrega-propria');
+    if(kmEntregaPropriaEstimado > 0 && data.entrada.distancia_km > 0){
+      const proporcaoEntrega = kmEntregaPropriaEstimado / data.entrada.distancia_km;
+      const custoEntregaEstimado = calc.frete_ajustado * proporcaoEntrega;
+      document.getElementById('d-custo-transferencia').textContent = fmtBRL(calc.frete_ajustado - custoEntregaEstimado);
+      document.getElementById('d-custo-entrega-propria').textContent = fmtBRL(custoEntregaEstimado);
+      linhaCustoTransferencia.style.display = 'flex';
+      linhaCustoEntregaPropria.style.display = 'flex';
+    }else{
+      linhaCustoTransferencia.style.display = 'none';
+      linhaCustoEntregaPropria.style.display = 'none';
+    }
 
     const linhaColeta = document.getElementById('linha-coleta');
     if(calc.custo_coleta > 0){
@@ -1132,6 +1180,15 @@ form.addEventListener('submit', async (ev) => {
     btn.disabled = false;
     btn.textContent = 'Calcular frete';
   }
+});
+
+document.getElementById('toggle-servico').addEventListener('click', () => {
+  const bloco = document.getElementById('bloco-servico');
+  const icon = document.getElementById('icon-servico');
+  const abrindo = bloco.style.display === 'none';
+  bloco.style.display = abrindo ? '' : 'none';
+  icon.classList.toggle('ti-chevron-right', !abrindo);
+  icon.classList.toggle('ti-chevron-down', abrindo);
 });
 
 document.getElementById('btn-toggle-memoria').addEventListener('click', () => {
@@ -2098,11 +2155,19 @@ function renderizarDetalheHistorico(registro){
   const linhas = [
     ['Rota', [registro.origem_resumo, registro.destino_resumo].filter(Boolean).join(' → ') || '—'],
     ['Veículo', registro.veiculo || entrada.veiculo || '—'],
-    ['Distância', `${registro.distancia_km} km`],
+  ];
+  if(entrada.distancia_coleta_km > 0){
+    linhas.push(['KM de coleta', `${entrada.distancia_coleta_km} km`]);
+  }
+  linhas.push(['KM de transferência', `${registro.distancia_km} km`]);
+  if(calc.distancia_retorno_km > 0){
+    linhas.push(['KM de retorno vazio', `${calc.distancia_retorno_km} km`]);
+  }
+  linhas.push(
     ['Peso considerado', calc.peso_considerado_kg != null ? `${calc.peso_considerado_kg} kg` : '—'],
     ['Valor da mercadoria', fmtBRL(registro.valor_mercadoria)],
     ['Frete total', fmtBRL(registro.frete_total)],
-  ];
+  );
   document.getElementById('detalhe-conteudo').innerHTML = linhas.map(([label, valor]) => `
     <div class="line"><span>${esc(label)}</span><span>${esc(valor)}</span></div>
   `).join('');

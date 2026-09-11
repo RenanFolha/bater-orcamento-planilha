@@ -261,28 +261,33 @@
                 </div>
               </div>
 
-              <div class="section-label">Serviço</div>
-              <div class="field">
-                <div class="idx">09</div>
-                <div>
-                  <label for="categoria">Categoria do produto</label>
-                  <select id="categoria" required></select>
-                </div>
+              <div class="section-label" id="toggle-servico" style="cursor:pointer;user-select:none;">
+                Serviço
+                <i class="ti ti-chevron-right" id="icon-servico" style="margin-left:auto;transition:transform .15s ease;"></i>
               </div>
-
-              <div class="field">
-                <div class="idx">10</div>
-                <div>
-                  <label for="transporte">Método de transporte</label>
-                  <select id="transporte" required></select>
+              <div id="bloco-servico" style="display:none;">
+                <div class="field">
+                  <div class="idx">09</div>
+                  <div>
+                    <label for="categoria">Categoria do produto</label>
+                    <select id="categoria" required></select>
+                  </div>
                 </div>
-              </div>
 
-              <div class="field">
-                <div class="idx">11</div>
-                <div>
-                  <label for="sla">Nível de serviço (SLA)</label>
-                  <select id="sla" required></select>
+                <div class="field">
+                  <div class="idx">10</div>
+                  <div>
+                    <label for="transporte">Método de transporte</label>
+                    <select id="transporte" required></select>
+                  </div>
+                </div>
+
+                <div class="field">
+                  <div class="idx">11</div>
+                  <div>
+                    <label for="sla">Nível de serviço (SLA)</label>
+                    <select id="sla" required></select>
+                  </div>
                 </div>
               </div>
 
@@ -333,6 +338,8 @@
               <div class="line"><span>Custo do peso excedente</span><span id="d-custo-peso-exc">-</span></div>
               <div class="line"><span>Frete base</span><span id="d-base">-</span></div>
               <div class="line"><span>Frete ajustado</span><span id="d-ajustado">-</span></div>
+              <div class="line" id="linha-custo-transferencia" style="display:none;"><span>Custo de transferência (estimado)</span><span id="d-custo-transferencia">-</span></div>
+              <div class="line" id="linha-custo-entrega-propria" style="display:none;"><span>Custo de entrega (estimado)</span><span id="d-custo-entrega-propria">-</span></div>
               <div class="line" id="linha-coleta" style="display:none;"><span>Taxa de coleta</span><span id="d-coleta">-</span></div>
               <div class="line" id="linha-entrega-terceirizada" style="display:none;"><span>Entrega terceirizada</span><span id="d-entrega-terceirizada">-</span></div>
               <div class="line" id="linha-pedagio" style="display:none;"><span>Pedágio</span><span id="d-pedagio">-</span></div>
