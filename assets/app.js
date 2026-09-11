@@ -1264,6 +1264,22 @@ function coletarCustosExtras(){
   });
 }
 
+// Seções recolhíveis da Tabela de Preços (Cadastros Gerais, Veículos e
+// Tarifas, Coleta e Entrega, Rotas, Pedágio, Taxas e Impostos) --
+// diferente de Serviço/Custos Extras no formulário de orçamento, aqui
+// começam abertas (a pessoa vem pra essa tela justamente pra editar
+// alguma tabela, não faz sentido esconder tudo de cara).
+document.querySelectorAll('.precos-section-toggle').forEach(header => {
+  header.addEventListener('click', () => {
+    const bloco = document.getElementById(header.dataset.target);
+    const icon = header.querySelector('.precos-section-icon');
+    const abrindo = bloco.style.display === 'none';
+    bloco.style.display = abrindo ? '' : 'none';
+    icon.classList.toggle('ti-chevron-down', abrindo);
+    icon.classList.toggle('ti-chevron-right', !abrindo);
+  });
+});
+
 document.getElementById('btn-toggle-memoria').addEventListener('click', () => {
   const bloco = document.getElementById('bloco-memoria-calculo');
   const label = document.getElementById('btn-toggle-memoria-label');
