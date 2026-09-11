@@ -35,6 +35,7 @@ def orcamento(payload: OrcamentoRequest):
             distancia_retorno=payload.distancia_retorno,
             prioridade_rota=payload.prioridade_rota or None,
             custos_extras=[c.model_dump() for c in payload.custos_extras],
+            margem_lucro_pct=payload.margem_lucro_pct,
         )
     except fs.FreteInputError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e

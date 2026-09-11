@@ -289,6 +289,18 @@
                     <select id="sla" required></select>
                   </div>
                 </div>
+
+                <div class="field">
+                  <div class="idx">12</div>
+                  <div>
+                    <label for="margem_lucro">Margem de lucro</label>
+                    <select id="margem_lucro" required>
+                      <option value="30" id="opcao-margem-30" disabled style="display:none;">30%</option>
+                      <option value="40" selected>40%</option>
+                      <option value="50">50%</option>
+                    </select>
+                  </div>
+                </div>
               </div>
 
               <div class="section-label">Custos Extras</div>
@@ -367,6 +379,7 @@
               <div class="line" id="linha-taxa-balsa" style="display:none;"><span>Balsa</span><span id="d-taxa-balsa">-</span></div>
               <div class="line" id="linha-taxas" style="display:none;"><span>Taxas adicionais</span><span id="d-taxas">-</span></div>
               <div class="line" id="linha-custos-extras" style="display:none;"><span>Custos extras</span><span id="d-custos-extras">-</span></div>
+              <div class="line" id="linha-margem-lucro" style="display:none;"><span>Margem de lucro</span><span id="d-margem-lucro">-</span></div>
               <div class="line" id="linha-pis-cofins" style="display:none;"><span>PIS/COFINS</span><span id="d-pis-cofins">-</span></div>
               <div class="line" id="linha-icms" style="display:none;"><span>ICMS</span><span id="d-icms">-</span></div>
               <div class="line total-line"><span>Frete total</span><span id="d-total">-</span></div>

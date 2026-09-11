@@ -77,7 +77,8 @@ def test_calculo_basico_sem_coleta(parametros):
     assert calc["frete_ajustado"] == pytest.approx(200.0)
     assert calc["custo_manutencao"] == pytest.approx(10.0)
     assert calc["custo_taxas_adicionais"] == pytest.approx(10.0)
-    assert resultado["resultado"]["frete_total"] == pytest.approx(220.0)
+    # 220 de custo + 40% de margem de lucro (padrão) = 308
+    assert resultado["resultado"]["frete_total"] == pytest.approx(308.0)
     assert calc["faixa_km_aplicada"] is False
     assert calc["tarifa_km_veiculo"] == pytest.approx(2.0)  # tarifa_km fixa do VUC, sem faixa cadastrada
 
@@ -99,7 +100,7 @@ def test_rota_obrigatoria_aparece_na_memoria_de_calculo(parametros):
         prioridade_rota="Belem",
     )
     assert resultado["entrada"]["rota_obrigatoria"] == "Belem"
-    assert resultado["resultado"]["frete_total"] == pytest.approx(220.0)
+    assert resultado["resultado"]["frete_total"] == pytest.approx(308.0)  # 220 + 40% de margem
 
 
 def test_peso_dentro_da_faixa_do_veiculo_nao_gera_excedente(parametros):
@@ -401,6 +402,42 @@ def test_taxa_regional_lista_de_cidades_aplica_em_qualquer_uma(parametros):
         assert resultado["calculos_intermediarios"]["custo_taxas_regionais"] == pytest.approx(30.0)
 
 
+def test_margem_lucro_e_markup_simples_antes_dos_impostos(parametros):
+    resultado_30 = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        margem_lucro_pct=30,
+    )
+    resultado_50 = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        margem_lucro_pct=50,
+    )
+    calc_30 = resultado_30["calculos_intermediarios"]
+    # frete_ajustado=200 + custo_manutencao=10 + custo_taxas_adicionais=10 = 220 de custo
+    assert calc_30["frete_sem_margem_lucro"] == pytest.approx(220.0)
+    assert calc_30["valor_margem_lucro"] == pytest.approx(66.0)  # 220 * 0.30
+    assert resultado_30["resultado"]["frete_total"] == pytest.approx(286.0)  # 220 * 1.30
+    assert resultado_50["resultado"]["frete_total"] == pytest.approx(330.0)  # 220 * 1.50
+
+
+def test_margem_lucro_padrao_e_40_por_cento(parametros):
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=100,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+    )
+    assert resultado["calculos_intermediarios"]["margem_lucro_pct"] == 40
+
+
+def test_margem_lucro_fora_das_opcoes_permitidas_gera_erro(parametros):
+    with pytest.raises(fs.FreteInputError):
+        fs.calcular_orcamento(
+            peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=100,
+            categoria="Geral", transporte="Rodoviário", sla="Padrão",
+            margem_lucro_pct=25,
+        )
+
+
 def test_custo_extra_soma_ao_frete_e_aparece_no_detalhamento(parametros):
     sem_extra = fs.calcular_orcamento(
         peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=100,
@@ -593,10 +630,10 @@ def test_aliquota_icms_nao_aplicada_quando_rota_nao_bate(parametros):
 
 
 def test_aliquota_icms_aplica_gross_up_no_frete_total(parametros):
-    # Gross-up "por dentro": o frete sem imposto (220) precisa continuar
-    # sendo 88% do frete final quando a alíquota é 12% -- ou seja, o
-    # frete final é 220 / (1 - 0.12) = 250, não um acréscimo simples de
-    # 220 * 1.12 = 246.40.
+    # Gross-up "por dentro": o frete sem imposto (220 de custo + 40% de
+    # margem de lucro = 308) precisa continuar sendo 88% do frete final
+    # quando a alíquota é 12% -- ou seja, o frete final é
+    # 308 / (1 - 0.12) = 350, não um acréscimo simples de 308 * 1.12.
     parametros.aliquotas_icms.append(fs.AliquotaIcms(estado_origem="SP", estado_destino="RJ", aliquota=12.0))
     resultado = fs.calcular_orcamento(
         peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
@@ -604,10 +641,10 @@ def test_aliquota_icms_aplica_gross_up_no_frete_total(parametros):
         cidade_origem="São Paulo, SP, Brasil", cidade_destino="Rio de Janeiro, RJ, Brasil",
     )
     calc = resultado["calculos_intermediarios"]
-    assert calc["frete_sem_icms"] == pytest.approx(220.0)
+    assert calc["frete_sem_icms"] == pytest.approx(308.0)
     assert calc["aliquota_icms_pct"] == pytest.approx(12.0)
-    assert calc["valor_icms"] == pytest.approx(30.0, abs=0.01)
-    assert resultado["resultado"]["frete_total"] == pytest.approx(250.0, abs=0.01)
+    assert calc["valor_icms"] == pytest.approx(42.0, abs=0.01)
+    assert resultado["resultado"]["frete_total"] == pytest.approx(350.0, abs=0.01)
 
 
 def test_aliquota_icms_resolve_uf_da_filial_quando_origem_e_so_o_nome(parametros):
@@ -638,9 +675,10 @@ def test_aliquota_icms_resolve_uf_de_endereco_curto_cidade_uf(parametros):
 
 
 def test_pis_cofins_aplica_gross_up_no_frete_total(parametros):
-    # Mesmo raciocínio do gross-up de ICMS: o frete sem imposto (220)
-    # precisa continuar sendo 90,75% do frete final quando a alíquota é
-    # 9,25% -- 220 / (1 - 0,0925), não um acréscimo simples "por fora".
+    # Mesmo raciocínio do gross-up de ICMS: o frete sem imposto (220 de
+    # custo + 40% de margem de lucro = 308) precisa continuar sendo
+    # 90,75% do frete final quando a alíquota é 9,25% -- 308 / (1 -
+    # 0,0925), não um acréscimo simples "por fora".
     parametros.aliquota_pis_cofins = 9.25
     resultado = fs.calcular_orcamento(
         peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
@@ -648,18 +686,18 @@ def test_pis_cofins_aplica_gross_up_no_frete_total(parametros):
         cidade_origem="São Paulo, SP, Brasil", cidade_destino="Curitiba, PR, Brasil",
     )
     calc = resultado["calculos_intermediarios"]
-    esperado = 220.0 / (1 - 0.0925)  # == 220 / 0.9075
-    assert calc["frete_sem_pis_cofins"] == pytest.approx(220.0)
+    esperado = 308.0 / (1 - 0.0925)  # == 308 / 0.9075
+    assert calc["frete_sem_pis_cofins"] == pytest.approx(308.0)
     assert calc["aliquota_pis_cofins_pct"] == pytest.approx(9.25)
-    assert calc["valor_pis_cofins"] == pytest.approx(esperado - 220.0, abs=0.01)
+    assert calc["valor_pis_cofins"] == pytest.approx(esperado - 308.0, abs=0.01)
     assert resultado["resultado"]["frete_total"] == pytest.approx(esperado, abs=0.01)
 
 
 def test_pis_cofins_e_aplicado_antes_do_icms(parametros):
-    # PIS/COFINS entra primeiro (gross-up sobre o frete base), e o ICMS
-    # incide por cima do frete que já saiu com PIS/COFINS embutido --
-    # não dos dois impostos somados "por fora" nem do ICMS calculado
-    # sobre o frete base original.
+    # PIS/COFINS entra primeiro (gross-up sobre o frete já com margem de
+    # lucro), e o ICMS incide por cima do frete que já saiu com
+    # PIS/COFINS embutido -- não dos dois impostos somados "por fora"
+    # nem do ICMS calculado sobre o frete base original.
     parametros.aliquota_pis_cofins = 9.25
     parametros.aliquotas_icms.append(fs.AliquotaIcms(estado_origem="SP", estado_destino="RJ", aliquota=12.0))
     resultado = fs.calcular_orcamento(
@@ -668,9 +706,9 @@ def test_pis_cofins_e_aplicado_antes_do_icms(parametros):
         cidade_origem="São Paulo, SP, Brasil", cidade_destino="Rio de Janeiro, RJ, Brasil",
     )
     calc = resultado["calculos_intermediarios"]
-    frete_com_pis_cofins = 220.0 / (1 - 0.0925)
+    frete_com_pis_cofins = 308.0 / (1 - 0.0925)
     frete_com_icms = frete_com_pis_cofins / (1 - 0.12)
-    assert calc["frete_sem_pis_cofins"] == pytest.approx(220.0)
+    assert calc["frete_sem_pis_cofins"] == pytest.approx(308.0)
     assert calc["frete_sem_icms"] == pytest.approx(frete_com_pis_cofins, abs=0.01)
     assert resultado["resultado"]["frete_total"] == pytest.approx(frete_com_icms, abs=0.01)
 
@@ -684,7 +722,7 @@ def test_sem_aliquota_pis_cofins_frete_total_fica_igual(parametros):
     calc = resultado["calculos_intermediarios"]
     assert calc["aliquota_pis_cofins_pct"] == pytest.approx(0.0)
     assert calc["valor_pis_cofins"] == pytest.approx(0.0)
-    assert resultado["resultado"]["frete_total"] == pytest.approx(220.0)
+    assert resultado["resultado"]["frete_total"] == pytest.approx(308.0)  # 220 + 40% de margem
 
 
 def test_sem_aliquota_cadastrada_frete_total_fica_igual(parametros):
@@ -696,7 +734,7 @@ def test_sem_aliquota_cadastrada_frete_total_fica_igual(parametros):
     calc = resultado["calculos_intermediarios"]
     assert calc["aliquota_icms_pct"] == pytest.approx(0.0)
     assert calc["valor_icms"] == pytest.approx(0.0)
-    assert resultado["resultado"]["frete_total"] == pytest.approx(220.0)
+    assert resultado["resultado"]["frete_total"] == pytest.approx(308.0)  # 220 + 40% de margem
 
 
 def test_coleta_fixa_avisa_outro_veiculo_quando_nao_bate(parametros):

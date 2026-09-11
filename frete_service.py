@@ -80,6 +80,13 @@ def _valor_taxa(tipo: str, valor: float, valor_mercadoria: float) -> float:
 # hora, ver calcular_orcamento.
 CATEGORIAS_CUSTO_EXTRA = ["Paletização", "Carga", "Descarga", "Entrega Adicional", "Diversos"]
 
+# Margem de lucro: percentuais fixos selecionáveis por orçamento (markup
+# simples sobre o frete_total, ver calcular_orcamento). 30% é restrito a
+# administradores -- restrição só de UI (ver assets/app.js), o backend
+# aqui não tem noção de usuário/login.
+MARGENS_LUCRO_PERMITIDAS = [30, 40, 50]
+MARGEM_LUCRO_PADRAO = 40
+
 
 class FreteConfigError(Exception):
     """Erro ao ler/validar os parâmetros do banco."""
@@ -936,6 +943,7 @@ def calcular_orcamento(
     distancia_retorno: float = 0,
     prioridade_rota: str | None = None,
     custos_extras: list[dict] | None = None,
+    margem_lucro_pct: float = MARGEM_LUCRO_PADRAO,
 ) -> dict:
     if peso <= 0:
         raise FreteInputError("Peso deve ser maior que zero.")
@@ -969,6 +977,9 @@ def calcular_orcamento(
             )
         if custo_extra.get("valor", 0) < 0:
             raise FreteInputError("Valor de custo extra não pode ser negativo.")
+    if margem_lucro_pct not in MARGENS_LUCRO_PERMITIDAS:
+        opcoes = ", ".join(f"{m}%" for m in MARGENS_LUCRO_PERMITIDAS)
+        raise FreteInputError(f"Margem de lucro '{margem_lucro_pct}%' inválida. Opções: {opcoes}")
 
     p = parametros
     transp = p.buscar_transporte(transporte)
@@ -1120,6 +1131,14 @@ def calcular_orcamento(
         + custo_retorno
     )
 
+    # Margem de lucro — markup simples sobre o frete_total apurado até
+    # aqui (já com custos extras, pedágio, coleta etc.), antes de
+    # PIS/COFINS e ICMS: os impostos passam a incidir sobre o preço já
+    # com a margem embutida, não só sobre o custo.
+    frete_sem_margem_lucro = frete_total
+    frete_total = frete_sem_margem_lucro * (1 + margem_lucro_pct / 100)
+    valor_margem_lucro = frete_total - frete_sem_margem_lucro
+
     # PIS/COFINS — "por dentro" (gross-up), igual ao ICMS abaixo, mas com
     # alíquota federal única (não varia por UF, ver
     # ParametrosFrete.aliquota_pis_cofins) e aplicado ANTES do ICMS: o
@@ -1224,6 +1243,9 @@ def calcular_orcamento(
             "taxa_balsa": detalhe_balsa,
             "custo_balsa": round(custo_balsa, 2),
             "balsa_outro_veiculo": balsa_outro_veiculo or None,
+            "margem_lucro_pct": margem_lucro_pct,
+            "frete_sem_margem_lucro": round(frete_sem_margem_lucro, 2),
+            "valor_margem_lucro": round(valor_margem_lucro, 2),
             "aliquota_pis_cofins_pct": aliquota_pis_cofins_pct,
             "frete_sem_pis_cofins": round(frete_sem_pis_cofins, 2),
             "valor_pis_cofins": round(valor_pis_cofins, 2),

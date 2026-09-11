@@ -52,6 +52,7 @@ class OrcamentoRequest(BaseModel):
     distancia_retorno: float = Field(0, ge=0, description="Distância (km) do retorno vazio do veículo, do destino até a filial mais próxima — só quando a entrega é feita direto ao cliente pela frota própria")
     prioridade_rota: str = Field("", description="Nome da filial de escala obrigatória usada no trajeto (preenchido automaticamente por /geo/distancia quando a rota bate uma prioridade de rota cadastrada) — só para exibir na memória de cálculo, não afeta o valor do frete")
     custos_extras: list[CustoExtraIn] = Field(default_factory=list, description="Custos extras escolhidos pra este orçamento (categoria + valor em R$), somados ao frete antes do PIS/COFINS e do ICMS")
+    margem_lucro_pct: float = Field(40, description="Margem de lucro (%) aplicada como markup sobre o frete antes do PIS/COFINS e do ICMS (ver frete_service.MARGENS_LUCRO_PERMITIDAS) — 30% via UI é restrito a administradores", examples=[40])
 
 
 class DistanciaRequest(BaseModel):

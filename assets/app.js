@@ -79,6 +79,9 @@ const MEMORIA_CALCULO_CAMPOS = [
   {header: 'Taxas'},
   {chave: 'custos_extras', rotulo: 'Custos extras aplicados', tipo: 'lista_custo_extra'},
   {chave: 'custo_extra_total', rotulo: 'Total de custos extras', tipo: 'brl'},
+  {chave: 'margem_lucro_pct', rotulo: 'Margem de lucro', tipo: 'pct'},
+  {chave: 'frete_sem_margem_lucro', rotulo: 'Frete sem margem de lucro', tipo: 'brl'},
+  {chave: 'valor_margem_lucro', rotulo: 'Valor da margem de lucro', tipo: 'brl'},
   {chave: 'taxas_adicionais', rotulo: 'Taxas adicionais aplicadas', tipo: 'lista_taxa'},
   {chave: 'custo_taxas_adicionais', rotulo: 'Total de taxas adicionais', tipo: 'brl'},
   {chave: 'taxas_regionais', rotulo: 'Taxa fluvial (RCA) aplicada', tipo: 'lista_taxa_regional'},
@@ -970,6 +973,7 @@ form.addEventListener('submit', async (ev) => {
     transportadora_entrega_nome: transportadoraEntrega ? transportadoraEntrega.nome : '',
     valor_entrega_terceirizada: transportadoraEntrega ? transportadoraEntrega.valor : 0,
     custos_extras: coletarCustosExtras(),
+    margem_lucro_pct: parseFloat(document.getElementById('margem_lucro').value),
   };
 
   btn.disabled = true;
@@ -1164,6 +1168,14 @@ form.addEventListener('submit', async (ev) => {
     }else{
       linhaCustosExtras.style.display = 'none';
       blocoDetalheCustosExtras.style.display = 'none';
+    }
+
+    const linhaMargemLucro = document.getElementById('linha-margem-lucro');
+    if(calc.valor_margem_lucro > 0){
+      document.getElementById('d-margem-lucro').textContent = `${fmtBRL(calc.valor_margem_lucro)} (${calc.margem_lucro_pct}%)`;
+      linhaMargemLucro.style.display = 'flex';
+    }else{
+      linhaMargemLucro.style.display = 'none';
     }
 
     const linhaPisCofins = document.getElementById('linha-pis-cofins');
@@ -1369,9 +1381,24 @@ document.querySelectorAll('.sidebar-nav a').forEach(link => {
 
 let currentUser = null;
 
+// 30% de margem de lucro só pode ser escolhido por administrador --
+// enquanto não for admin, a opção some do select (e se estava
+// selecionada, volta pro padrão de 40%). Chamado sempre que o estado de
+// login muda (ver atualizarUIAuth), não só na carga inicial da página.
+function atualizarOpcaoMargem30(admin){
+  const opcao30 = document.getElementById('opcao-margem-30');
+  const selectMargem = document.getElementById('margem_lucro');
+  opcao30.style.display = admin ? '' : 'none';
+  opcao30.disabled = !admin;
+  if(!admin && selectMargem.value === '30'){
+    selectMargem.value = '40';
+  }
+}
+
 function atualizarUIAuth(){
   const logado = !!currentUser;
   const admin = logado && currentUser.role === 'admin';
+  atualizarOpcaoMargem30(admin);
 
   document.querySelectorAll('.sidebar-nav a[data-requer-login]').forEach(a => a.classList.toggle('hidden', !logado));
   document.querySelectorAll('.sidebar-nav a[data-requer-admin]').forEach(a => a.classList.toggle('hidden', !admin));
