@@ -57,9 +57,6 @@ const MEMORIA_CALCULO_CAMPOS = [
   {chave: 'frete_base', rotulo: 'Frete base (custo/km + custo peso excedente)', tipo: 'brl'},
 
   {header: 'Multiplicadores'},
-  {chave: 'multiplicador_categoria', rotulo: 'Multiplicador da categoria', tipo: 'mult'},
-  {chave: 'multiplicador_transporte', rotulo: 'Multiplicador do transporte', tipo: 'mult'},
-  {chave: 'multiplicador_sla', rotulo: 'Multiplicador do SLA', tipo: 'mult'},
   {chave: 'frete_ajustado', rotulo: 'Frete ajustado (base × multiplicadores)', tipo: 'brl'},
 
   {header: 'Coleta e entrega'},
@@ -84,8 +81,8 @@ const MEMORIA_CALCULO_CAMPOS = [
   {header: 'Taxas'},
   {chave: 'taxas_adicionais', rotulo: 'Taxas adicionais aplicadas', tipo: 'lista_taxa'},
   {chave: 'custo_taxas_adicionais', rotulo: 'Total de taxas adicionais', tipo: 'brl'},
-  {chave: 'taxas_regionais', rotulo: 'Taxas regionais aplicadas', tipo: 'lista_taxa_regional'},
-  {chave: 'custo_taxas_regionais', rotulo: 'Total de taxas regionais', tipo: 'brl'},
+  {chave: 'taxas_regionais', rotulo: 'Taxa fluvial (RCA) aplicada', tipo: 'lista_taxa_regional'},
+  {chave: 'custo_taxas_regionais', rotulo: 'Total de taxa fluvial (RCA)', tipo: 'brl'},
   {chave: 'taxa_balsa', rotulo: 'Taxa de balsa aplicada', tipo: 'balsa'},
   {chave: 'balsa_outro_veiculo', rotulo: 'Taxa de balsa cadastrada só p/ outro veículo', tipo: 'lista_veiculos'},
   {chave: 'custo_balsa', rotulo: 'Custo de balsa', tipo: 'brl'},
@@ -402,6 +399,10 @@ const distanciaRetornoInput = document.getElementById('distancia_retorno');
 // filial de retorno precisa dele de novo quando o usuário troca a filial
 // manualmente, pra recalcular a distância até a filial escolhida.
 let destinoEfetivoEnderecoResolvido = '';
+// KM do último trecho (filial mais próxima -> endereço do cliente) quando a
+// entrega é terceirizada -- não entra no cálculo do frete (o custo é o valor
+// fixo da transportadora), só é exibido informativamente no detalhamento.
+let distanciaEntregaTerceirizadaKm = 0;
 
 async function carregarFiliais(){
   const res = await fetch(`${API_BASE}/parametros/filiais`);
@@ -680,6 +681,7 @@ function invalidarRotaCalculada(){
   cidadeOrigemResolvida = '';
   cidadeDestinoResolvida = '';
   prioridadeRotaResolvida = '';
+  distanciaEntregaTerceirizadaKm = 0;
   geoStatus.className = 'geo-status';
   geoStatus.textContent = '';
 }
@@ -705,6 +707,7 @@ async function calcularDistanciaEEndereco(){
   cidadeOrigemResolvida = '';
   cidadeDestinoResolvida = '';
   prioridadeRotaResolvida = '';
+  distanciaEntregaTerceirizadaKm = 0;
 
   btnGeo.disabled = true;
   btnGeo.textContent = 'Calculando...';
@@ -762,6 +765,7 @@ async function calcularDistanciaEEndereco(){
       // transportadora contratada.
       destinoEfetivoEndereco = dataEnt.filial_endereco;
       cidadeDestinoResolvida = dataEnt.filial_mais_proxima || '';
+      distanciaEntregaTerceirizadaKm = dataEnt.distancia_coleta_km || 0;
       mensagemColeta += `Entrega terceirizada: filial mais próxima do cliente é ${dataEnt.filial_mais_proxima} (${dataEnt.distancia_coleta_km} km até o cliente). `;
     }else{
       destinoEfetivoEndereco = await destinoEnderecoCtrl.obterEndereco();
@@ -977,6 +981,32 @@ form.addEventListener('submit', async (ev) => {
       linhaVolume.style.display = 'none';
     }
 
+    const linhaKmColeta = document.getElementById('linha-km-coleta');
+    if(data.entrada.distancia_coleta_km > 0){
+      document.getElementById('d-km-coleta').textContent = `${data.entrada.distancia_coleta_km} km`;
+      linhaKmColeta.style.display = 'flex';
+    }else{
+      linhaKmColeta.style.display = 'none';
+    }
+
+    document.getElementById('d-km-transferencia').textContent = `${data.entrada.distancia_km} km`;
+
+    const linhaKmEntrega = document.getElementById('linha-km-entrega');
+    if(distanciaEntregaTerceirizadaKm > 0){
+      document.getElementById('d-km-entrega').textContent = `${distanciaEntregaTerceirizadaKm} km`;
+      linhaKmEntrega.style.display = 'flex';
+    }else{
+      linhaKmEntrega.style.display = 'none';
+    }
+
+    const linhaKmRetorno = document.getElementById('linha-km-retorno');
+    if(calc.distancia_retorno_km > 0){
+      document.getElementById('d-km-retorno').textContent = `${calc.distancia_retorno_km} km`;
+      linhaKmRetorno.style.display = 'flex';
+    }else{
+      linhaKmRetorno.style.display = 'none';
+    }
+
     document.getElementById('d-custo-km').textContent = fmtBRL(calc.custo_km);
     document.getElementById('d-peso-exc').textContent = `${calc.peso_excedente_kg} kg`;
     document.getElementById('d-custo-peso-exc').textContent = fmtBRL(calc.custo_peso_excedente);
@@ -1026,8 +1056,7 @@ form.addEventListener('submit', async (ev) => {
 
     const linhaRetorno = document.getElementById('linha-retorno');
     if(calc.custo_retorno > 0){
-      document.getElementById('d-retorno').textContent =
-        `${fmtBRL(calc.custo_retorno)} (${calc.distancia_retorno_km} km vazio)`;
+      document.getElementById('d-retorno').textContent = fmtBRL(calc.custo_retorno);
       linhaRetorno.style.display = 'flex';
     }else{
       linhaRetorno.style.display = 'none';
@@ -2392,7 +2421,7 @@ async function carregarTabelaPrecos(){
 
     criarEditorTabela({
       containerId: 'precos-taxas-regionais', endpoint: 'taxas-regionais',
-      titulo: 'Taxas Regionais (só cobradas se origem OU destino for a cidade)',
+      titulo: 'Taxa Fluvial (RCA) — só cobrada se origem OU destino for a cidade',
       // Sem campoMultiplo aqui de propósito (mesma mudança feita em Coleta
       // com Preço Fixo): vírgula não cria mais uma linha por cidade, uma
       // linha só cobre várias cidades com o mesmo valor.
