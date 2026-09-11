@@ -2,16 +2,23 @@
 
 """Rota de cálculo de orçamento — pública, não exige login."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 import frete_service as fs
+from deps import usuario_atual
 from schemas import OrcamentoRequest
 
 router = APIRouter(tags=["Orçamento"])
 
 
 @router.post("/orcamento")
-def orcamento(payload: OrcamentoRequest):
+def orcamento(payload: OrcamentoRequest, usuario: dict | None = Depends(usuario_atual)):
+    # Margem de 30% é restrita a administradores -- a tela já esconde essa
+    # opção de quem não é admin, mas isso sozinho não impede uma requisição
+    # HTTP direta (sem passar pela UI) de pedir 30% mesmo sem sessão de
+    # admin, já que este endpoint continua público pras demais margens.
+    if payload.margem_lucro_pct == 30 and not (usuario and usuario["role"] == "admin"):
+        raise HTTPException(status_code=403, detail="Margem de lucro de 30% é restrita a administradores.")
     try:
         return fs.calcular_orcamento(
             peso=payload.peso,

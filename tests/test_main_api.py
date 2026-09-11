@@ -60,6 +60,35 @@ def test_orcamento_repassa_prioridade_rota_pra_memoria_de_calculo(client):
     assert r.json()["entrada"]["rota_obrigatoria"] == "Belem"
 
 
+def test_orcamento_margem_30_recusada_sem_login(client):
+    r = client.post("/orcamento", json=_orcamento_payload(margem_lucro_pct=30))
+    assert r.status_code == 403
+
+
+def test_orcamento_margem_30_recusada_pra_usuario_comum(client):
+    _login(client)
+    client.post("/admin/usuarios", json={
+        "nome": "Comum", "username": "comum", "senha": "senha1234", "role": "usuario",
+    })
+    client.post("/auth/logout")
+    _login(client, username="comum", senha="senha1234")
+    r = client.post("/orcamento", json=_orcamento_payload(margem_lucro_pct=30))
+    assert r.status_code == 403
+
+
+def test_orcamento_margem_30_permitida_pra_admin_logado(client):
+    _login(client)
+    r = client.post("/orcamento", json=_orcamento_payload(margem_lucro_pct=30))
+    assert r.status_code == 200
+    assert r.json()["calculos_intermediarios"]["margem_lucro_pct"] == 30
+
+
+def test_orcamento_margens_40_e_50_continuam_publicas_sem_login(client):
+    for margem in (40, 50):
+        r = client.post("/orcamento", json=_orcamento_payload(margem_lucro_pct=margem))
+        assert r.status_code == 200
+
+
 def test_login_com_admin_padrao(client):
     r = _login(client)
     assert r.json()["role"] == "admin"
