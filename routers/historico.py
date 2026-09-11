@@ -38,10 +38,17 @@ def salvar_historico(payload: HistoricoSalvarRequest, usuario: dict = Depends(ex
 @router.get("")
 def listar_historico(usuario: dict = Depends(exigir_login)):
     """Lista o histórico sem o snapshot completo (fica pesado) — use
-    GET /historico/{codigo} pra ver os detalhes de um orçamento específico."""
+    GET /historico/{codigo} pra ver os detalhes de um orçamento específico.
+
+    Usuário comum só vê os próprios orçamentos (criado_por == username);
+    administrador vê todos — evita que qualquer conta logada enxergue
+    cliente/endereço/valor de orçamentos de outras pessoas da empresa
+    (minimização de dados, LGPD)."""
     registros = db.listar_orcamentos_historico()
     for r in registros:
         r.pop("dados_json", None)
+    if usuario["role"] != "admin":
+        registros = [r for r in registros if (r.get("criado_por") or "") == usuario["username"]]
     return registros
 
 
@@ -59,13 +66,15 @@ def _buscar_historico_com_dados(codigo: str) -> dict:
 
 @router.get("/{codigo}")
 def obter_historico(codigo: str, usuario: dict = Depends(exigir_login)):
-    return _buscar_historico_com_dados(codigo)
+    registro = _buscar_historico_com_dados(codigo)
+    _exigir_dono_ou_admin(registro, usuario, "ver")
+    return registro
 
 
 def _exigir_dono_ou_admin(registro: dict, usuario: dict, acao: str) -> None:
     """Só quem salvou o registro (mesma conta logada) ou um administrador
-    pode excluir/editar — registros de bancos antigos (sem criado_por
-    preenchido) só são alterados por um admin."""
+    pode ver/excluir/editar — registros de bancos antigos (sem criado_por
+    preenchido) só ficam acessíveis a um admin."""
     dono = registro.get("criado_por") or ""
     if usuario["role"] != "admin" and dono != usuario["username"]:
         raise HTTPException(
@@ -123,6 +132,7 @@ def exportar_historico_planilha(codigo: str, usuario: dict = Depends(exigir_logi
     """Gera a planilha de orçamento (formato 'Modelo de Orçamento.xlsx')
     preenchida com os dados desse orçamento do histórico."""
     registro = _buscar_historico_com_dados(codigo)
+    _exigir_dono_ou_admin(registro, usuario, "exportá-lo")
     try:
         conteudo = export.gerar_planilha_orcamento(registro)
     except export.ExportacaoError as e:

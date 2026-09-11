@@ -65,6 +65,34 @@ def test_qtde_soma_a_quantidade_de_cada_linha_de_palete():
     assert ws.cell(row=6, column=8).value == 5  # H6: QTDE = 3 + 2, não 2 linhas
 
 
+def test_campos_de_texto_livre_nao_viram_formula_na_planilha():
+    # Regressão de segurança: "cliente" e outros campos de texto livre não
+    # podem ser gravados como fórmula quando começam com = + - @ (CWE-1236,
+    # injeção de fórmula) -- ver export_service._texto_seguro.
+    registro = _registro_teste()
+    registro["cliente"] = "=cmd|'/c calc'!A0"
+    registro["origem_resumo"] = "+SUM(A1:A10)"
+    registro["dados"]["resultado"]["entrada"]["transporte"] = "@evil()"
+    conteudo = export.gerar_planilha_orcamento(registro)
+
+    wb = openpyxl.load_workbook(BytesIO(conteudo))
+    ws = wb[wb.sheetnames[0]]
+
+    # D3 nunca começa com o caractere arriscado (tem o texto fixo "ORÇAMENTO
+    # DE FRETE - CLIENTE " sempre na frente), mas ainda assim confere que
+    # não virou fórmula e que o texto do cliente aparece íntegro.
+    assert ws["D3"].data_type == "s"
+    assert "CMD|'/C CALC'!A0" in ws["D3"].value
+
+    celula_origem = ws.cell(row=6, column=3)
+    assert celula_origem.data_type == "s"
+    assert not celula_origem.value.startswith(("=", "+", "-", "@"))
+
+    celula_transporte = ws.cell(row=6, column=14)
+    assert celula_transporte.data_type == "s"
+    assert not celula_transporte.value.startswith(("=", "+", "-", "@"))
+
+
 def test_gerar_planilha_sem_modelo_gera_erro(monkeypatch, tmp_path):
     monkeypatch.setattr(export, "MODELO_PATH", tmp_path / "nao-existe.xlsx")
     with pytest.raises(export.ExportacaoError):

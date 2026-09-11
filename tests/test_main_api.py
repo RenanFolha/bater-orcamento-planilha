@@ -144,6 +144,47 @@ def test_historico_soh_pode_ser_excluido_pelo_dono_ou_admin(client):
     assert r.status_code == 200
 
 
+def test_usuario_comum_so_ve_o_proprio_historico_na_listagem(client):
+    _login(client)
+    client.post("/admin/usuarios", json={
+        "nome": "Comum", "username": "comum", "senha": "senha1234", "role": "usuario",
+    })
+    client.post("/historico", json={"cliente": "Cliente Admin", "responsavel": "Admin"})
+
+    client.post("/auth/logout")
+    _login(client, username="comum", senha="senha1234")
+    r_comum = client.post("/historico", json={"cliente": "Cliente Comum", "responsavel": "Comum"})
+    codigo_comum = r_comum.json()["codigo"]
+
+    # usuário comum só vê o próprio orçamento na listagem, não o do admin
+    listagem = client.get("/historico").json()
+    assert [h["codigo"] for h in listagem] == [codigo_comum]
+
+    client.post("/auth/logout")
+    _login(client)
+    # admin continua vendo os dois
+    listagem_admin = client.get("/historico").json()
+    assert len(listagem_admin) == 2
+
+
+def test_usuario_comum_nao_ve_detalhe_de_historico_de_outro(client):
+    _login(client)
+    client.post("/admin/usuarios", json={
+        "nome": "Comum", "username": "comum", "senha": "senha1234", "role": "usuario",
+    })
+    r = client.post("/historico", json={"cliente": "Cliente Admin", "responsavel": "Admin"})
+    codigo_admin = r.json()["codigo"]
+
+    client.post("/auth/logout")
+    _login(client, username="comum", senha="senha1234")
+    assert client.get(f"/historico/{codigo_admin}").status_code == 403
+    assert client.get(f"/historico/{codigo_admin}/planilha").status_code == 403
+
+    client.post("/auth/logout")
+    _login(client)
+    assert client.get(f"/historico/{codigo_admin}").status_code == 200
+
+
 def test_usuario_comum_pode_excluir_o_proprio_historico(client):
     _login(client)
     client.post("/admin/usuarios", json={

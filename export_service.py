@@ -28,6 +28,22 @@ class ExportacaoError(Exception):
     """Erro ao gerar a planilha de exportação."""
 
 
+# Caracteres que o Excel (e o openpyxl, no caso de "=") interpretam como
+# início de fórmula -- campos como cliente/transportadora são texto livre
+# digitado por quem cota, então sem isso um valor como
+# "=cmd|'/c calc'!A0" viraria uma fórmula de verdade na planilha exportada
+# (injeção de fórmula/CSV injection, CWE-1236). Prefixar com um apóstrofo
+# neutraliza sem mudar o texto visível pra quem só está lendo os dados.
+_CARACTERES_FORMULA = ("=", "+", "-", "@")
+
+
+def _texto_seguro(valor) -> str:
+    texto = str(valor) if valor is not None else ""
+    if texto.startswith(_CARACTERES_FORMULA):
+        return f"'{texto}"
+    return texto
+
+
 def _data_criacao(criado_em: str) -> datetime:
     try:
         return datetime.fromisoformat(criado_em)
@@ -80,13 +96,15 @@ def gerar_planilha_orcamento(registro: dict) -> bytes:
     wb = openpyxl.load_workbook(MODELO_PATH)
     ws = wb[wb.sheetnames[0]]
 
-    ws["D3"] = f"ORÇAMENTO DE FRETE - CLIENTE {(registro.get('cliente') or '').upper()}".strip(" -")
+    ws["D3"] = _texto_seguro(
+        f"ORÇAMENTO DE FRETE - CLIENTE {(registro.get('cliente') or '').upper()}".strip(" -")
+    )
     ws["N3"] = _data_criacao(registro.get("criado_em"))
 
     ws.cell(row=_LINHA_DADOS, column=2, value=codigo)  # B: ID COTAÇÃO
-    ws.cell(row=_LINHA_DADOS, column=3, value=cidade_origem or registro.get("origem_resumo") or "")  # C
+    ws.cell(row=_LINHA_DADOS, column=3, value=_texto_seguro(cidade_origem or registro.get("origem_resumo") or ""))  # C
     ws.cell(row=_LINHA_DADOS, column=4, value=uf_origem)  # D
-    ws.cell(row=_LINHA_DADOS, column=5, value=cidade_destino or registro.get("destino_resumo") or "")  # E
+    ws.cell(row=_LINHA_DADOS, column=5, value=_texto_seguro(cidade_destino or registro.get("destino_resumo") or ""))  # E
     ws.cell(row=_LINHA_DADOS, column=6, value=uf_destino)  # F
     ws.cell(row=_LINHA_DADOS, column=7, value=registro.get("valor_mercadoria") or 0)  # G
     # soma a quantidade de cada linha de palete (uma linha pode
@@ -100,9 +118,9 @@ def gerar_planilha_orcamento(registro: dict) -> bytes:
     ws.cell(row=_LINHA_DADOS, column=12, value=registro.get("frete_total") or 0)  # L: FRETE FINAL
     prazo = resultado_final.get("prazo_estimado_dias_uteis")
     ws.cell(row=_LINHA_DADOS, column=13, value=f"{prazo} dias úteis" if prazo is not None else "")  # M
-    ws.cell(row=_LINHA_DADOS, column=14, value=entrada.get("transporte") or registro.get("veiculo") or "")  # N
-    ws.cell(row=_LINHA_DADOS, column=15, value="; ".join(observacoes))  # O
-    ws.cell(row=_LINHA_DADOS, column=18, value=assunto)  # R: ASSUNTO
+    ws.cell(row=_LINHA_DADOS, column=14, value=_texto_seguro(entrada.get("transporte") or registro.get("veiculo") or ""))  # N
+    ws.cell(row=_LINHA_DADOS, column=15, value=_texto_seguro("; ".join(observacoes)))  # O
+    ws.cell(row=_LINHA_DADOS, column=18, value=_texto_seguro(assunto))  # R: ASSUNTO
 
     buffer = BytesIO()
     wb.save(buffer)
