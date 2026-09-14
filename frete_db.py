@@ -1200,6 +1200,16 @@ def excluir_faixa_distancia(id_):
         conn.execute("DELETE FROM faixas_distancia WHERE id=?", (id_,))
 
 
+def contar_faixas_peso_fracionado() -> int:
+    with get_connection() as conn:
+        return conn.execute("SELECT COUNT(*) FROM faixas_peso WHERE tipo_frete = 'Fracionado'").fetchone()[0]
+
+
+def contar_faixas_distancia_fracionado() -> int:
+    with get_connection() as conn:
+        return conn.execute("SELECT COUNT(*) FROM faixas_distancia WHERE tipo_frete = 'Fracionado'").fetchone()[0]
+
+
 def listar_faixas_coleta() -> list[dict]:
     with get_connection() as conn:
         return [dict(r) for r in conn.execute("SELECT * FROM faixas_coleta ORDER BY de")]

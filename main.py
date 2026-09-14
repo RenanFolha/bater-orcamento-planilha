@@ -33,7 +33,7 @@ import db_conexao
 import frete_db as db
 import frete_service as fs
 import geo_service as geo
-from routers import admin_banco, admin_precos, admin_usuarios, historico, orcamento, parametros
+from routers import admin_banco, admin_precos, admin_usuarios, historico, orcamento, orcamento_fracionado, parametros
 from routers import auth as auth_router
 from routers import geo as geo_router
 
@@ -84,6 +84,7 @@ if ASSETS_DIR.exists():
 app.include_router(auth_router.router)
 app.include_router(geo_router.router)
 app.include_router(orcamento.router)
+app.include_router(orcamento_fracionado.router)
 app.include_router(historico.router)
 app.include_router(parametros.router)
 app.include_router(admin_precos.router)

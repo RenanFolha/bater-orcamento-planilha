@@ -54,7 +54,20 @@ const MEMORIA_CALCULO_CAMPOS = [
   {chave: 'peso_excedente_kg', rotulo: 'Peso excedente (acima do "até" do veículo)', tipo: 'kg'},
   {chave: 'valor_tonelada_excedente', rotulo: 'Valor por tonelada excedente', tipo: 'brl'},
   {chave: 'custo_peso_excedente', rotulo: 'Custo do peso excedente', tipo: 'brl'},
-  {chave: 'frete_base', rotulo: 'Frete base (custo/km + custo peso excedente)', tipo: 'brl'},
+  // Só presentes em orçamentos Fracionado (ver
+  // frete_service.calcular_orcamento_fracionado) -- ficam "—" nos
+  // orçamentos de Carreta Fechada, que não têm esses campos.
+  {chave: 'faixa_peso_de', rotulo: '[Fracionado] Faixa de peso — de (kg)', tipo: 'kg'},
+  {chave: 'faixa_peso_ate', rotulo: '[Fracionado] Faixa de peso — até (kg)', tipo: 'kg'},
+  {chave: 'tarifa_base_peso', rotulo: '[Fracionado] Tarifa base da faixa de peso', tipo: 'brl'},
+  {chave: 'custo_kg_adicional_peso', rotulo: '[Fracionado] Custo/kg adicional da faixa de peso', tipo: 'brl'},
+  {chave: 'custo_base_peso', rotulo: '[Fracionado] Custo base (peso)', tipo: 'brl'},
+  {chave: 'faixa_distancia_de', rotulo: '[Fracionado] Faixa de distância — de (km)', tipo: 'km'},
+  {chave: 'faixa_distancia_ate', rotulo: '[Fracionado] Faixa de distância — até (km)', tipo: 'km'},
+  {chave: 'taxa_fixa_distancia', rotulo: '[Fracionado] Taxa fixa da faixa de distância', tipo: 'brl'},
+  {chave: 'tarifa_km_distancia', rotulo: '[Fracionado] Tarifa/km da faixa de distância', tipo: 'brl'},
+  {chave: 'custo_base_distancia', rotulo: '[Fracionado] Custo base (distância)', tipo: 'brl'},
+  {chave: 'frete_base', rotulo: 'Frete base', tipo: 'brl'},
   {chave: 'frete_ajustado', rotulo: 'Frete ajustado', tipo: 'brl'},
 
   {header: 'Coleta e entrega'},
@@ -1264,6 +1277,478 @@ function coletarCustosExtras(){
   });
 }
 
+// ============================================================
+// Cotação Fracionado
+// ============================================================
+// Mesma lógica do formulário principal (categoria/transporte/SLA, taxas
+// adicionais/regionais, balsa, ICMS, PIS/COFINS, margem de lucro — ver
+// frete_service.calcular_orcamento_fracionado), mas o frete base vem de
+// faixa de peso + faixa de distância em vez de veículo escolhido pelo
+// peso. Primeira versão só cobre transferência entre filiais (sem CEP de
+// coleta/entrega no cliente, sem terceirizada, sem retorno vazio) — por
+// isso o formulário é mais enxuto que o principal, reaproveitando os
+// caches já carregados por ele (filiaisCache, transportesCache) em vez
+// de buscar tudo de novo.
+let fracInicializado = false;
+let fracUltimoOrcamento = null;
+let fracRotaValida = false;
+let fracCidadeOrigemResolvida = '';
+let fracCidadeDestinoResolvida = '';
+let fracPrioridadeRotaResolvida = '';
+
+function fracColetarPaletes(){
+  const comprimentos = document.querySelectorAll('.frac-palete-comprimento');
+  const larguras = document.querySelectorAll('.frac-palete-largura');
+  const alturas = document.querySelectorAll('.frac-palete-altura');
+  const quantidades = document.querySelectorAll('.frac-palete-quantidade');
+  return Array.from(comprimentos).map((el, i) => ({
+    comprimento: parseFloat(el.value) || 0,
+    largura: parseFloat(larguras[i].value) || 0,
+    altura: parseFloat(alturas[i].value) || 0,
+    quantidade: parseInt(quantidades[i].value, 10) || 1,
+  }));
+}
+
+function fracCriarLinhaPalete(){
+  const wrap = document.getElementById('frac-paletes-extra');
+  const row = document.createElement('div');
+  row.className = 'row2 row2-palete palete-row';
+  row.innerHTML = `
+    <div class="field">
+      <div class="idx">+</div>
+      <div><label>Comprimento (cm)</label><input type="number" class="frac-palete-comprimento" min="0.1" step="0.01" value="100" required></div>
+    </div>
+    <div class="field">
+      <div class="idx">+</div>
+      <div><label>Largura (cm)</label><input type="number" class="frac-palete-largura" min="0.1" step="0.01" value="100" required></div>
+    </div>
+    <div class="field">
+      <div class="idx">+</div>
+      <div><label>Altura (cm)</label><input type="number" class="frac-palete-altura" min="0.1" step="0.01" value="100" required></div>
+    </div>
+    <div class="field">
+      <div class="idx">×</div>
+      <div><label>Qtde</label><input type="number" class="frac-palete-quantidade" min="1" step="1" value="1" title="Quantidade de paletes idênticos com essas mesmas dimensões" required></div>
+    </div>
+    <button type="button" class="btn-icone excluir frac-btn-remove-palete" title="Remover este palete">&times;</button>
+  `;
+  wrap.appendChild(row);
+  row.querySelector('.frac-btn-remove-palete').addEventListener('click', () => { row.remove(); fracAtualizarCubagem(); });
+  row.querySelectorAll('input').forEach(inp => inp.addEventListener('input', fracAtualizarCubagem));
+}
+document.getElementById('frac-btn-add-palete').addEventListener('click', fracCriarLinhaPalete);
+
+function fracAtualizarCubagem(){
+  const info = document.getElementById('frac-cubagem-info');
+  const peso = pesoParaNumero(document.getElementById('frac-peso').value) || 0;
+  const paletes = fracColetarPaletes().filter(p => p.comprimento > 0 && p.largura > 0 && p.altura > 0);
+  const nomeTransporte = document.getElementById('frac-transporte').value;
+  // Reaproveita transportesCache do formulário principal (já carregado
+  // em inicializarFormulario, que roda sempre no load da página) -- sem
+  // isso teria que buscar /parametros/transportes de novo aqui.
+  const transp = transportesCache.find(t => t.nome === nomeTransporte);
+  if(!transp || !transp.fator_cubagem || paletes.length === 0){ info.textContent = ''; return; }
+  const volumeCm3Total = paletes.reduce((soma, p) => soma + (p.comprimento * p.largura * p.altura * p.quantidade), 0);
+  const volumeM3Total = volumeCm3Total / 1000000;
+  const pesoCubado = volumeM3Total * transp.fator_cubagem;
+  const pesoConsiderado = Math.max(peso, pesoCubado);
+  const qualPesa = pesoCubado > peso ? 'cubado' : 'real';
+  const totalPaletes = paletes.reduce((soma, p) => soma + p.quantidade, 0);
+  info.className = 'cep-info ok';
+  info.textContent =
+    `Volume total: ${volumeM3Total.toFixed(3)} m³ (${totalPaletes} palete${totalPaletes > 1 ? 's' : ''}) — ` +
+    `Cubagem: ${pesoCubado.toFixed(2)} kg (fator ${transp.fator_cubagem} do transporte "${transp.nome}") — ` +
+    `peso considerado no cálculo: ${pesoConsiderado.toFixed(2)} kg (peso ${qualPesa}).`;
+}
+['frac-peso', 'frac-comprimento', 'frac-largura', 'frac-altura', 'frac-quantidade'].forEach(id => {
+  document.getElementById(id).addEventListener('input', fracAtualizarCubagem);
+});
+document.getElementById('frac-transporte').addEventListener('change', fracAtualizarCubagem);
+
+async function fracInicializarFormulario(){
+  if(fracInicializado) return;
+  const btn = document.getElementById('frac-btn-calc');
+  const errorBoxFrac = document.getElementById('frac-error-box');
+  btn.disabled = true;
+  btn.textContent = 'Carregando...';
+  try{
+    await Promise.all([
+      carregarOpcoes('categorias', document.getElementById('frac-categoria')),
+      carregarOpcoes('transportes', document.getElementById('frac-transporte')),
+      carregarOpcoes('slas', document.getElementById('frac-sla')),
+      carregarOpcoes('veiculos', document.getElementById('frac-veiculo')),
+    ]);
+    // filiaisCache já foi carregado pelo formulário principal (ver
+    // carregarFiliais em inicializarFormulario) -- só preenche os
+    // seletores daqui com o que já está em memória.
+    preencherOpcoes(document.getElementById('frac-origem-filial'), filiaisCache);
+    preencherOpcoes(document.getElementById('frac-destino-filial'), filiaisCache);
+    const categoriaSel = document.getElementById('frac-categoria');
+    if([...categoriaSel.options].some(o => o.value === 'Geral')) categoriaSel.value = 'Geral';
+    fracAtualizarCubagem();
+    fracInicializado = true;
+  }catch(e){
+    errorBoxFrac.textContent = 'Não foi possível carregar os parâmetros. Verifique se a API está ativa.';
+    errorBoxFrac.classList.add('show');
+  }finally{
+    btn.disabled = false;
+    btn.textContent = 'Calcular frete';
+  }
+}
+
+const fracBtnGeo = document.getElementById('frac-btn-geo');
+const fracGeoStatus = document.getElementById('frac-geo-status');
+const fracDistanciaInput = document.getElementById('frac-distancia');
+const fracPedagioInput = document.getElementById('frac-pedagio');
+const fracCampoPedagio = document.getElementById('frac-campo-pedagio');
+
+function fracInvalidarRotaCalculada(){
+  fracRotaValida = false;
+  fracCidadeOrigemResolvida = '';
+  fracCidadeDestinoResolvida = '';
+  fracPrioridadeRotaResolvida = '';
+  fracGeoStatus.className = 'geo-status';
+  fracGeoStatus.textContent = '';
+}
+document.getElementById('frac-origem-filial').addEventListener('change', fracInvalidarRotaCalculada);
+document.getElementById('frac-destino-filial').addEventListener('change', fracInvalidarRotaCalculada);
+document.getElementById('frac-veiculo').addEventListener('change', fracInvalidarRotaCalculada);
+fracDistanciaInput.addEventListener('input', () => { fracRotaValida = true; });
+
+async function fracCalcularDistancia(){
+  fracGeoStatus.className = 'geo-status';
+  fracGeoStatus.textContent = '';
+  fracRotaValida = false;
+  fracCidadeOrigemResolvida = '';
+  fracCidadeDestinoResolvida = '';
+  fracPrioridadeRotaResolvida = '';
+
+  fracBtnGeo.disabled = true;
+  fracBtnGeo.textContent = 'Calculando...';
+  fracGeoStatus.textContent = 'Consultando endereços...';
+
+  try{
+    const origemFilial = document.getElementById('frac-origem-filial').value;
+    const destinoFilial = document.getElementById('frac-destino-filial').value;
+    const veiculo = document.getElementById('frac-veiculo').value;
+    const origemEndereco = enderecoDaFilial(origemFilial);
+    const destinoEndereco = enderecoDaFilial(destinoFilial);
+    fracCidadeOrigemResolvida = origemFilial;
+    fracCidadeDestinoResolvida = destinoFilial;
+
+    const res = await fetch(`${API_BASE}/geo/distancia`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      // veiculo aqui já vem do seletor (referência escolhida direto pela
+      // pessoa) -- tem prioridade sobre a inferência por peso no backend
+      // (ver DistanciaRequest.veiculo em schemas.py).
+      body: JSON.stringify({origem: origemEndereco, destino: destinoEndereco, veiculo}),
+    });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.detail || 'Não foi possível calcular a distância.');
+
+    fracDistanciaInput.value = data.distancia_km;
+    fracPrioridadeRotaResolvida = data.prioridade_rota || '';
+    const horas = Math.floor(data.duracao_min / 60);
+    const minutos = Math.round(data.duracao_min % 60);
+    const tempoTexto = horas > 0 ? `${horas}h${minutos.toString().padStart(2,'0')}` : `${minutos} min`;
+
+    let mensagemPedagio = '';
+    if(typeof data.pedagio_valor === 'number'){
+      fracPedagioInput.value = formatarValorMoeda(data.pedagio_valor);
+      fracCampoPedagio.style.display = '';
+      mensagemPedagio = (data.pedagio_pracas && data.pedagio_pracas.length)
+        ? ` Pedágio: ${fmtBRL(data.pedagio_valor)} (${data.pedagio_pracas.join(', ')}).`
+        : ` Pedágio estimado: ${fmtBRL(data.pedagio_valor)}.`;
+    }else{
+      fracCampoPedagio.style.display = 'none';
+      fracPedagioInput.value = formatarValorMoeda(0);
+    }
+
+    const mensagemPrioridade = data.prioridade_rota ? ` Rota via ${data.prioridade_rota} (prioridade de rota).` : '';
+    fracGeoStatus.classList.add('ok');
+    fracGeoStatus.textContent = `Distância: ${data.distancia_km} km (≈ ${tempoTexto}).${mensagemPrioridade}${mensagemPedagio} Campos preenchidos — edite se precisar.`;
+    fracRotaValida = true;
+    return true;
+  }catch(err){
+    fracGeoStatus.classList.add('err');
+    fracGeoStatus.textContent = `${err.message} Você pode digitar a distância manualmente no campo abaixo.`;
+    return false;
+  }finally{
+    fracBtnGeo.disabled = false;
+    fracBtnGeo.textContent = 'Calcular distância';
+  }
+}
+fracBtnGeo.addEventListener('click', () => { fracCalcularDistancia(); });
+
+document.getElementById('frac-toggle-servico').addEventListener('click', () => {
+  const bloco = document.getElementById('frac-bloco-servico');
+  const icon = document.getElementById('frac-icon-servico');
+  const abrindo = bloco.style.display === 'none';
+  bloco.style.display = abrindo ? '' : 'none';
+  icon.classList.toggle('ti-chevron-right', !abrindo);
+  icon.classList.toggle('ti-chevron-down', abrindo);
+});
+
+function fracIdValorCustoExtra(categoria){
+  return `frac-custo-extra-valor-${categoria.replace(/\s+/g, '-')}`;
+}
+document.getElementById('frac-custos-extras-categorias').addEventListener('click', (ev) => {
+  const btn = ev.target.closest('.seg-btn');
+  if(!btn) return;
+  const categoria = btn.dataset.categoria;
+  const ativo = btn.classList.toggle('active');
+  const linhaId = fracIdValorCustoExtra(categoria);
+  if(ativo){
+    const div = document.createElement('div');
+    div.className = 'field';
+    div.id = linhaId;
+    div.innerHTML = `
+      <div class="idx">·</div>
+      <div>
+        <label>${esc(categoria)} (R$)</label>
+        <input type="text" inputmode="decimal" value="0,00" oninput="formatarMoedaDigitando(this)">
+      </div>
+    `;
+    document.getElementById('frac-lista-valores-custos-extras').appendChild(div);
+  }else{
+    document.getElementById(linhaId)?.remove();
+  }
+});
+function fracColetarCustosExtras(){
+  return [...document.querySelectorAll('#frac-custos-extras-categorias .seg-btn.active')].map(btn => {
+    const categoria = btn.dataset.categoria;
+    const input = document.getElementById(fracIdValorCustoExtra(categoria))?.querySelector('input');
+    return {categoria, valor: valorMoedaParaNumero(input ? input.value : '0')};
+  });
+}
+
+document.getElementById('frac-btn-toggle-memoria').addEventListener('click', () => {
+  const bloco = document.getElementById('frac-bloco-memoria-calculo');
+  const label = document.getElementById('frac-btn-toggle-memoria-label');
+  const abrindo = bloco.style.display === 'none';
+  bloco.style.display = abrindo ? '' : 'none';
+  label.textContent = abrindo ? 'Esconder todas as variáveis do cálculo' : 'Ver todas as variáveis do cálculo';
+});
+
+document.getElementById('frac-form-frete').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const errorBoxFrac = document.getElementById('frac-error-box');
+  const btnFrac = document.getElementById('frac-btn-calc');
+  const statusTagFrac = document.getElementById('frac-status-tag');
+  errorBoxFrac.classList.remove('show');
+  errorBoxFrac.textContent = '';
+  document.getElementById('frac-stamp').classList.remove('show');
+  fracUltimoOrcamento = null;
+  document.getElementById('frac-historico-salvar-status').textContent = '';
+
+  if(!fracRotaValida){
+    const ok = await fracCalcularDistancia();
+    if(!ok){
+      errorBoxFrac.textContent = 'Não foi possível calcular a distância automaticamente. Confira as filiais escolhidas (ou preencha a distância manualmente) e clique em "Calcular frete" de novo.';
+      errorBoxFrac.classList.add('show');
+      return;
+    }
+  }
+
+  const paletes = fracColetarPaletes();
+  if(paletes.some(p => p.comprimento <= 0 || p.largura <= 0 || p.altura <= 0)){
+    errorBoxFrac.textContent = 'Preencha comprimento, largura e altura de todos os paletes.';
+    errorBoxFrac.classList.add('show');
+    return;
+  }
+
+  const payload = {
+    peso: pesoParaNumero(document.getElementById('frac-peso').value),
+    paletes,
+    distancia: parseFloat(fracDistanciaInput.value),
+    pedagio: valorMoedaParaNumero(fracPedagioInput.value),
+    cidade_origem: fracCidadeOrigemResolvida,
+    cidade_destino: fracCidadeDestinoResolvida,
+    prioridade_rota: fracPrioridadeRotaResolvida,
+    valor_mercadoria: valorMoedaParaNumero(document.getElementById('frac-valor_mercadoria').value),
+    categoria: document.getElementById('frac-categoria').value,
+    transporte: document.getElementById('frac-transporte').value,
+    sla: document.getElementById('frac-sla').value,
+    veiculo: document.getElementById('frac-veiculo').value,
+    custos_extras: fracColetarCustosExtras(),
+    margem_lucro_pct: parseFloat(document.getElementById('frac-margem_lucro').value),
+  };
+
+  btnFrac.disabled = true;
+  btnFrac.textContent = 'Calculando...';
+  statusTagFrac.textContent = 'Processando';
+
+  try{
+    const res = await fetch(`${API_BASE}/orcamento/fracionado`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.detail || 'Não foi possível calcular o frete.');
+
+    const calc = data.calculos_intermediarios;
+    const result = data.resultado;
+    renderizarMemoriaCalculo(data, 'frac-bloco-memoria-calculo');
+
+    document.getElementById('frac-out-total').textContent = fmtBRL(result.frete_total);
+    document.getElementById('frac-out-veiculo').textContent = data.entrada.veiculo;
+    document.getElementById('frac-out-prazo').textContent = `${result.prazo_estimado_dias_uteis} dias úteis`;
+
+    const fmtFaixaAte = (ate) => (ate >= 999999 ? '∞' : ate);
+    document.getElementById('frac-d-peso').textContent = `${calc.peso_considerado_kg} kg`;
+    document.getElementById('frac-d-faixa-peso').textContent =
+      `${calc.faixa_peso_de}–${fmtFaixaAte(calc.faixa_peso_ate)} kg (base ${fmtBRL(calc.tarifa_base_peso)} + ${fmtBRL(calc.custo_kg_adicional_peso)}/kg acima de ${calc.faixa_peso_de}kg)`;
+    document.getElementById('frac-d-custo-peso').textContent = fmtBRL(calc.custo_base_peso);
+    document.getElementById('frac-d-km').textContent = `${calc.distancia_faturavel_km} km`;
+    document.getElementById('frac-d-faixa-distancia').textContent =
+      `${calc.faixa_distancia_de}–${fmtFaixaAte(calc.faixa_distancia_ate)} km (fixa ${fmtBRL(calc.taxa_fixa_distancia)} + ${fmtBRL(calc.tarifa_km_distancia)}/km)`;
+    document.getElementById('frac-d-custo-distancia').textContent = fmtBRL(calc.custo_base_distancia);
+    document.getElementById('frac-d-base').textContent = fmtBRL(calc.frete_base);
+    document.getElementById('frac-d-ajustado').textContent = fmtBRL(calc.frete_ajustado);
+
+    const linhaPedagio = document.getElementById('frac-linha-pedagio');
+    if(calc.pedagio > 0){
+      document.getElementById('frac-d-pedagio').textContent = fmtBRL(calc.pedagio);
+      linhaPedagio.style.display = 'flex';
+    }else{ linhaPedagio.style.display = 'none'; }
+
+    const linhaTaxasRegionais = document.getElementById('frac-linha-taxas-regionais');
+    if(calc.custo_taxas_regionais > 0){
+      document.getElementById('frac-d-taxas-regionais').textContent = fmtBRL(calc.custo_taxas_regionais);
+      linhaTaxasRegionais.style.display = 'flex';
+    }else{ linhaTaxasRegionais.style.display = 'none'; }
+
+    const linhaTaxaBalsa = document.getElementById('frac-linha-taxa-balsa');
+    if(calc.custo_balsa > 0 && calc.taxa_balsa){
+      document.getElementById('frac-d-taxa-balsa').textContent = fmtBRL(calc.custo_balsa);
+      linhaTaxaBalsa.title = `${calc.taxa_balsa.cidade_origem} → ${calc.taxa_balsa.cidade_destino} (${calc.taxa_balsa.veiculo})`;
+      linhaTaxaBalsa.style.display = 'flex';
+    }else{ linhaTaxaBalsa.style.display = 'none'; }
+
+    const linhaTaxas = document.getElementById('frac-linha-taxas');
+    const blocoDetalheTaxas = document.getElementById('frac-bloco-detalhe-taxas');
+    if(calc.custo_taxas_adicionais > 0){
+      document.getElementById('frac-d-taxas').textContent = fmtBRL(calc.custo_taxas_adicionais);
+      linhaTaxas.style.display = 'flex';
+      document.getElementById('frac-lista-detalhe-taxas').innerHTML = calc.taxas_adicionais.map(t => {
+        const rotulo = t.tipo === 'percentual' ? `${esc(t.nome)} (${t.valor_configurado}%)` : esc(t.nome);
+        return `<div class="line"><span>${rotulo}</span><span>${fmtBRL(t.valor_aplicado)}</span></div>`;
+      }).join('');
+      blocoDetalheTaxas.style.display = 'block';
+    }else{
+      linhaTaxas.style.display = 'none';
+      blocoDetalheTaxas.style.display = 'none';
+    }
+
+    const linhaCustosExtras = document.getElementById('frac-linha-custos-extras');
+    const blocoDetalheCustosExtras = document.getElementById('frac-bloco-detalhe-custos-extras');
+    if(calc.custo_extra_total > 0){
+      document.getElementById('frac-d-custos-extras').textContent = fmtBRL(calc.custo_extra_total);
+      linhaCustosExtras.style.display = 'flex';
+      document.getElementById('frac-lista-detalhe-custos-extras').innerHTML = (calc.custos_extras || []).map(c =>
+        `<div class="line"><span>${esc(c.categoria)}</span><span>${fmtBRL(c.valor_aplicado)}</span></div>`
+      ).join('');
+      blocoDetalheCustosExtras.style.display = 'block';
+    }else{
+      linhaCustosExtras.style.display = 'none';
+      blocoDetalheCustosExtras.style.display = 'none';
+    }
+
+    const linhaMargemLucro = document.getElementById('frac-linha-margem-lucro');
+    if(calc.valor_margem_lucro > 0){
+      document.getElementById('frac-d-margem-lucro').textContent = `${fmtBRL(calc.valor_margem_lucro)} (${calc.margem_lucro_pct}%)`;
+      linhaMargemLucro.style.display = 'flex';
+    }else{ linhaMargemLucro.style.display = 'none'; }
+
+    const linhaPisCofins = document.getElementById('frac-linha-pis-cofins');
+    if(calc.valor_pis_cofins > 0){
+      document.getElementById('frac-d-pis-cofins').textContent = fmtBRL(calc.valor_pis_cofins);
+      linhaPisCofins.title = `${calc.aliquota_pis_cofins_pct}%, aplicado por dentro sobre ${fmtBRL(calc.frete_sem_pis_cofins)}`;
+      linhaPisCofins.style.display = 'flex';
+    }else{ linhaPisCofins.style.display = 'none'; }
+
+    const linhaIcms = document.getElementById('frac-linha-icms');
+    if(calc.valor_icms > 0){
+      document.getElementById('frac-d-icms').textContent = fmtBRL(calc.valor_icms);
+      linhaIcms.title = `${calc.uf_origem_icms} → ${calc.uf_destino_icms} (${calc.aliquota_icms_pct}%, aplicado por dentro sobre ${fmtBRL(calc.frete_sem_icms)})`;
+      linhaIcms.style.display = 'flex';
+    }else{ linhaIcms.style.display = 'none'; }
+
+    document.getElementById('frac-d-total').textContent = fmtBRL(result.frete_total);
+
+    document.getElementById('frac-result-empty').style.display = 'none';
+    document.getElementById('frac-result-content').style.display = 'block';
+    requestAnimationFrame(() => document.getElementById('frac-stamp').classList.add('show'));
+    statusTagFrac.textContent = 'Calculado';
+
+    fracUltimoOrcamento = {payload, resultado: data};
+  }catch(err){
+    errorBoxFrac.textContent = err.message;
+    errorBoxFrac.classList.add('show');
+    statusTagFrac.textContent = 'Erro';
+  }finally{
+    btnFrac.disabled = false;
+    btnFrac.textContent = 'Calcular frete';
+  }
+});
+
+document.getElementById('frac-btn-salvar-historico').addEventListener('click', async () => {
+  const statusEl = document.getElementById('frac-historico-salvar-status');
+  const cliente = document.getElementById('frac-hist-cliente').value.trim();
+  const responsavel = document.getElementById('frac-hist-responsavel').value.trim();
+
+  if(!fracUltimoOrcamento){
+    statusEl.style.color = 'var(--err)';
+    statusEl.textContent = 'Calcule um orçamento antes de salvar.';
+    return;
+  }
+  if(!currentUser){
+    statusEl.style.color = 'var(--err)';
+    statusEl.textContent = 'Faça login para salvar no histórico (menu "Entrar").';
+    return;
+  }
+  if(!cliente || !responsavel){
+    statusEl.style.color = 'var(--err)';
+    statusEl.textContent = 'Preencha Cliente e Responsável (lá no topo do formulário) antes de salvar.';
+    return;
+  }
+
+  const btnSalvar = document.getElementById('frac-btn-salvar-historico');
+  btnSalvar.disabled = true;
+  statusEl.style.color = 'var(--text-dim)';
+  statusEl.textContent = 'Salvando...';
+
+  try{
+    const {payload, resultado} = fracUltimoOrcamento;
+    const res = await fetch(`${API_BASE}/historico`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        cliente, responsavel,
+        origem_resumo: document.getElementById('frac-origem-filial').value,
+        destino_resumo: document.getElementById('frac-destino-filial').value,
+        veiculo: resultado.entrada.veiculo,
+        distancia_km: resultado.entrada.distancia_km,
+        valor_mercadoria: resultado.entrada.valor_mercadoria,
+        frete_total: resultado.resultado.frete_total,
+        dados: {payload, resultado},
+      }),
+    });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.detail || 'Erro ao salvar no histórico.');
+
+    statusEl.style.color = 'var(--ok)';
+    statusEl.textContent = `Salvo como ${data.codigo}.`;
+  }catch(e){
+    statusEl.style.color = 'var(--err)';
+    statusEl.textContent = e.message;
+  }finally{
+    btnSalvar.disabled = false;
+  }
+});
+
 // Seções recolhíveis da Tabela de Preços (Cadastros Gerais, Veículos e
 // Tarifas, Coleta e Entrega, Rotas, Pedágio, Taxas e Impostos) --
 // diferente de Serviço/Custos Extras no formulário de orçamento, aqui
@@ -1347,11 +1832,12 @@ document.getElementById('btn-salvar-historico').addEventListener('click', async 
 });
 
 // ============================================================
-// Navegação entre views (Novo Orçamento / Tabela de Preços / etc.)
+// Navegação entre views (Cotação Lotação / Tabela de Preços / etc.)
 // ============================================================
 
 const views = {
   orcamento: document.getElementById('view-orcamento'),
+  'orcamento-fracionado': document.getElementById('view-orcamento-fracionado'),
   precos: document.getElementById('view-precos'),
   historico: document.getElementById('view-historico'),
   config: document.getElementById('view-config'),
@@ -1367,6 +1853,7 @@ function mostrarView(viewName){
   document.getElementById('view-historico-detalhe').style.display = 'none';
   views[viewName].style.display = 'block';
 
+  if(viewName === 'orcamento-fracionado') fracInicializarFormulario();
   if(viewName === 'precos') carregarTabelaPrecos();
   if(viewName === 'historico') carregarHistorico();
   if(viewName === 'config'){ carregarConfiguracoes(); carregarBancoDadosConfig(); }
@@ -1402,13 +1889,18 @@ let currentUser = null;
 // selecionada, volta pro padrão de 40%). Chamado sempre que o estado de
 // login muda (ver atualizarUIAuth), não só na carga inicial da página.
 function atualizarOpcaoMargem30(admin){
-  const opcao30 = document.getElementById('opcao-margem-30');
-  const selectMargem = document.getElementById('margem_lucro');
-  opcao30.style.display = admin ? '' : 'none';
-  opcao30.disabled = !admin;
-  if(!admin && selectMargem.value === '30'){
-    selectMargem.value = '40';
-  }
+  // Mesma opção de 30% existe nos dois formulários (orçamento normal e
+  // Fracionado, ver 'opcao-margem-30'/'frac-opcao-margem-30') — os dois
+  // seguem a mesma regra de visibilidade.
+  [['opcao-margem-30', 'margem_lucro'], ['frac-opcao-margem-30', 'frac-margem_lucro']].forEach(([idOpcao, idSelect]) => {
+    const opcao30 = document.getElementById(idOpcao);
+    const selectMargem = document.getElementById(idSelect);
+    opcao30.style.display = admin ? '' : 'none';
+    opcao30.disabled = !admin;
+    if(!admin && selectMargem.value === '30'){
+      selectMargem.value = '40';
+    }
+  });
 }
 
 function atualizarUIAuth(){
@@ -1436,7 +1928,7 @@ function atualizarUIAuth(){
   }
 
   // Se a view atual exigia login/admin e o usuário deixou de ter acesso
-  // (ex: fez logout com "Histórico" aberto), volta pro Novo Orçamento.
+  // (ex: fez logout com "Histórico" aberto), volta pra Cotação Lotação.
   const viewAtual = Object.entries(views).find(([, el]) => el && el.style.display !== 'none');
   if(viewAtual){
     const [nomeView] = viewAtual;
@@ -2136,6 +2628,97 @@ async function criarEditorTabela({containerId, endpoint, titulo, colunas, campoM
 
 let precosCarregado = false;
 
+// Busca que varre de uma vez todas as tabelas (e o card de PIS/COFINS) da
+// Tabela de Preços -- útil porque a página tem mais de 15 tabelas
+// espalhadas em 6 seções recolhíveis, seria fácil perder algo procurando
+// manualmente seção por seção. Ao digitar, abre e mostra só as seções
+// com resultado; ao limpar, devolve cada seção pro estado (aberta ou
+// fechada) que já estava antes de começar a buscar.
+let precosBuscaEstadoAnterior = null; // null = não tá em modo busca
+
+function filtrarTabelaPrecos(){
+  const termo = document.getElementById('precos-busca').value.trim().toLowerCase();
+  const secoes = [...document.querySelectorAll('.precos-section-toggle')];
+  const avisoVazio = document.getElementById('precos-busca-vazio');
+
+  if(!termo){
+    document.querySelectorAll('#view-precos tbody tr').forEach(tr => { tr.style.display = ''; });
+    document.querySelectorAll('#view-precos .precos-card').forEach(card => { card.style.display = ''; });
+    secoes.forEach(header => {
+      const bloco = document.getElementById(header.dataset.target);
+      const icon = header.querySelector('.precos-section-icon');
+      header.style.display = '';
+      const abrir = precosBuscaEstadoAnterior ? precosBuscaEstadoAnterior[header.dataset.target] : (bloco.style.display !== 'none');
+      bloco.style.display = abrir ? '' : 'none';
+      icon.classList.toggle('ti-chevron-down', abrir);
+      icon.classList.toggle('ti-chevron-right', !abrir);
+    });
+    precosBuscaEstadoAnterior = null;
+    avisoVazio.style.display = 'none';
+    return;
+  }
+
+  if(precosBuscaEstadoAnterior === null){
+    // Primeira letra digitada: guarda o estado atual de cada seção pra
+    // devolver depois, quando a busca for limpa.
+    precosBuscaEstadoAnterior = {};
+    secoes.forEach(header => {
+      const bloco = document.getElementById(header.dataset.target);
+      precosBuscaEstadoAnterior[header.dataset.target] = bloco.style.display !== 'none';
+    });
+  }
+
+  let totalVisivel = 0;
+  secoes.forEach(header => {
+    const bloco = document.getElementById(header.dataset.target);
+    const icon = header.querySelector('.precos-section-icon');
+    let algumCardVisivel = false;
+
+    bloco.querySelectorAll(':scope > .precos-card').forEach(card => {
+      const tabela = card.querySelector('.tabela-editor');
+      let cardBate;
+
+      if(tabela){
+        const titulo = card.querySelector('.card-head h2')?.textContent.toLowerCase() || '';
+        const tituloBate = titulo.includes(termo);
+        let algumaLinhaBate = false;
+
+        card.querySelectorAll('tbody tr').forEach(tr => {
+          if(tr.classList.contains('linha-nova')){ tr.style.display = ''; return; } // linha de adicionar fica sempre disponível
+          if(tituloBate){ tr.style.display = ''; algumaLinhaBate = true; return; }
+          const texto = [...tr.querySelectorAll('input, select')]
+            .map(el => el.tagName === 'SELECT' ? (el.selectedOptions[0]?.textContent || '') : el.value)
+            .join(' ').toLowerCase();
+          const bate = texto.includes(termo);
+          tr.style.display = bate ? '' : 'none';
+          if(bate) algumaLinhaBate = true;
+        });
+
+        cardBate = tituloBate || algumaLinhaBate;
+      }else{
+        // Cards sem tabela (ex: PIS/COFINS) -- casa pelo texto do card
+        // inteiro (labels e observação).
+        cardBate = card.textContent.toLowerCase().includes(termo);
+      }
+
+      card.style.display = cardBate ? '' : 'none';
+      if(cardBate) algumCardVisivel = true;
+    });
+
+    header.style.display = algumCardVisivel ? '' : 'none';
+    bloco.style.display = algumCardVisivel ? '' : 'none';
+    if(algumCardVisivel){
+      icon.classList.add('ti-chevron-down');
+      icon.classList.remove('ti-chevron-right');
+      totalVisivel++;
+    }
+  });
+
+  avisoVazio.style.display = totalVisivel === 0 ? '' : 'none';
+}
+
+document.getElementById('precos-busca').addEventListener('input', filtrarTabelaPrecos);
+
 // ============================================================
 // Histórico de orçamentos
 // ============================================================
@@ -2686,6 +3269,30 @@ async function carregarTabelaPrecos(){
       colunas: [
         {campo: 'de', label: 'De (km)', tipo: 'number'},
         {campo: 'ate', label: 'Até (km)', tipo: 'number'},
+        {campo: 'taxa_fixa', label: 'Taxa fixa (R$)', tipo: 'moeda'},
+        {campo: 'tarifa_km', label: 'Tarifa/km (R$)', tipo: 'moeda'},
+        {campo: 'observacao', label: 'Observação', tipo: 'text'},
+      ],
+    }),
+
+    criarEditorTabela({
+      containerId: 'precos-faixas-peso-fracionado', endpoint: 'faixas-peso-fracionado',
+      titulo: 'Faixas de Peso (Fracionado) — frete base = tarifa base + custo/kg acima do "De"',
+      colunas: [
+        {campo: 'de', label: 'De (kg)', tipo: 'number', step: '1'},
+        {campo: 'ate', label: 'Até (kg)', tipo: 'number', step: '1'},
+        {campo: 'tarifa_base', label: 'Tarifa base (R$)', tipo: 'moeda'},
+        {campo: 'custo_kg_adicional', label: 'Custo/kg adicional (R$)', tipo: 'moeda'},
+        {campo: 'observacao', label: 'Observação', tipo: 'text'},
+      ],
+    }),
+
+    criarEditorTabela({
+      containerId: 'precos-faixas-distancia-fracionado', endpoint: 'faixas-distancia-fracionado',
+      titulo: 'Faixas de Distância (Fracionado) — frete base = taxa fixa + tarifa/km × distância',
+      colunas: [
+        {campo: 'de', label: 'De (km)', tipo: 'number', step: '1'},
+        {campo: 'ate', label: 'Até (km)', tipo: 'number', step: '1'},
         {campo: 'taxa_fixa', label: 'Taxa fixa (R$)', tipo: 'moeda'},
         {campo: 'tarifa_km', label: 'Tarifa/km (R$)', tipo: 'moeda'},
         {campo: 'observacao', label: 'Observação', tipo: 'text'},

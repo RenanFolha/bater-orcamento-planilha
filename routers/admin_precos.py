@@ -16,7 +16,9 @@ from schemas import (
     ColetaCidadeFixaIn,
     DistanciaFixaIn,
     FaixaColetaIn,
+    FaixaDistanciaFracionadoIn,
     FaixaKmVeiculoIn,
+    FaixaPesoIn,
     FilialIn,
     ImportarPracasPedagioRequest,
     PedagioRotaIn,
@@ -490,4 +492,55 @@ def admin_excluir_sla(id_: int, usuario: dict = Depends(exigir_admin)):
     return admin_excluir(
         db.excluir_sla, id_, db.contar_slas,
         "Não é possível excluir o último SLA cadastrado — o sistema precisa de pelo menos um.",
+    )
+
+
+# Fracionado -- tipo_frete fixo em "Fracionado" nos dois schemas (ver
+# schemas.py), então essas rotas só listam/criam/editam as linhas do
+# Fracionado; as linhas legadas de "Carreta Fechada" em faixas_peso/
+# faixas_distancia (não usadas em nenhum cálculo, ver frete_service.py)
+# ficam de fora, sem precisar expor esse campo na tela.
+@router.get("/faixas-peso-fracionado")
+def admin_listar_faixas_peso_fracionado(usuario: dict = Depends(exigir_admin)):
+    return [f for f in db.listar_faixas_peso() if f["tipo_frete"] == "Fracionado"]
+
+
+@router.post("/faixas-peso-fracionado")
+def admin_criar_faixa_peso_fracionado(payload: FaixaPesoIn, usuario: dict = Depends(exigir_admin)):
+    return admin_criar(db.inserir_faixa_peso, payload, "")
+
+
+@router.put("/faixas-peso-fracionado/{id_}")
+def admin_atualizar_faixa_peso_fracionado(id_: int, payload: FaixaPesoIn, usuario: dict = Depends(exigir_admin)):
+    return admin_atualizar(db.atualizar_faixa_peso, id_, payload, "")
+
+
+@router.delete("/faixas-peso-fracionado/{id_}")
+def admin_excluir_faixa_peso_fracionado(id_: int, usuario: dict = Depends(exigir_admin)):
+    return admin_excluir(
+        db.excluir_faixa_peso, id_, db.contar_faixas_peso_fracionado,
+        "Não é possível excluir a última faixa de peso do Fracionado — o sistema precisa de pelo menos uma.",
+    )
+
+
+@router.get("/faixas-distancia-fracionado")
+def admin_listar_faixas_distancia_fracionado(usuario: dict = Depends(exigir_admin)):
+    return [f for f in db.listar_faixas_distancia() if f["tipo_frete"] == "Fracionado"]
+
+
+@router.post("/faixas-distancia-fracionado")
+def admin_criar_faixa_distancia_fracionado(payload: FaixaDistanciaFracionadoIn, usuario: dict = Depends(exigir_admin)):
+    return admin_criar(db.inserir_faixa_distancia, payload, "")
+
+
+@router.put("/faixas-distancia-fracionado/{id_}")
+def admin_atualizar_faixa_distancia_fracionado(id_: int, payload: FaixaDistanciaFracionadoIn, usuario: dict = Depends(exigir_admin)):
+    return admin_atualizar(db.atualizar_faixa_distancia, id_, payload, "")
+
+
+@router.delete("/faixas-distancia-fracionado/{id_}")
+def admin_excluir_faixa_distancia_fracionado(id_: int, usuario: dict = Depends(exigir_admin)):
+    return admin_excluir(
+        db.excluir_faixa_distancia, id_, db.contar_faixas_distancia_fracionado,
+        "Não é possível excluir a última faixa de distância do Fracionado — o sistema precisa de pelo menos uma.",
     )

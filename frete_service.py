@@ -105,6 +105,14 @@ class FaixaDistancia:
 
 
 @dataclass
+class FaixaPeso:
+    de: float
+    ate: float
+    tarifa_base: float
+    custo_kg_adicional: float
+
+
+@dataclass
 class Categoria:
     nome: str
     multiplicador: float
@@ -250,6 +258,13 @@ class ParametrosFrete:
         self.aliquota_pis_cofins: float = 0.0
         self.coleta_cidades_fixas: list[ColetaCidadeFixa] = []
         self.faixas_coleta: list[FaixaDistancia] = []
+        # Frete Fracionado (ver calcular_orcamento_fracionado): faixas por
+        # peso e por distância cadastradas com tipo_frete='Fracionado' nas
+        # mesmas tabelas faixas_peso/faixas_distancia que já existiam no
+        # banco (linhas de tipo_frete='Carreta Fechada' continuam existindo
+        # mas não são lidas aqui -- ver nota no topo do arquivo).
+        self.faixas_peso_fracionado: list[FaixaPeso] = []
+        self.faixas_distancia_fracionado: list[FaixaDistancia] = []
         self.categorias: dict[str, Categoria] = {}
         self.transportes: dict[str, Transporte] = {}
         self.slas: dict[str, SLA] = {}
@@ -325,6 +340,16 @@ class ParametrosFrete:
                  for r in conn.execute("SELECT * FROM faixas_coleta")),
                 key=lambda f: f.de,
             )
+            self.faixas_peso_fracionado = sorted(
+                (FaixaPeso(r["de"], r["ate"], r["tarifa_base"], r["custo_kg_adicional"])
+                 for r in conn.execute("SELECT * FROM faixas_peso WHERE tipo_frete = 'Fracionado'")),
+                key=lambda f: f.de,
+            )
+            self.faixas_distancia_fracionado = sorted(
+                (FaixaDistancia(r["de"], r["ate"], r["taxa_fixa"], r["tarifa_km"])
+                 for r in conn.execute("SELECT * FROM faixas_distancia WHERE tipo_frete = 'Fracionado'")),
+                key=lambda f: f.de,
+            )
             self.categorias = {
                 r["nome"].strip().lower(): Categoria(r["nome"], r["multiplicador"])
                 for r in conn.execute("SELECT * FROM categorias")
@@ -346,6 +371,12 @@ class ParametrosFrete:
             raise FreteConfigError("Nenhum veículo cadastrado (tabela veiculos).")
         if not self.faixas_coleta:
             raise FreteConfigError("Nenhuma faixa de coleta cadastrada (tabela faixas_coleta).")
+        # Faixas de peso/distância do Fracionado NÃO são exigidas aqui
+        # (ao contrário das outras tabelas acima) -- um banco existente
+        # pode não ter nenhuma linha ainda (o recurso é novo). Falta de
+        # faixa só quebra quem realmente tentar cotar um Fracionado (ver
+        # buscar_faixa_peso_fracionado/buscar_faixa_distancia_fracionado),
+        # não o carregamento dos parâmetros pra todo o resto do sistema.
         if not self.categorias:
             raise FreteConfigError("Nenhuma categoria cadastrada (tabela categorias).")
         if not self.transportes:
@@ -420,6 +451,33 @@ class ParametrosFrete:
         candidatas = [f for f in self.faixas_coleta if f.de <= distancia]
         if not candidatas:
             raise FreteInputError(f"Distância de coleta {distancia}km abaixo da menor faixa configurada.")
+        return candidatas[-1]
+
+    def buscar_faixa_peso_fracionado(self, peso_considerado: float) -> FaixaPeso:
+        """Faixa de peso do Fracionado que cobre peso_considerado — mesma
+        regra de tarifa_km_efetiva: pega a faixa de maior 'de' que ainda
+        seja <= o peso (não soma progressivamente pelas faixas menores,
+        só a que o peso total cai é que vale)."""
+        if not self.faixas_peso_fracionado:
+            raise FreteConfigError(
+                "Nenhuma faixa de peso do Fracionado cadastrada — cadastre em Tabela de Preços → Fracionado."
+            )
+        candidatas = [f for f in self.faixas_peso_fracionado if f.de <= peso_considerado]
+        if not candidatas:
+            raise FreteInputError(f"Peso {peso_considerado}kg abaixo da menor faixa de peso do Fracionado configurada.")
+        return candidatas[-1]
+
+    def buscar_faixa_distancia_fracionado(self, distancia: float) -> FaixaDistancia:
+        """Faixa de distância do Fracionado que cobre a distância faturável
+        — mesma regra de buscar_faixa_peso_fracionado (uma faixa só, não
+        progressiva)."""
+        if not self.faixas_distancia_fracionado:
+            raise FreteConfigError(
+                "Nenhuma faixa de distância do Fracionado cadastrada — cadastre em Tabela de Preços → Fracionado."
+            )
+        candidatas = [f for f in self.faixas_distancia_fracionado if f.de <= distancia]
+        if not candidatas:
+            raise FreteInputError(f"Distância {distancia}km abaixo da menor faixa de distância do Fracionado configurada.")
         return candidatas[-1]
 
     def buscar_coleta_cidade_fixa(
@@ -899,13 +957,11 @@ class SelecaoVeiculo:
     peso_considerado: float
 
 
-def escolher_veiculo(peso: float, paletes: list[dict], transp: Transporte) -> SelecaoVeiculo:
-    """Mesma lógica de escolha de veículo usada em calcular_orcamento
-    (peso real x peso cubado, dentro da capacidade em m³) — extraída pra
-    função própria porque geo_service também precisa saber qual veículo
-    seria escolhido, antes mesmo de calcular o orçamento (usada pra achar
-    uma rota já cotada no histórico com o mesmo veículo, ver
-    geo_service._buscar_rota_no_historico)."""
+def _calcular_cubagem(peso: float, paletes: list[dict], transp: Transporte) -> tuple[float, float, float]:
+    """Volume total (m³), peso cubado e peso considerado (maior entre real
+    e cubado) — parte de escolher_veiculo que não depende de escolher
+    veículo nenhum, reaproveitada por calcular_orcamento_fracionado (que
+    não escolhe veículo pelo peso, o veículo lá é informado direto)."""
     # quantidade (padrão 1) deixa cadastrar "3 paletes iguais" numa linha
     # só, em vez de repetir a mesma linha 3 vezes — cada um conta seu
     # volume individual multiplicado pela quantidade.
@@ -917,6 +973,17 @@ def escolher_veiculo(peso: float, paletes: list[dict], transp: Transporte) -> Se
     # aéreo — o mesmo valor padrão IATA), multiplicado pelo volume em m³.
     peso_cubado = volume_total_m3 * transp.fator_cubagem
     peso_considerado = max(peso, peso_cubado)
+    return volume_total_m3, peso_cubado, peso_considerado
+
+
+def escolher_veiculo(peso: float, paletes: list[dict], transp: Transporte) -> SelecaoVeiculo:
+    """Mesma lógica de escolha de veículo usada em calcular_orcamento
+    (peso real x peso cubado, dentro da capacidade em m³) — extraída pra
+    função própria porque geo_service também precisa saber qual veículo
+    seria escolhido, antes mesmo de calcular o orçamento (usada pra achar
+    uma rota já cotada no histórico com o mesmo veículo, ver
+    geo_service._buscar_rota_no_historico)."""
+    volume_total_m3, peso_cubado, peso_considerado = _calcular_cubagem(peso, paletes, transp)
     veiculo = parametros.buscar_veiculo_por_peso_e_volume(peso_considerado, volume_total_m3)
     return SelecaoVeiculo(veiculo, volume_total_m3, peso_cubado, peso_considerado)
 
@@ -1234,6 +1301,239 @@ def calcular_orcamento(
             "custo_retorno": round(custo_retorno, 2),
             "tarifa_km_retorno": v.tarifa_km_retorno,
             "distancia_retorno_km": round(distancia_retorno),
+            "custos_extras": detalhe_custos_extras or None,
+            "custo_extra_total": round(custo_extra_total, 2),
+            "taxas_adicionais": detalhe_taxas,
+            "custo_taxas_adicionais": round(custo_taxas_adicionais, 2),
+            "taxas_regionais": detalhe_taxas_regionais,
+            "custo_taxas_regionais": round(custo_taxas_regionais, 2),
+            "taxa_balsa": detalhe_balsa,
+            "custo_balsa": round(custo_balsa, 2),
+            "balsa_outro_veiculo": balsa_outro_veiculo or None,
+            "margem_lucro_pct": margem_lucro_pct,
+            "frete_sem_margem_lucro": round(frete_sem_margem_lucro, 2),
+            "valor_margem_lucro": round(valor_margem_lucro, 2),
+            "aliquota_pis_cofins_pct": aliquota_pis_cofins_pct,
+            "frete_sem_pis_cofins": round(frete_sem_pis_cofins, 2),
+            "valor_pis_cofins": round(valor_pis_cofins, 2),
+            "uf_origem_icms": icms_aplicavel and _uf_de_origem_ou_destino(p, cidade_origem) or None,
+            "uf_destino_icms": icms_aplicavel and _uf_de_origem_ou_destino(p, cidade_destino) or None,
+            "aliquota_icms_pct": aliquota_icms_pct,
+            "frete_sem_icms": round(frete_sem_icms, 2),
+            "valor_icms": round(valor_icms, 2),
+        },
+        "resultado": {
+            "frete_total": round(frete_total, 2),
+            "prazo_estimado_dias_uteis": s.prazo_dias,
+        },
+    }
+
+
+def calcular_orcamento_fracionado(
+    peso: float,
+    paletes: list[dict],
+    distancia: float,
+    valor_mercadoria: float,
+    categoria: str,
+    transporte: str,
+    sla: str,
+    veiculo: str,
+    cidade_origem: str | None = None,
+    cidade_destino: str | None = None,
+    pedagio: float = 0,
+    prioridade_rota: str | None = None,
+    custos_extras: list[dict] | None = None,
+    margem_lucro_pct: float = MARGEM_LUCRO_PADRAO,
+) -> dict:
+    """Frete Fracionado -- mesma logica de calcular_orcamento pra tudo que
+    nao eh o frete base (categoria/transporte/SLA, taxas adicionais e
+    regionais, taxa de balsa, ICMS, PIS/COFINS, margem de lucro), mas o
+    frete base vem de faixas de peso + distancia (Tabela de Precos ->
+    Fracionado, tipo_frete='Fracionado' em faixas_peso/faixas_distancia)
+    em vez de veiculo escolhido automaticamente pelo peso:
+
+        faixa_peso = faixa cujo "de" cobre o peso considerado
+        custo_peso = faixa_peso.tarifa_base + faixa_peso.custo_kg_adicional * (peso_considerado - faixa_peso.de)
+        faixa_distancia = faixa cujo "de" cobre a distancia faturavel
+        custo_distancia = faixa_distancia.taxa_fixa + faixa_distancia.tarifa_km * distancia_faturavel
+        frete_base = custo_peso + custo_distancia
+
+    `veiculo` aqui eh so uma referencia (ver /parametros/veiculos) pra achar
+    pedagio (numero de eixos), taxa de balsa e coleta fixa cadastrados por
+    veiculo -- nao define nenhuma tarifa do frete base.
+
+    Essa primeira versao cobre so transferencia entre filiais: sem coleta/
+    entrega no endereco do cliente (CEP), sem transportadora terceirizada e
+    sem retorno vazio de veiculo -- conceitos de veiculo dedicado que nao
+    se aplicam a uma carga fracionada compartilhada com outros clientes.
+    Pela mesma razao, tambem nao ha manutencao de veiculo nem peso
+    excedente: o desgaste do veiculo eh custo de quem presta o frete
+    fracionado como servico contratado, e o peso ja escala continuamente
+    pelo custo_kg_adicional da faixa, sem o conceito de "veiculo cheio"."""
+    if peso <= 0:
+        raise FreteInputError("Peso deve ser maior que zero.")
+    if not paletes:
+        raise FreteInputError("Informe ao menos um palete com comprimento, largura e altura.")
+    for palete in paletes:
+        if palete["comprimento"] <= 0 or palete["largura"] <= 0 or palete["altura"] <= 0:
+            raise FreteInputError("Comprimento, largura e altura de cada palete devem ser maiores que zero.")
+        if palete.get("quantidade", 1) < 1:
+            raise FreteInputError("A quantidade de cada palete deve ser pelo menos 1.")
+    if distancia <= 0:
+        raise FreteInputError("Distância deve ser maior que zero.")
+    if valor_mercadoria < 0:
+        raise FreteInputError("Valor da mercadoria não pode ser negativo.")
+    if pedagio < 0:
+        raise FreteInputError("Valor de pedágio não pode ser negativo.")
+    custos_extras = custos_extras or []
+    for custo_extra in custos_extras:
+        if custo_extra.get("categoria") not in CATEGORIAS_CUSTO_EXTRA:
+            opcoes = ", ".join(CATEGORIAS_CUSTO_EXTRA)
+            raise FreteInputError(
+                f"Categoria de custo extra '{custo_extra.get('categoria')}' inválida. Opções: {opcoes}"
+            )
+        if custo_extra.get("valor", 0) < 0:
+            raise FreteInputError("Valor de custo extra não pode ser negativo.")
+    if margem_lucro_pct not in MARGENS_LUCRO_PERMITIDAS:
+        opcoes = ", ".join(f"{m}%" for m in MARGENS_LUCRO_PERMITIDAS)
+        raise FreteInputError(f"Margem de lucro '{margem_lucro_pct}%' inválida. Opções: {opcoes}")
+
+    p = parametros
+    transp = p.buscar_transporte(transporte)
+    cat = p.buscar_categoria(categoria)
+    s = p.buscar_sla(sla)
+    v = p.buscar_veiculo(veiculo)
+
+    volume_total_m3, peso_cubado, peso_considerado = _calcular_cubagem(peso, paletes, transp)
+
+    # Mesma regra de calcular_orcamento: km de balsa nao entra na tarifa
+    # (nem de peso, nem de distancia) por cima da taxa de balsa fixa ja
+    # cobrada abaixo, senao a travessia seria cobrada duas vezes.
+    balsa_km = distancia_balsa_km(p, cidade_origem, cidade_destino, prioridade_rota)
+    distancia_faturavel = max(distancia - balsa_km, 0.0)
+
+    faixa_peso = p.buscar_faixa_peso_fracionado(peso_considerado)
+    custo_base_peso = faixa_peso.tarifa_base + faixa_peso.custo_kg_adicional * max(peso_considerado - faixa_peso.de, 0)
+
+    faixa_distancia = p.buscar_faixa_distancia_fracionado(distancia_faturavel)
+    custo_base_distancia = faixa_distancia.taxa_fixa + faixa_distancia.tarifa_km * distancia_faturavel
+
+    frete_base = custo_base_peso + custo_base_distancia
+    frete_ajustado = frete_base * cat.multiplicador * transp.multiplicador * s.multiplicador
+
+    detalhe_custos_extras = []
+    custo_extra_total = 0.0
+    for custo_extra in custos_extras:
+        valor_aplicado = round(custo_extra.get("valor", 0), 2)
+        custo_extra_total += valor_aplicado
+        detalhe_custos_extras.append({"categoria": custo_extra["categoria"], "valor_aplicado": valor_aplicado})
+
+    detalhe_taxas = []
+    custo_taxas_adicionais = 0.0
+    for taxa in p.taxas_adicionais:
+        valor_taxa = _valor_taxa(taxa.tipo, taxa.valor, valor_mercadoria)
+        custo_taxas_adicionais += valor_taxa
+        detalhe_taxas.append({
+            "nome": taxa.nome, "tipo": taxa.tipo,
+            "valor_configurado": taxa.valor, "valor_aplicado": round(valor_taxa, 2),
+        })
+
+    detalhe_taxas_regionais = []
+    custo_taxas_regionais = 0.0
+    for taxa in _taxas_regionais_aplicaveis(p, cidade_origem, cidade_destino):
+        valor_taxa = _valor_taxa(taxa.tipo, taxa.valor, valor_mercadoria)
+        custo_taxas_regionais += valor_taxa
+        detalhe_taxas_regionais.append({
+            "nome": taxa.nome, "cidade": taxa.cidade, "tipo": taxa.tipo,
+            "valor_configurado": taxa.valor, "valor_aplicado": round(valor_taxa, 2),
+        })
+
+    custo_balsa = 0.0
+    detalhe_balsa = None
+    balsa_outro_veiculo = []
+    taxa_balsa = _taxa_balsa_aplicavel(p, cidade_origem, cidade_destino, v.nome)
+    if taxa_balsa:
+        custo_balsa = _valor_taxa(taxa_balsa.tipo, taxa_balsa.valor, valor_mercadoria)
+        detalhe_balsa = {
+            "cidade_origem": taxa_balsa.cidade_origem, "cidade_destino": taxa_balsa.cidade_destino,
+            "veiculo": taxa_balsa.veiculo, "tipo": taxa_balsa.tipo,
+            "valor_configurado": taxa_balsa.valor, "valor_aplicado": round(custo_balsa, 2),
+        }
+    else:
+        balsa_outro_veiculo = _taxa_balsa_outros_veiculos(p, cidade_origem, cidade_destino, v.nome)
+
+    frete_total = (
+        frete_ajustado
+        + custo_taxas_adicionais
+        + custo_taxas_regionais
+        + custo_balsa
+        + custo_extra_total
+        + pedagio
+    )
+
+    frete_sem_margem_lucro = frete_total
+    frete_total = frete_sem_margem_lucro * (1 + margem_lucro_pct / 100)
+    valor_margem_lucro = frete_total - frete_sem_margem_lucro
+
+    frete_sem_pis_cofins = frete_total
+    valor_pis_cofins = 0.0
+    aliquota_pis_cofins_pct = p.aliquota_pis_cofins
+    if aliquota_pis_cofins_pct > 0:
+        if aliquota_pis_cofins_pct >= 100:
+            raise FreteConfigError(
+                f"Alíquota de PIS/COFINS cadastrada ({aliquota_pis_cofins_pct}%) inválida — deve ser menor que 100%."
+            )
+        frete_total = frete_sem_pis_cofins / (1 - aliquota_pis_cofins_pct / 100)
+        valor_pis_cofins = frete_total - frete_sem_pis_cofins
+
+    frete_sem_icms = frete_total
+    valor_icms = 0.0
+    icms_aplicavel = aliquota_icms_aplicavel(p, cidade_origem, cidade_destino)
+    aliquota_icms_pct = icms_aplicavel.aliquota if icms_aplicavel else 0.0
+    if aliquota_icms_pct > 0:
+        if aliquota_icms_pct >= 100:
+            raise FreteConfigError(
+                f"Alíquota de ICMS cadastrada ({aliquota_icms_pct}%) inválida — deve ser menor que 100%."
+            )
+        frete_total = frete_sem_icms / (1 - aliquota_icms_pct / 100)
+        valor_icms = frete_total - frete_sem_icms
+
+    return {
+        "entrada": {
+            "peso_kg": peso,
+            "paletes": paletes,
+            "distancia_km": round(distancia),
+            "rota_obrigatoria": prioridade_rota or None,
+            "valor_mercadoria": round(valor_mercadoria, 2),
+            "veiculo": v.nome,
+            "categoria": cat.nome,
+            "transporte": transp.nome,
+            "sla": s.nome,
+            "tipo_frete": "Fracionado",
+        },
+        "calculos_intermediarios": {
+            "fator_cubagem": transp.fator_cubagem,
+            "peso_cubado_kg": round(peso_cubado, 3),
+            "peso_considerado_kg": round(peso_considerado, 3),
+            "volume_total_m3": round(volume_total_m3, 4),
+            "distancia_balsa_km": round(balsa_km),
+            "distancia_faturavel_km": round(distancia_faturavel),
+            "faixa_peso_de": faixa_peso.de,
+            "faixa_peso_ate": faixa_peso.ate,
+            "tarifa_base_peso": faixa_peso.tarifa_base,
+            "custo_kg_adicional_peso": faixa_peso.custo_kg_adicional,
+            "custo_base_peso": round(custo_base_peso, 2),
+            "faixa_distancia_de": faixa_distancia.de,
+            "faixa_distancia_ate": faixa_distancia.ate,
+            "taxa_fixa_distancia": faixa_distancia.taxa_fixa,
+            "tarifa_km_distancia": faixa_distancia.tarifa_km,
+            "custo_base_distancia": round(custo_base_distancia, 2),
+            "frete_base": round(frete_base, 2),
+            "multiplicador_categoria": cat.multiplicador,
+            "multiplicador_transporte": transp.multiplicador,
+            "multiplicador_sla": s.multiplicador,
+            "frete_ajustado": round(frete_ajustado, 2),
+            "pedagio": round(pedagio, 2),
             "custos_extras": detalhe_custos_extras or None,
             "custo_extra_total": round(custo_extra_total, 2),
             "taxas_adicionais": detalhe_taxas,

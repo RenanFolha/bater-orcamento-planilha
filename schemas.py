@@ -55,12 +55,41 @@ class OrcamentoRequest(BaseModel):
     margem_lucro_pct: float = Field(40, description="Margem de lucro (%) aplicada como markup sobre o frete antes do PIS/COFINS e do ICMS (ver frete_service.MARGENS_LUCRO_PERMITIDAS) — 30% via UI é restrito a administradores", examples=[40])
 
 
+class OrcamentoFracionadoRequest(BaseModel):
+    """Mesma lógica de OrcamentoRequest (categoria/transporte/SLA, taxas
+    adicionais/regionais, balsa, ICMS, PIS/COFINS, margem de lucro), mas
+    pro frete Fracionado: o frete base vem de faixas de peso + distância
+    (ver frete_service.calcular_orcamento_fracionado) em vez de escolher
+    um veículo dedicado pelo peso, e o veículo é informado direto (usado
+    só como referência pra pedágio/balsa/coleta fixa, não define a
+    tarifa). Sem coleta/entrega no cliente nem retorno vazio — essa
+    primeira versão do Fracionado cobre só transferência entre filiais."""
+    peso: float = Field(..., gt=0, description="Peso real da mercadoria em kg", examples=[80])
+    paletes: list[PaleteIn] = Field(
+        ..., min_length=1,
+        description="Paletes/volumes da carga — cada um com comprimento, largura e altura em cm",
+    )
+    distancia: float = Field(..., ge=0, description="Distância do frete, em km (filial origem → filial destino)", examples=[350])
+    valor_mercadoria: float = Field(..., ge=0, description="Valor declarado da mercadoria em R$", examples=[1200])
+    categoria: str = Field(..., description="Categoria do produto (ver /parametros/categorias)", examples=["Geral"])
+    transporte: str = Field(..., description="Método de transporte (ver /parametros/transportes)", examples=["Rodoviário"])
+    sla: str = Field(..., description="Nível de serviço (ver /parametros/slas)", examples=["Padrão"])
+    veiculo: str = Field(..., min_length=1, description="Veículo de referência (ver /parametros/veiculos) — usado pra achar pedágio, taxa de balsa e coleta fixa cadastrados por veículo; não define a tarifa do frete base")
+    cidade_origem: str = Field("", description="Cidade (ou nome de filial) de origem do frete — usada para checar taxas regionais/balsa/ICMS")
+    cidade_destino: str = Field("", description="Cidade (ou nome de filial) de destino do frete — usada para checar taxas regionais/balsa/ICMS")
+    pedagio: float = Field(0, ge=0, description="Valor estimado de pedágio da rota em R$ (preenchido automaticamente pelo Google Maps/OSRM quando disponível, editável)")
+    prioridade_rota: str = Field("", description="Nome da filial de escala obrigatória usada no trajeto (preenchido automaticamente por /geo/distancia) — só para exibir na memória de cálculo, não afeta o valor do frete")
+    custos_extras: list[CustoExtraIn] = Field(default_factory=list, description="Custos extras escolhidos pra este orçamento (categoria + valor em R$), somados ao frete antes do PIS/COFINS e do ICMS")
+    margem_lucro_pct: float = Field(40, description="Margem de lucro (%) aplicada como markup sobre o frete antes do PIS/COFINS e do ICMS (ver frete_service.MARGENS_LUCRO_PERMITIDAS) — 30% via UI é restrito a administradores", examples=[40])
+
+
 class DistanciaRequest(BaseModel):
     origem: str = Field(..., description="Endereço de origem", examples=["Av. Paulista, 1000, São Paulo, SP"])
     destino: str = Field(..., description="Endereço de destino", examples=["Rua XV de Novembro, 500, Curitiba, PR"])
     peso: float = Field(0, ge=0, description="Peso real da carga em kg — opcional, só usado pra descobrir o veículo e permitir reaproveitar a distância de uma rota+veículo já cotada no histórico")
     paletes: list[PaleteIn] = Field(default_factory=list, description="Paletes/volumes da carga — mesmo uso do campo peso, opcional")
     transporte: str = Field("", description="Método de transporte (ver /parametros/transportes) — mesmo uso do campo peso, opcional")
+    veiculo: str = Field("", description="Nome do veículo já conhecido (ver /parametros/veiculos) — quando informado, tem prioridade sobre peso/paletes/transporte pra descobrir o veículo (usado pelo orçamento Fracionado, que escolhe o veículo de referência direto em vez de inferir pelo peso)")
 
 
 class RetiradaRequest(BaseModel):
@@ -104,6 +133,29 @@ class FaixaKmVeiculoIn(BaseModel):
     de: float = Field(..., ge=0, description="Distância mínima (km) pra essa faixa valer")
     ate: float = Field(..., gt=0, description="Distância máxima (km) da faixa")
     tarifa_km: float = Field(..., ge=0, description="R$/km cobrado nessa faixa — substitui o tarifa_km fixo do veículo quando a distância do frete cair nela")
+    observacao: str = ""
+
+
+# tipo_frete fixo em "Fracionado" (não exposto na tela) -- a tabela
+# faixas_peso/faixas_distancia também guarda linhas legadas de "Carreta
+# Fechada" (não usadas em nenhum cálculo, ver frete_service.py), então
+# esses dois schemas só cadastram/editam as linhas do frete Fracionado,
+# sem a pessoa precisar saber que esse campo existe.
+class FaixaPesoIn(BaseModel):
+    tipo_frete: str = Field("Fracionado", description="Fixo em 'Fracionado' — as linhas de 'Carreta Fechada' são legado, não usadas em nenhum cálculo")
+    de: float = Field(..., ge=0, description="Peso mínimo (kg) pra essa faixa valer")
+    ate: float = Field(..., gt=0, description="Peso máximo (kg) da faixa")
+    tarifa_base: float = Field(..., ge=0, description="Valor fixo (R$) cobrado ao entrar nessa faixa de peso")
+    custo_kg_adicional: float = Field(0, ge=0, description="R$ adicional por kg acima do 'De' desta faixa")
+    observacao: str = ""
+
+
+class FaixaDistanciaFracionadoIn(BaseModel):
+    tipo_frete: str = Field("Fracionado", description="Fixo em 'Fracionado' — as linhas de 'Carreta Fechada' são legado, não usadas em nenhum cálculo")
+    de: float = Field(..., ge=0, description="Distância mínima (km) pra essa faixa valer")
+    ate: float = Field(..., gt=0, description="Distância máxima (km) da faixa")
+    taxa_fixa: float = Field(..., ge=0, description="Valor fixo (R$) cobrado ao entrar nessa faixa de distância")
+    tarifa_km: float = Field(0, ge=0, description="R$/km adicional cobrado sobre toda a distância faturável")
     observacao: str = ""
 
 

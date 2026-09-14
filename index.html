@@ -30,7 +30,8 @@
     </div>
 
     <nav class="sidebar-nav">
-      <a href="#" class="active" data-view="orcamento" data-label="Novo Orçamento"><i class="ti ti-plus"></i><span class="nav-label">Novo Orçamento</span></a>
+      <a href="#" class="active" data-view="orcamento" data-label="Cotação Lotação"><i class="ti ti-box"></i><span class="nav-label">Cotação Lotação</span></a>
+      <a href="#" data-view="orcamento-fracionado" data-label="Cotação Fracionado"><i class="ti ti-packages"></i><span class="nav-label">Cotação Fracionado</span></a>
       <a href="#" data-view="historico" data-label="Histórico" data-requer-login><i class="ti ti-history"></i><span class="nav-label">Histórico</span></a>
       <a href="#" data-view="precos" data-label="Tabela de Preços" data-requer-admin><i class="ti ti-chart-bar"></i><span class="nav-label">Tabela de Preços</span></a>
       <a href="#" data-view="config" data-label="Configurações" data-requer-admin><i class="ti ti-settings"></i><span class="nav-label">Configurações</span></a>
@@ -414,14 +415,298 @@
     </div>
     <!-- /view-orcamento -->
 
+    <!-- COTAÇÃO FRACIONADO -->
+    <div id="view-orcamento-fracionado" class="view" style="display:none;">
+    <div class="wrap">
+
+      <div class="page-header">
+        <div class="page-eyebrow">Orçamento de frete</div>
+        <h1>Cotação Fracionado</h1>
+        <p>Transferência entre filiais com frete cobrado por faixa de peso + faixa de distância, em vez de veículo dedicado. Sem coleta/entrega no endereço do cliente nesta versão.</p>
+      </div>
+
+      <div class="grid">
+
+        <!-- FORM CARD -->
+        <div class="card card-bare">
+          <div class="card-body">
+            <form id="frac-form-frete">
+
+              <div class="section-label">Carga</div>
+              <div class="row2">
+                <div class="field">
+                  <div class="idx"><i class="ti ti-building-store" style="font-size:15px;"></i></div>
+                  <div>
+                    <label for="frac-hist-cliente">Cliente / referência</label>
+                    <input type="text" id="frac-hist-cliente" placeholder="Ex: Distribuidora Silva">
+                  </div>
+                </div>
+                <div class="field">
+                  <div class="idx"><i class="ti ti-user" style="font-size:15px;"></i></div>
+                  <div>
+                    <label for="frac-hist-responsavel">Responsável pelo orçamento</label>
+                    <input type="text" id="frac-hist-responsavel" placeholder="Seu nome">
+                  </div>
+                </div>
+              </div>
+
+              <div class="row2">
+                <div class="field">
+                  <div class="idx">01</div>
+                  <div>
+                    <label for="frac-peso">Peso real (kg)</label>
+                    <input type="text" inputmode="decimal" id="frac-peso" value="80" oninput="formatarPesoDigitando(this)" required>
+                  </div>
+                </div>
+                <div class="field">
+                  <div class="idx">02</div>
+                  <div>
+                    <label for="frac-valor_mercadoria">Valor mercadoria (R$)</label>
+                    <input type="text" inputmode="decimal" id="frac-valor_mercadoria" value="1.200,00" oninput="formatarMoedaDigitando(this)" required>
+                  </div>
+                </div>
+              </div>
+
+              <div class="row2 row2-palete-principal">
+                <div class="field">
+                  <div class="idx">03</div>
+                  <div>
+                    <label for="frac-comprimento">Comprimento (cm)</label>
+                    <input type="number" id="frac-comprimento" class="frac-palete-comprimento" min="0.1" step="0.01" value="100" required>
+                  </div>
+                </div>
+                <div class="field">
+                  <div class="idx">04</div>
+                  <div>
+                    <label for="frac-largura">Largura (cm)</label>
+                    <input type="number" id="frac-largura" class="frac-palete-largura" min="0.1" step="0.01" value="100" required>
+                  </div>
+                </div>
+                <div class="field">
+                  <div class="idx">05</div>
+                  <div>
+                    <label for="frac-altura">Altura (cm)</label>
+                    <input type="number" id="frac-altura" class="frac-palete-altura" min="0.1" step="0.01" value="100" required>
+                  </div>
+                </div>
+                <div class="field">
+                  <div class="idx">×</div>
+                  <div>
+                    <label for="frac-quantidade">Qtde</label>
+                    <input type="number" id="frac-quantidade" class="frac-palete-quantidade" min="1" step="1" value="1" title="Quantidade de paletes idênticos com essas mesmas dimensões" required>
+                  </div>
+                </div>
+              </div>
+              <div id="frac-paletes-extra"></div>
+              <button type="button" class="btn-icone mt-8" id="frac-btn-add-palete">+ Adicionar palete</button>
+              <div class="cep-info" id="frac-cubagem-info"></div>
+
+              <div class="section-label">Rota</div>
+              <div class="row2 row2-enderecos">
+                <div class="field">
+                  <div class="idx">06</div>
+                  <div>
+                    <label for="frac-origem-filial">Filial de origem</label>
+                    <select id="frac-origem-filial"></select>
+                  </div>
+                </div>
+                <div class="field">
+                  <div class="idx">07</div>
+                  <div>
+                    <label for="frac-destino-filial">Filial de destino</label>
+                    <select id="frac-destino-filial"></select>
+                  </div>
+                </div>
+              </div>
+
+              <div class="field">
+                <div class="idx">08</div>
+                <div>
+                  <label for="frac-veiculo">Veículo de referência (pedágio, balsa e coleta fixa)</label>
+                  <select id="frac-veiculo" required></select>
+                </div>
+              </div>
+
+              <div class="geo-bar">
+                <button type="button" class="btn-geo" id="frac-btn-geo">Calcular distância</button>
+                <div class="geo-status" id="frac-geo-status"></div>
+              </div>
+
+              <div class="field">
+                <div class="idx">09</div>
+                <div>
+                  <label for="frac-distancia">Distância do frete (km) — calculada ou manual</label>
+                  <input type="number" id="frac-distancia" min="0" step="1" value="350" required>
+                </div>
+              </div>
+
+              <div class="field" id="frac-campo-pedagio" style="display:none;">
+                <div class="idx">·</div>
+                <div>
+                  <label for="frac-pedagio">Pedágio estimado da rota (R$) — via Google Maps/OSRM, editável</label>
+                  <input type="text" inputmode="decimal" id="frac-pedagio" value="0,00" oninput="formatarMoedaDigitando(this)">
+                </div>
+              </div>
+
+              <div class="section-label" id="frac-toggle-servico" style="cursor:pointer;user-select:none;">
+                Serviço
+                <i class="ti ti-chevron-right" id="frac-icon-servico" style="margin-left:auto;transition:transform .15s ease;"></i>
+              </div>
+              <div id="frac-bloco-servico" style="display:none;">
+                <div class="field">
+                  <div class="idx">10</div>
+                  <div>
+                    <label for="frac-categoria">Categoria do produto</label>
+                    <select id="frac-categoria" required></select>
+                  </div>
+                </div>
+
+                <div class="field">
+                  <div class="idx">11</div>
+                  <div>
+                    <label for="frac-transporte">Método de transporte</label>
+                    <select id="frac-transporte" required></select>
+                  </div>
+                </div>
+
+                <div class="field">
+                  <div class="idx">12</div>
+                  <div>
+                    <label for="frac-sla">Nível de serviço (SLA)</label>
+                    <select id="frac-sla" required></select>
+                  </div>
+                </div>
+              </div>
+
+              <div class="section-label">Custos Extras</div>
+              <div id="frac-bloco-custos-extras">
+                <div class="field">
+                  <div class="idx">·</div>
+                  <div>
+                    <label>Categorias aplicáveis (selecione uma ou mais)</label>
+                    <div class="seg-toggle" id="frac-custos-extras-categorias" style="flex-wrap:wrap;">
+                      <button type="button" class="seg-btn" data-categoria="Paletização">Paletização</button>
+                      <button type="button" class="seg-btn" data-categoria="Carga">Carga</button>
+                      <button type="button" class="seg-btn" data-categoria="Descarga">Descarga</button>
+                      <button type="button" class="seg-btn" data-categoria="Entrega Adicional">Entrega Adicional</button>
+                      <button type="button" class="seg-btn" data-categoria="Diversos">Diversos</button>
+                    </div>
+                  </div>
+                </div>
+                <div id="frac-lista-valores-custos-extras"></div>
+              </div>
+
+              <div class="section-label">Margem de Lucro</div>
+              <div class="field">
+                <div class="idx">·</div>
+                <div>
+                  <label for="frac-margem_lucro">Margem de lucro</label>
+                  <select id="frac-margem_lucro" required>
+                    <option value="30" id="frac-opcao-margem-30" disabled style="display:none;">30%</option>
+                    <option value="40" selected>40%</option>
+                    <option value="50">50%</option>
+                  </select>
+                </div>
+              </div>
+
+            </form>
+          </div>
+          <div class="submit-bar">
+            <div class="error-box" id="frac-error-box"></div>
+            <button class="calc" id="frac-btn-calc" type="submit" form="frac-form-frete">Calcular frete</button>
+            <span class="submit-hint">Frete base por faixa de peso + faixa de distância</span>
+          </div>
+        </div>
+
+        <!-- RESULT CARD -->
+        <div class="card">
+          <div class="card-head">
+            <h2>Resultado</h2>
+            <span class="tag" id="frac-status-tag">Aguardando</span>
+          </div>
+          <div id="frac-result-empty" class="result-empty">
+            <span class="glyph">▢</span>
+            Preencha os dados da carga e clique em<br>"Calcular frete" para ver o orçamento.
+          </div>
+          <div id="frac-result-content" style="display:none;">
+            <div class="stamp-wrap">
+              <div class="stamp" id="frac-stamp">
+                <div class="label">Frete total</div>
+                <div class="total" id="frac-out-total">R$ 0,00</div>
+                <div class="prazo">Prazo estimado: <b id="frac-out-prazo">-</b></div>
+              </div>
+            </div>
+            <div class="veiculo-chip">
+              <i class="ti ti-truck"></i>
+              <div>
+                <div class="t"><b id="frac-out-veiculo">-</b> (referência)</div>
+                <div class="s">Usado só pra pedágio, balsa e coleta fixa — não define a tarifa</div>
+              </div>
+            </div>
+            <div class="breakdown">
+              <h3>Detalhamento do cálculo</h3>
+              <div class="line"><span>Peso considerado</span><span id="frac-d-peso">-</span></div>
+              <div class="line"><span>Faixa de peso aplicada</span><span id="frac-d-faixa-peso">-</span></div>
+              <div class="line"><span>Custo base (peso)</span><span id="frac-d-custo-peso">-</span></div>
+              <div class="line"><span>Distância faturável</span><span id="frac-d-km">-</span></div>
+              <div class="line"><span>Faixa de distância aplicada</span><span id="frac-d-faixa-distancia">-</span></div>
+              <div class="line"><span>Custo base (distância)</span><span id="frac-d-custo-distancia">-</span></div>
+              <div class="line"><span>Frete base</span><span id="frac-d-base">-</span></div>
+              <div class="line"><span>Frete ajustado</span><span id="frac-d-ajustado">-</span></div>
+              <div class="line" id="frac-linha-pedagio" style="display:none;"><span>Pedágio</span><span id="frac-d-pedagio">-</span></div>
+              <div class="line" id="frac-linha-taxas-regionais" style="display:none;"><span>Taxa fluvial (RCA)</span><span id="frac-d-taxas-regionais">-</span></div>
+              <div class="line" id="frac-linha-taxa-balsa" style="display:none;"><span>Balsa</span><span id="frac-d-taxa-balsa">-</span></div>
+              <div class="line" id="frac-linha-taxas" style="display:none;"><span>Taxas adicionais</span><span id="frac-d-taxas">-</span></div>
+              <div class="line" id="frac-linha-custos-extras" style="display:none;"><span>Custos extras</span><span id="frac-d-custos-extras">-</span></div>
+              <div class="line" id="frac-linha-margem-lucro" style="display:none;"><span>Margem de lucro</span><span id="frac-d-margem-lucro">-</span></div>
+              <div class="line" id="frac-linha-pis-cofins" style="display:none;"><span>PIS/COFINS</span><span id="frac-d-pis-cofins">-</span></div>
+              <div class="line" id="frac-linha-icms" style="display:none;"><span>ICMS</span><span id="frac-d-icms">-</span></div>
+              <div class="line total-line"><span>Frete total</span><span id="frac-d-total">-</span></div>
+            </div>
+            <div class="breakdown" id="frac-bloco-detalhe-taxas" style="display:none;">
+              <h3>Detalhe das taxas adicionais</h3>
+              <div id="frac-lista-detalhe-taxas"></div>
+            </div>
+            <div class="breakdown" id="frac-bloco-detalhe-custos-extras" style="display:none;">
+              <h3>Detalhe dos custos extras</h3>
+              <div id="frac-lista-detalhe-custos-extras"></div>
+            </div>
+            <div style="padding:12px 20px;border-top:1px solid var(--border-soft);">
+              <button type="button" id="frac-btn-toggle-memoria" style="width:100%;background:none;border:1px dashed var(--border);border-radius:7px;padding:9px;font-size:11.5px;color:var(--text-dim);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;">
+                <i class="ti ti-list-details"></i> <span id="frac-btn-toggle-memoria-label">Ver todas as variáveis do cálculo</span>
+              </button>
+              <div class="breakdown" id="frac-bloco-memoria-calculo" style="display:none;margin-top:10px;"></div>
+            </div>
+            <div style="padding:16px 20px;border-top:1px solid var(--border-soft);">
+              <button type="button" id="frac-btn-salvar-historico" style="width:100%;background:var(--panel-alt);border:1px solid var(--border);border-radius:7px;padding:11px;font-family:var(--font-sans);font-weight:700;font-size:12.5px;letter-spacing:0.3px;color:var(--accent-strong);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;transition:background .15s ease;">
+                <i class="ti ti-device-floppy"></i> Salvar no histórico
+              </button>
+              <div id="frac-historico-salvar-status" style="font-size:11.5px;margin-top:8px;text-align:center;min-height:14px;"></div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+    </div>
+    <!-- /view-orcamento-fracionado -->
+
     <!-- TABELA DE PREÇOS -->
     <div id="view-precos" class="view" style="display:none;">
       <div class="wrap">
-        <div class="page-header">
-          <div class="page-eyebrow">Administração</div>
-          <h1>Tabela de Preços</h1>
-          <p>Edite direto por aqui — as mudanças valem no cálculo do frete imediatamente, sem precisar reiniciar a API.</p>
+        <div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+          <div>
+            <div class="page-eyebrow">Administração</div>
+            <h1>Tabela de Preços</h1>
+            <p>Edite direto por aqui — as mudanças valem no cálculo do frete imediatamente, sem precisar reiniciar a API.</p>
+          </div>
+          <div style="position:relative;">
+            <i class="ti ti-search" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text-dim);font-size:14px;pointer-events:none;"></i>
+            <input type="text" id="precos-busca" placeholder="Buscar em todas as tabelas..."
+                   style="font-family:var(--font-sans);font-size:12.5px;padding:9px 12px 9px 30px;border:1px solid var(--border);border-radius:6px;width:280px;background:var(--panel-alt);color:var(--text);outline:none;">
+          </div>
         </div>
+        <p id="precos-busca-vazio" style="display:none;font-size:12.5px;color:var(--text-dim);margin:-8px 0 14px;">Nenhum resultado encontrado.</p>
 
         <div class="section-label precos-section-toggle" data-target="bloco-precos-cadastros" style="cursor:pointer;user-select:none;">
           Cadastros Gerais
@@ -433,6 +718,15 @@
           <div class="card precos-card" id="precos-transportes"></div>
           <div class="card precos-card" id="precos-slas"></div>
           <div class="card precos-card" id="precos-transportadoras-terceirizadas"></div>
+        </div>
+
+        <div class="section-label precos-section-toggle" data-target="bloco-precos-fracionado" style="cursor:pointer;user-select:none;">
+          Fracionado
+          <i class="ti ti-chevron-right precos-section-icon" style="margin-left:auto;transition:transform .15s ease;"></i>
+        </div>
+        <div id="bloco-precos-fracionado" style="display:none;">
+          <div class="card precos-card" id="precos-faixas-peso-fracionado"></div>
+          <div class="card precos-card" id="precos-faixas-distancia-fracionado"></div>
         </div>
 
         <div class="section-label precos-section-toggle" data-target="bloco-precos-veiculos" style="cursor:pointer;user-select:none;">
