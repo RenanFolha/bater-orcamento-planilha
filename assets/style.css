@@ -370,6 +370,8 @@
   .line{display:flex;justify-content:space-between;font-size:12.5px;padding:6px 0;color:var(--text);}
   .line span:first-child{color:var(--text-dim);}
   .line.total-line{border-top:1px solid var(--border);margin-top:6px;padding-top:10px;font-weight:700;color:var(--accent-strong);font-family:var(--font-sans);}
+  .line.subtotal-line{border-top:1px dashed var(--border);margin-top:4px;padding-top:8px;font-weight:700;color:var(--text-strong);}
+  .line.subtotal-line span:first-child{color:var(--text-strong);}
 
   /* Views (navegação entre páginas) */
   .view{display:block;}

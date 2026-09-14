@@ -378,13 +378,23 @@
               <div class="line" id="linha-pedagio" style="display:none;"><span>Pedágio</span><span id="d-pedagio">-</span></div>
               <div class="line" id="linha-manutencao" style="display:none;"><span>Manutenção do veículo</span><span id="d-manutencao">-</span></div>
               <div class="line" id="linha-retorno" style="display:none;"><span>Retorno vazio</span><span id="d-retorno">-</span></div>
+              <div class="line" id="linha-custos-extras" style="display:none;"><span>Custos extras</span><span id="d-custos-extras">-</span></div>
+              <div class="line subtotal-line"><span>Total do custo da operação</span><span id="d-total-operacao">-</span></div>
+            </div>
+            <div class="breakdown">
+              <h3>Impostos e taxas</h3>
               <div class="line" id="linha-taxas-regionais" style="display:none;"><span>Taxa fluvial (RCA)</span><span id="d-taxas-regionais">-</span></div>
               <div class="line" id="linha-taxa-balsa" style="display:none;"><span>Balsa</span><span id="d-taxa-balsa">-</span></div>
               <div class="line" id="linha-taxas" style="display:none;"><span>Taxas adicionais</span><span id="d-taxas">-</span></div>
-              <div class="line" id="linha-custos-extras" style="display:none;"><span>Custos extras</span><span id="d-custos-extras">-</span></div>
-              <div class="line" id="linha-margem-lucro" style="display:none;"><span>Margem de lucro</span><span id="d-margem-lucro">-</span></div>
+              <div class="line subtotal-line"><span>Total de impostos e taxas</span><span id="d-total-impostos-taxas">-</span></div>
+            </div>
+            <div class="breakdown">
+              <h3>Total geral</h3>
+              <div class="line subtotal-line"><span>Custo da operação + impostos e taxas</span><span id="d-operacao-mais-impostos">-</span></div>
               <div class="line" id="linha-pis-cofins" style="display:none;"><span>PIS/COFINS</span><span id="d-pis-cofins">-</span></div>
               <div class="line" id="linha-icms" style="display:none;"><span>ICMS</span><span id="d-icms">-</span></div>
+              <div class="line subtotal-line"><span>Total com impostos (antes da margem)</span><span id="d-total-antes-margem">-</span></div>
+              <div class="line" id="linha-margem-lucro" style="display:none;"><span>Margem de lucro</span><span id="d-margem-lucro">-</span></div>
               <div class="line total-line"><span>Frete total</span><span id="d-total">-</span></div>
             </div>
             <div class="breakdown" id="bloco-detalhe-taxas" style="display:none;">
@@ -397,7 +407,7 @@
             </div>
             <div style="padding:12px 20px;border-top:1px solid var(--border-soft);">
               <button type="button" id="btn-toggle-memoria" style="width:100%;background:none;border:1px dashed var(--border);border-radius:7px;padding:9px;font-size:11.5px;color:var(--text-dim);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;">
-                <i class="ti ti-list-details"></i> <span id="btn-toggle-memoria-label">Ver todas as variáveis do cálculo</span>
+                <i class="ti ti-list-details"></i> <span id="btn-toggle-memoria-label">Ver detalhes das variáveis de cálculo</span>
               </button>
               <div class="breakdown" id="bloco-memoria-calculo" style="display:none;margin-top:10px;"></div>
             </div>
@@ -654,13 +664,23 @@
               <div class="line"><span>Frete base</span><span id="frac-d-base">-</span></div>
               <div class="line"><span>Frete ajustado</span><span id="frac-d-ajustado">-</span></div>
               <div class="line" id="frac-linha-pedagio" style="display:none;"><span>Pedágio</span><span id="frac-d-pedagio">-</span></div>
+              <div class="line" id="frac-linha-custos-extras" style="display:none;"><span>Custos extras</span><span id="frac-d-custos-extras">-</span></div>
+              <div class="line subtotal-line"><span>Total do custo da operação</span><span id="frac-d-total-operacao">-</span></div>
+            </div>
+            <div class="breakdown">
+              <h3>Impostos e taxas</h3>
               <div class="line" id="frac-linha-taxas-regionais" style="display:none;"><span>Taxa fluvial (RCA)</span><span id="frac-d-taxas-regionais">-</span></div>
               <div class="line" id="frac-linha-taxa-balsa" style="display:none;"><span>Balsa</span><span id="frac-d-taxa-balsa">-</span></div>
               <div class="line" id="frac-linha-taxas" style="display:none;"><span>Taxas adicionais</span><span id="frac-d-taxas">-</span></div>
-              <div class="line" id="frac-linha-custos-extras" style="display:none;"><span>Custos extras</span><span id="frac-d-custos-extras">-</span></div>
-              <div class="line" id="frac-linha-margem-lucro" style="display:none;"><span>Margem de lucro</span><span id="frac-d-margem-lucro">-</span></div>
+              <div class="line subtotal-line"><span>Total de impostos e taxas</span><span id="frac-d-total-impostos-taxas">-</span></div>
+            </div>
+            <div class="breakdown">
+              <h3>Total geral</h3>
+              <div class="line subtotal-line"><span>Custo da operação + impostos e taxas</span><span id="frac-d-operacao-mais-impostos">-</span></div>
               <div class="line" id="frac-linha-pis-cofins" style="display:none;"><span>PIS/COFINS</span><span id="frac-d-pis-cofins">-</span></div>
               <div class="line" id="frac-linha-icms" style="display:none;"><span>ICMS</span><span id="frac-d-icms">-</span></div>
+              <div class="line subtotal-line"><span>Total com impostos (antes da margem)</span><span id="frac-d-total-antes-margem">-</span></div>
+              <div class="line" id="frac-linha-margem-lucro" style="display:none;"><span>Margem de lucro</span><span id="frac-d-margem-lucro">-</span></div>
               <div class="line total-line"><span>Frete total</span><span id="frac-d-total">-</span></div>
             </div>
             <div class="breakdown" id="frac-bloco-detalhe-taxas" style="display:none;">
@@ -673,7 +693,7 @@
             </div>
             <div style="padding:12px 20px;border-top:1px solid var(--border-soft);">
               <button type="button" id="frac-btn-toggle-memoria" style="width:100%;background:none;border:1px dashed var(--border);border-radius:7px;padding:9px;font-size:11.5px;color:var(--text-dim);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;">
-                <i class="ti ti-list-details"></i> <span id="frac-btn-toggle-memoria-label">Ver todas as variáveis do cálculo</span>
+                <i class="ti ti-list-details"></i> <span id="frac-btn-toggle-memoria-label">Ver detalhes das variáveis de cálculo</span>
               </button>
               <div class="breakdown" id="frac-bloco-memoria-calculo" style="display:none;margin-top:10px;"></div>
             </div>

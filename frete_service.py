@@ -1226,6 +1226,19 @@ def calcular_orcamento(
 
     custo_entrega_terceirizada = valor_entrega_terceirizada if entrega_terceirizada else 0.0
 
+    # Separa o frete_total (pré-impostos e pré-margem) em dois grupos pra
+    # exibição: custo da operação (transporte em si — frete ajustado,
+    # coleta, entrega, pedágio, manutenção, retorno, custos extras) e
+    # impostos e taxas (taxas adicionais/regionais e taxa de balsa — tudo
+    # que já é chamado de "taxa" no cadastro). PIS/COFINS, ICMS e a margem
+    # de lucro ficam de fora daqui: são aplicados em cascata por cima
+    # desse total, ver mais abaixo.
+    total_custo_operacao = (
+        frete_ajustado + custo_coleta + custo_entrega_terceirizada
+        + custo_extra_total + pedagio + custo_manutencao + custo_retorno
+    )
+    total_impostos_taxas = custo_taxas_adicionais + custo_taxas_regionais + custo_balsa
+
     frete_total = (
         frete_ajustado
         + custo_coleta
@@ -1239,19 +1252,13 @@ def calcular_orcamento(
         + custo_retorno
     )
 
-    # Margem de lucro — markup simples sobre o frete_total apurado até
-    # aqui (já com custos extras, pedágio, coleta etc.), antes de
-    # PIS/COFINS e ICMS: os impostos passam a incidir sobre o preço já
-    # com a margem embutida, não só sobre o custo.
-    frete_sem_margem_lucro = frete_total
-    frete_total = frete_sem_margem_lucro * (1 + margem_lucro_pct / 100)
-    valor_margem_lucro = frete_total - frete_sem_margem_lucro
-
-    # PIS/COFINS — "por dentro" (gross-up), igual ao ICMS abaixo, mas com
-    # alíquota federal única (não varia por UF, ver
-    # ParametrosFrete.aliquota_pis_cofins) e aplicado ANTES do ICMS: o
-    # ICMS incide sobre o frete já com PIS/COFINS embutido, não o
-    # contrário.
+    # PIS/COFINS — "por dentro" (gross-up) sobre o custo da operação +
+    # impostos e taxas apurado até aqui, com alíquota federal única (não
+    # varia por UF, ver ParametrosFrete.aliquota_pis_cofins) e aplicado
+    # ANTES do ICMS: o ICMS incide sobre o frete já com PIS/COFINS
+    # embutido, não o contrário. A margem de lucro só entra por último,
+    # depois dos dois impostos (ver mais abaixo) — ela é markup sobre o
+    # preço já com tudo embutido, não só sobre o custo/impostos.
     frete_sem_pis_cofins = frete_total
     valor_pis_cofins = 0.0
     aliquota_pis_cofins_pct = p.aliquota_pis_cofins
@@ -1281,6 +1288,14 @@ def calcular_orcamento(
             )
         frete_total = frete_sem_icms / (1 - aliquota_icms_pct / 100)
         valor_icms = frete_total - frete_sem_icms
+
+    # Margem de lucro — markup simples aplicado por ÚLTIMO, sobre o preço
+    # já com PIS/COFINS e ICMS embutidos (não sobre o custo/impostos
+    # isolados): a margem é a última camada antes do preço final cobrado
+    # do cliente.
+    frete_sem_margem_lucro = frete_total
+    frete_total = frete_sem_margem_lucro * (1 + margem_lucro_pct / 100)
+    valor_margem_lucro = frete_total - frete_sem_margem_lucro
 
     return {
         "entrada": {
@@ -1351,6 +1366,8 @@ def calcular_orcamento(
             "taxa_balsa": detalhe_balsa,
             "custo_balsa": round(custo_balsa, 2),
             "balsa_outro_veiculo": balsa_outro_veiculo or None,
+            "total_custo_operacao": round(total_custo_operacao, 2),
+            "total_impostos_taxas": round(total_impostos_taxas, 2),
             "margem_lucro_pct": margem_lucro_pct,
             "frete_sem_margem_lucro": round(frete_sem_margem_lucro, 2),
             "valor_margem_lucro": round(valor_margem_lucro, 2),
@@ -1503,6 +1520,14 @@ def calcular_orcamento_fracionado(
     else:
         balsa_outro_veiculo = _taxa_balsa_outros_veiculos(p, cidade_origem, cidade_destino, v.nome)
 
+    # Mesma separação de calcular_orcamento: custo da operação (frete
+    # ajustado, pedágio, custos extras) x impostos e taxas (taxas
+    # adicionais/regionais e balsa) -- PIS/COFINS, ICMS e margem de lucro
+    # ficam de fora (aplicados em cascata por cima, margem por último, ver
+    # abaixo).
+    total_custo_operacao = frete_ajustado + custo_extra_total + pedagio
+    total_impostos_taxas = custo_taxas_adicionais + custo_taxas_regionais + custo_balsa
+
     frete_total = (
         frete_ajustado
         + custo_taxas_adicionais
@@ -1512,10 +1537,9 @@ def calcular_orcamento_fracionado(
         + pedagio
     )
 
-    frete_sem_margem_lucro = frete_total
-    frete_total = frete_sem_margem_lucro * (1 + margem_lucro_pct / 100)
-    valor_margem_lucro = frete_total - frete_sem_margem_lucro
-
+    # Mesma ordem de calcular_orcamento: PIS/COFINS e ICMS incidem sobre o
+    # custo da operação + impostos e taxas, e a margem de lucro é aplicada
+    # por último, sobre o preço já com os dois impostos embutidos.
     frete_sem_pis_cofins = frete_total
     valor_pis_cofins = 0.0
     aliquota_pis_cofins_pct = p.aliquota_pis_cofins
@@ -1538,6 +1562,10 @@ def calcular_orcamento_fracionado(
             )
         frete_total = frete_sem_icms / (1 - aliquota_icms_pct / 100)
         valor_icms = frete_total - frete_sem_icms
+
+    frete_sem_margem_lucro = frete_total
+    frete_total = frete_sem_margem_lucro * (1 + margem_lucro_pct / 100)
+    valor_margem_lucro = frete_total - frete_sem_margem_lucro
 
     return {
         "entrada": {
@@ -1584,6 +1612,8 @@ def calcular_orcamento_fracionado(
             "taxa_balsa": detalhe_balsa,
             "custo_balsa": round(custo_balsa, 2),
             "balsa_outro_veiculo": balsa_outro_veiculo or None,
+            "total_custo_operacao": round(total_custo_operacao, 2),
+            "total_impostos_taxas": round(total_impostos_taxas, 2),
             "margem_lucro_pct": margem_lucro_pct,
             "frete_sem_margem_lucro": round(frete_sem_margem_lucro, 2),
             "valor_margem_lucro": round(valor_margem_lucro, 2),

@@ -402,7 +402,11 @@ def test_taxa_regional_lista_de_cidades_aplica_em_qualquer_uma(parametros):
         assert resultado["calculos_intermediarios"]["custo_taxas_regionais"] == pytest.approx(30.0)
 
 
-def test_margem_lucro_e_markup_simples_antes_dos_impostos(parametros):
+def test_margem_lucro_e_markup_simples_depois_dos_impostos(parametros):
+    # Sem PIS/COFINS nem ICMS cadastrados nessa rota (aliquotas 0%), então
+    # a margem incide direto sobre o custo -- não dá pra ver aqui a
+    # diferença de aplicar a margem por último (ver
+    # test_pis_cofins_e_icms_aplicados_antes_da_margem_de_lucro pra isso).
     resultado_30 = fs.calcular_orcamento(
         peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
         categoria="Geral", transporte="Rodoviário", sla="Padrão",
@@ -630,10 +634,14 @@ def test_aliquota_icms_nao_aplicada_quando_rota_nao_bate(parametros):
 
 
 def test_aliquota_icms_aplica_gross_up_no_frete_total(parametros):
-    # Gross-up "por dentro": o frete sem imposto (220 de custo + 40% de
-    # margem de lucro = 308) precisa continuar sendo 88% do frete final
-    # quando a alíquota é 12% -- ou seja, o frete final é
-    # 308 / (1 - 0.12) = 350, não um acréscimo simples de 308 * 1.12.
+    # Gross-up "por dentro": o frete sem imposto (220 de custo da
+    # operação + impostos e taxas, ainda sem margem de lucro) precisa
+    # continuar sendo 88% do frete com ICMS quando a alíquota é 12% --
+    # ou seja, 220 / (1 - 0.12) = 250, não um acréscimo simples de
+    # 220 * 1.12. A margem de lucro (40% padrão) entra só depois, sobre
+    # esse valor já com ICMS: 250 * 1.40 = 350 (mesmo total final de
+    # quando a margem entrava primeiro, já que multiplicação é
+    # comutativa -- só a composição intermediária muda).
     parametros.aliquotas_icms.append(fs.AliquotaIcms(estado_origem="SP", estado_destino="RJ", aliquota=12.0))
     resultado = fs.calcular_orcamento(
         peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
@@ -641,9 +649,10 @@ def test_aliquota_icms_aplica_gross_up_no_frete_total(parametros):
         cidade_origem="São Paulo, SP, Brasil", cidade_destino="Rio de Janeiro, RJ, Brasil",
     )
     calc = resultado["calculos_intermediarios"]
-    assert calc["frete_sem_icms"] == pytest.approx(308.0)
+    assert calc["frete_sem_icms"] == pytest.approx(220.0)
     assert calc["aliquota_icms_pct"] == pytest.approx(12.0)
-    assert calc["valor_icms"] == pytest.approx(42.0, abs=0.01)
+    assert calc["valor_icms"] == pytest.approx(30.0, abs=0.01)
+    assert calc["frete_sem_margem_lucro"] == pytest.approx(250.0, abs=0.01)
     assert resultado["resultado"]["frete_total"] == pytest.approx(350.0, abs=0.01)
 
 
@@ -676,9 +685,11 @@ def test_aliquota_icms_resolve_uf_de_endereco_curto_cidade_uf(parametros):
 
 def test_pis_cofins_aplica_gross_up_no_frete_total(parametros):
     # Mesmo raciocínio do gross-up de ICMS: o frete sem imposto (220 de
-    # custo + 40% de margem de lucro = 308) precisa continuar sendo
-    # 90,75% do frete final quando a alíquota é 9,25% -- 308 / (1 -
-    # 0,0925), não um acréscimo simples "por fora".
+    # custo da operação + impostos e taxas, ainda sem margem de lucro)
+    # precisa continuar sendo 90,75% do frete com PIS/COFINS quando a
+    # alíquota é 9,25% -- 220 / (1 - 0,0925), não um acréscimo simples
+    # "por fora". A margem de lucro (40% padrão) entra só depois, sobre
+    # esse valor já com o imposto.
     parametros.aliquota_pis_cofins = 9.25
     resultado = fs.calcular_orcamento(
         peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
@@ -686,18 +697,21 @@ def test_pis_cofins_aplica_gross_up_no_frete_total(parametros):
         cidade_origem="São Paulo, SP, Brasil", cidade_destino="Curitiba, PR, Brasil",
     )
     calc = resultado["calculos_intermediarios"]
-    esperado = 308.0 / (1 - 0.0925)  # == 308 / 0.9075
-    assert calc["frete_sem_pis_cofins"] == pytest.approx(308.0)
+    esperado = 220.0 / (1 - 0.0925)  # == 220 / 0.9075
+    assert calc["frete_sem_pis_cofins"] == pytest.approx(220.0)
     assert calc["aliquota_pis_cofins_pct"] == pytest.approx(9.25)
-    assert calc["valor_pis_cofins"] == pytest.approx(esperado - 308.0, abs=0.01)
-    assert resultado["resultado"]["frete_total"] == pytest.approx(esperado, abs=0.01)
+    assert calc["valor_pis_cofins"] == pytest.approx(esperado - 220.0, abs=0.01)
+    assert calc["frete_sem_margem_lucro"] == pytest.approx(esperado, abs=0.01)
+    assert resultado["resultado"]["frete_total"] == pytest.approx(esperado * 1.40, abs=0.01)
 
 
-def test_pis_cofins_e_aplicado_antes_do_icms(parametros):
-    # PIS/COFINS entra primeiro (gross-up sobre o frete já com margem de
-    # lucro), e o ICMS incide por cima do frete que já saiu com
-    # PIS/COFINS embutido -- não dos dois impostos somados "por fora"
-    # nem do ICMS calculado sobre o frete base original.
+def test_pis_cofins_e_icms_aplicados_antes_da_margem_de_lucro(parametros):
+    # PIS/COFINS entra primeiro (gross-up sobre o custo da operação +
+    # impostos e taxas), e o ICMS incide por cima do frete que já saiu
+    # com PIS/COFINS embutido -- não dos dois impostos somados "por
+    # fora" nem do ICMS calculado sobre o custo original. A margem de
+    # lucro (40% padrão) só entra por último, sobre o preço já com os
+    # dois impostos embutidos.
     parametros.aliquota_pis_cofins = 9.25
     parametros.aliquotas_icms.append(fs.AliquotaIcms(estado_origem="SP", estado_destino="RJ", aliquota=12.0))
     resultado = fs.calcular_orcamento(
@@ -706,11 +720,12 @@ def test_pis_cofins_e_aplicado_antes_do_icms(parametros):
         cidade_origem="São Paulo, SP, Brasil", cidade_destino="Rio de Janeiro, RJ, Brasil",
     )
     calc = resultado["calculos_intermediarios"]
-    frete_com_pis_cofins = 308.0 / (1 - 0.0925)
+    frete_com_pis_cofins = 220.0 / (1 - 0.0925)
     frete_com_icms = frete_com_pis_cofins / (1 - 0.12)
-    assert calc["frete_sem_pis_cofins"] == pytest.approx(308.0)
+    assert calc["frete_sem_pis_cofins"] == pytest.approx(220.0)
     assert calc["frete_sem_icms"] == pytest.approx(frete_com_pis_cofins, abs=0.01)
-    assert resultado["resultado"]["frete_total"] == pytest.approx(frete_com_icms, abs=0.01)
+    assert calc["frete_sem_margem_lucro"] == pytest.approx(frete_com_icms, abs=0.01)
+    assert resultado["resultado"]["frete_total"] == pytest.approx(frete_com_icms * 1.40, abs=0.01)
 
 
 def test_sem_aliquota_pis_cofins_frete_total_fica_igual(parametros):

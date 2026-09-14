@@ -92,9 +92,6 @@ const MEMORIA_CALCULO_CAMPOS = [
   {header: 'Taxas'},
   {chave: 'custos_extras', rotulo: 'Custos extras aplicados', tipo: 'lista_custo_extra'},
   {chave: 'custo_extra_total', rotulo: 'Total de custos extras', tipo: 'brl'},
-  {chave: 'margem_lucro_pct', rotulo: 'Margem de lucro', tipo: 'pct'},
-  {chave: 'frete_sem_margem_lucro', rotulo: 'Frete sem margem de lucro', tipo: 'brl'},
-  {chave: 'valor_margem_lucro', rotulo: 'Valor da margem de lucro', tipo: 'brl'},
   {chave: 'taxas_adicionais', rotulo: 'Taxas adicionais aplicadas', tipo: 'lista_taxa'},
   {chave: 'custo_taxas_adicionais', rotulo: 'Total de taxas adicionais', tipo: 'brl'},
   {chave: 'taxas_regionais', rotulo: 'Taxa fluvial (RCA) aplicada', tipo: 'lista_taxa_regional'},
@@ -102,6 +99,8 @@ const MEMORIA_CALCULO_CAMPOS = [
   {chave: 'taxa_balsa', rotulo: 'Taxa de balsa aplicada', tipo: 'balsa'},
   {chave: 'balsa_outro_veiculo', rotulo: 'Taxa de balsa cadastrada só p/ outro veículo', tipo: 'lista_veiculos'},
   {chave: 'custo_balsa', rotulo: 'Custo de balsa', tipo: 'brl'},
+  {chave: 'total_custo_operacao', rotulo: 'Total do custo da operação', tipo: 'brl'},
+  {chave: 'total_impostos_taxas', rotulo: 'Total de impostos e taxas', tipo: 'brl'},
 
   {header: 'PIS/COFINS'},
   {chave: 'aliquota_pis_cofins_pct', rotulo: 'Alíquota de PIS/COFINS', tipo: 'pct'},
@@ -114,6 +113,11 @@ const MEMORIA_CALCULO_CAMPOS = [
   {chave: 'aliquota_icms_pct', rotulo: 'Alíquota de ICMS', tipo: 'pct'},
   {chave: 'frete_sem_icms', rotulo: 'Frete sem ICMS', tipo: 'brl'},
   {chave: 'valor_icms', rotulo: 'Valor do ICMS (gross-up)', tipo: 'brl'},
+
+  {header: 'Margem de lucro'},
+  {chave: 'margem_lucro_pct', rotulo: 'Margem de lucro', tipo: 'pct'},
+  {chave: 'frete_sem_margem_lucro', rotulo: 'Frete sem margem de lucro (já com impostos)', tipo: 'brl'},
+  {chave: 'valor_margem_lucro', rotulo: 'Valor da margem de lucro', tipo: 'brl'},
 
   {header: 'Resultado'},
   {chave: 'frete_total', rotulo: 'Frete total', tipo: 'brl'},
@@ -1209,6 +1213,16 @@ form.addEventListener('submit', async (ev) => {
       linhaIcms.style.display = 'none';
     }
 
+    // Subtotais agrupados (ver frete_service.calcular_orcamento): custo da
+    // operação (transporte em si) x impostos e taxas, depois PIS/COFINS e
+    // ICMS por cima dessa soma, e a margem de lucro só entra por último —
+    // markup sobre o preço já com os dois impostos embutidos, não sobre o
+    // custo isolado.
+    document.getElementById('d-total-operacao').textContent = fmtBRL(calc.total_custo_operacao);
+    document.getElementById('d-total-impostos-taxas').textContent = fmtBRL(calc.total_impostos_taxas);
+    document.getElementById('d-operacao-mais-impostos').textContent = fmtBRL(calc.frete_sem_pis_cofins);
+    document.getElementById('d-total-antes-margem').textContent = fmtBRL(calc.frete_sem_margem_lucro);
+
     document.getElementById('d-total').textContent = fmtBRL(result.frete_total);
 
     resultEmpty.style.display = 'none';
@@ -1528,7 +1542,7 @@ document.getElementById('frac-btn-toggle-memoria').addEventListener('click', () 
   const label = document.getElementById('frac-btn-toggle-memoria-label');
   const abrindo = bloco.style.display === 'none';
   bloco.style.display = abrindo ? '' : 'none';
-  label.textContent = abrindo ? 'Esconder todas as variáveis do cálculo' : 'Ver todas as variáveis do cálculo';
+  label.textContent = abrindo ? 'Esconder detalhes das variáveis de cálculo' : 'Ver detalhes das variáveis de cálculo';
 });
 
 document.getElementById('frac-form-frete').addEventListener('submit', async (ev) => {
@@ -1676,6 +1690,11 @@ document.getElementById('frac-form-frete').addEventListener('submit', async (ev)
       linhaIcms.style.display = 'flex';
     }else{ linhaIcms.style.display = 'none'; }
 
+    document.getElementById('frac-d-total-operacao').textContent = fmtBRL(calc.total_custo_operacao);
+    document.getElementById('frac-d-total-impostos-taxas').textContent = fmtBRL(calc.total_impostos_taxas);
+    document.getElementById('frac-d-operacao-mais-impostos').textContent = fmtBRL(calc.frete_sem_pis_cofins);
+    document.getElementById('frac-d-total-antes-margem').textContent = fmtBRL(calc.frete_sem_margem_lucro);
+
     document.getElementById('frac-d-total').textContent = fmtBRL(result.frete_total);
 
     document.getElementById('frac-result-empty').style.display = 'none';
@@ -1770,7 +1789,7 @@ document.getElementById('btn-toggle-memoria').addEventListener('click', () => {
   const label = document.getElementById('btn-toggle-memoria-label');
   const abrindo = bloco.style.display === 'none';
   bloco.style.display = abrindo ? '' : 'none';
-  label.textContent = abrindo ? 'Esconder todas as variáveis do cálculo' : 'Ver todas as variáveis do cálculo';
+  label.textContent = abrindo ? 'Esconder detalhes das variáveis de cálculo' : 'Ver detalhes das variáveis de cálculo';
 });
 
 document.getElementById('btn-salvar-historico').addEventListener('click', async () => {
