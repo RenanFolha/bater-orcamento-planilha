@@ -428,7 +428,7 @@ def _buscar_rota_no_historico(origem: str, destino: str, veiculo: str | None) ->
     if not cidade_o or not cidade_d:
         return None
     if (
-        fs.destino_tem_prioridade_rota_cadastrada(fs.parametros, cidade_d)
+        fs.destino_tem_prioridade_rota_cadastrada(fs.parametros, destino)
         or fs.distancia_fixa_aplicavel(fs.parametros, origem, destino) is not None
         or fs.distancia_fixa_aplicavel(fs.parametros, destino, origem) is not None
     ):

@@ -676,18 +676,49 @@ def _campo_bate_curinga(cadastrado: str, valor: str) -> bool:
     return cadastrado == CORINGA_ROTA or cadastrado == valor
 
 
-def _normalizar_par_cidades(cidade_origem: str | None, cidade_destino: str | None) -> tuple[str, str] | None:
+def _campo_bate_localidade(cadastrado: str, cidade: str, uf: str) -> bool:
+    """Compara um campo cidade_destino cadastrado (taxa de balsa,
+    distância fixa ou prioridade de rota) contra a cidade/UF resolvidas
+    do frete. Além do curinga "*" (casa com qualquer) e do nome exato de
+    cidade, aceita uma sigla de UF normalizada cadastrada no lugar da
+    cidade — ex: "am" casa com Manaus, Manacapuru, Itacoatiara etc., sem
+    precisar cadastrar uma linha por cidade do estado (ver
+    _especificidade_localidade pra critério de desempate quando mais de
+    uma linha bate)."""
+    if cadastrado == CORINGA_ROTA:
+        return True
+    if cadastrado in _UFS_BR_SIGLAS:
+        return bool(uf) and cadastrado == uf
+    return cadastrado == cidade
+
+
+def _especificidade_localidade(cadastrado: str) -> int:
+    """Nível de especificidade de um campo cidade_destino pra desempate
+    quando mais de uma linha cadastrada bate (ver _campo_bate_localidade):
+    curinga "*" (0) é menos específico que uma sigla de UF (1), que por
+    sua vez é menos específica que o nome exato de uma cidade (2) — uma
+    exceção cadastrada pra uma cidade específica sempre vence a regra
+    geral do estado ou do curinga total."""
+    if cadastrado == CORINGA_ROTA:
+        return 0
+    if cadastrado in _UFS_BR_SIGLAS:
+        return 1
+    return 2
+
+
+def _normalizar_par_cidades(cidade_origem: str | None, cidade_destino: str | None) -> tuple[str, str, str] | None:
     """Extrai e normaliza (minúsculas, sem acento) a cidade de origem e
-    destino de dois textos de endereço/filial — usado pelas checagens de
-    taxa de balsa direcionais. Devolve None se alguma das duas não puder
-    ser identificada."""
+    destino de dois textos de endereço/filial, mais a UF do destino —
+    usado pelas checagens de taxa de balsa/distância fixa direcionais
+    (ver _campo_bate_localidade). Devolve None se alguma das duas cidades
+    não puder ser identificada."""
     if not cidade_origem or not cidade_destino:
         return None
     cid_o = _cidade_da_retirada(cidade_origem)
-    cid_d = _cidade_da_retirada(cidade_destino)
+    cid_d, uf_d = _cidade_e_uf_da_retirada(cidade_destino)
     if not cid_o or not cid_d:
         return None
-    return db.normalizar_texto(cid_o), db.normalizar_texto(cid_d)
+    return db.normalizar_texto(cid_o), db.normalizar_texto(cid_d), db.normalizar_texto(uf_d)
 
 
 def _taxa_balsa_aplicavel(
@@ -700,23 +731,26 @@ def _taxa_balsa_aplicavel(
     valor também pode variar por veículo (balsa cobra por categoria do
     veículo embarcado), então precisa bater o veículo escolhido também.
 
-    Cada um dos três campos (cidade_origem, cidade_destino, veiculo)
-    aceita "*" como curinga — ex: uma travessia por corredor fluvial
-    (Belém↔Manaus) vale pra praticamente qualquer origem no Brasil, sem
-    precisar cadastrar uma linha por UF. Quando mais de uma linha bate
-    (ex: um curinga "*"→Manaus e uma exceção específica cadastrada pra
-    uma origem que NÃO usa balsa naquele destino), vence a linha mais
-    específica — quem tem mais campos exatos (não-curinga)."""
+    Os três campos (cidade_origem, cidade_destino, veiculo) aceitam "*"
+    como curinga — ex: uma travessia por corredor fluvial (Belém↔Manaus)
+    vale pra praticamente qualquer origem no Brasil, sem precisar
+    cadastrar uma linha por UF. Além disso, cidade_destino também aceita
+    uma sigla de UF (ex: "AM") em vez do nome de uma cidade — casa com
+    qualquer cidade daquele estado, não só a capital (ver
+    _campo_bate_localidade). Quando mais de uma linha bate (ex: um
+    curinga "*"→AM e uma exceção específica cadastrada pra uma origem
+    que NÃO usa balsa naquele destino), vence a linha mais específica —
+    cidade exata > UF > curinga (ver _especificidade_localidade)."""
     par = _normalizar_par_cidades(cidade_origem, cidade_destino)
     if par is None:
         return None
-    cid_o, cid_d = par
+    cid_o, cid_d, uf_d = par
     veic = db.normalizar_texto(veiculo)
     candidatas = []
     for t in p.taxas_balsa:
         t_o, t_d, t_v = db.normalizar_texto(t.cidade_origem), db.normalizar_texto(t.cidade_destino), db.normalizar_texto(t.veiculo)
-        if _campo_bate_curinga(t_o, cid_o) and _campo_bate_curinga(t_d, cid_d) and _campo_bate_curinga(t_v, veic):
-            especificidade = (t_o != CORINGA_ROTA) + (t_d != CORINGA_ROTA) + (t_v != CORINGA_ROTA)
+        if _campo_bate_curinga(t_o, cid_o) and _campo_bate_localidade(t_d, cid_d, uf_d) and _campo_bate_curinga(t_v, veic):
+            especificidade = (t_o != CORINGA_ROTA) + _especificidade_localidade(t_d) + (t_v != CORINGA_ROTA)
             candidatas.append((especificidade, t))
     if not candidatas:
         return None
@@ -735,21 +769,23 @@ def prioridade_rota_aplicavel(
 
     A origem é comparada pela UF (não pela cidade exata): a regra
     normalmente vale pro estado inteiro de onde a carga sai, não só uma
-    cidade específica. estado_origem e cidade_destino aceitam "*" como
-    curinga, mesmo mecanismo de _taxa_balsa_aplicavel — quando mais de uma
-    linha bate, vence a mais específica."""
+    cidade específica. estado_origem aceita "*" como curinga; cidade_destino
+    aceita "*", uma sigla de UF (ex: "AM" — casa com qualquer cidade do
+    estado, não só a capital) ou o nome exato de uma cidade, mesmo
+    mecanismo de _taxa_balsa_aplicavel (ver _campo_bate_localidade) —
+    quando mais de uma linha bate, vence a mais específica."""
     if not cidade_origem or not cidade_destino:
         return None
     _, uf_origem = cidade_e_uf(cidade_origem)
-    cid_d = _cidade_da_retirada(cidade_destino)
+    cid_d, uf_destino = _cidade_e_uf_da_retirada(cidade_destino)
     if not cid_d:
         return None
-    uf_o, cid_d = db.normalizar_texto(uf_origem), db.normalizar_texto(cid_d)
+    uf_o, cid_d, uf_d = db.normalizar_texto(uf_origem), db.normalizar_texto(cid_d), db.normalizar_texto(uf_destino)
     candidatas = []
     for e in p.prioridades_rota:
         e_uf, e_d = db.normalizar_texto(e.estado_origem), db.normalizar_texto(e.cidade_destino)
-        if _campo_bate_curinga(e_uf, uf_o) and _campo_bate_curinga(e_d, cid_d):
-            especificidade = (e_uf != CORINGA_ROTA) + (e_d != CORINGA_ROTA)
+        if _campo_bate_curinga(e_uf, uf_o) and _campo_bate_localidade(e_d, cid_d, uf_d):
+            especificidade = (e_uf != CORINGA_ROTA) + _especificidade_localidade(e_d)
             candidatas.append((especificidade, e))
     if not candidatas:
         return None
@@ -758,7 +794,8 @@ def prioridade_rota_aplicavel(
 
 def destino_tem_prioridade_rota_cadastrada(p: "ParametrosFrete", cidade_destino: str | None) -> bool:
     """True se existe alguma Prioridade de Rota cadastrada pra essa cidade
-    de destino, em qualquer estado de origem (ignora a UF, ao contrário de
+    de destino (ou pro estado dela, ver _campo_bate_localidade), em
+    qualquer estado de origem (ignora a UF de origem, ao contrário de
     prioridade_rota_aplicavel). Usada só por
     geo_service._buscar_rota_no_historico pra decidir se pode confiar numa
     distância reaproveitada do histórico: a prioridade pode ter sido
@@ -766,12 +803,14 @@ def destino_tem_prioridade_rota_cadastrada(p: "ParametrosFrete", cidade_destino:
     cotado antes de existir a escala obrigatória por Belém), e reaproveitar
     essa distância antiga às cegas manteria a rota errada (terrestre
     direta) pra sempre nas cotações seguintes."""
-    cid_d = _cidade_da_retirada(cidade_destino) if cidade_destino else None
+    if not cidade_destino:
+        return False
+    cid_d, uf_d = _cidade_e_uf_da_retirada(cidade_destino)
     if not cid_d:
         return False
-    cid_d = db.normalizar_texto(cid_d)
+    cid_d, uf_d = db.normalizar_texto(cid_d), db.normalizar_texto(uf_d)
     return any(
-        _campo_bate_curinga(db.normalizar_texto(e.cidade_destino), cid_d)
+        _campo_bate_localidade(db.normalizar_texto(e.cidade_destino), cid_d, uf_d)
         for e in p.prioridades_rota
     )
 
@@ -852,7 +891,7 @@ def pedagio_rota_aplicavel(
     par = _normalizar_par_cidades(cidade_origem, cidade_destino)
     if par is None or numero_eixos <= 0:
         return None
-    cid_o, cid_d = par
+    cid_o, cid_d, _uf_d = par
     candidatas = []
     for pr in p.pedagios_rota:
         pr_o, pr_d = db.normalizar_texto(pr.cidade_origem), db.normalizar_texto(pr.cidade_destino)
@@ -887,18 +926,20 @@ def distancia_fixa_aplicavel(
     geo_service pra sobrepor o cálculo automático (rodoviário via OSRM/
     Google) quando a rota real usada na prática é bem diferente (ex:
     trecho com travessia de balsa, mais curto que contornar de estrada
-    — o cálculo automático não sabe considerar isso). Direcional e com
-    curinga "*", mesmo mecanismo de _taxa_balsa_aplicavel; quando mais
-    de uma linha bate, vence a mais específica."""
+    — o cálculo automático não sabe considerar isso). Direcional; aceita
+    "*", uma sigla de UF (ex: "AM" — casa com qualquer cidade do estado)
+    ou o nome exato de uma cidade em cidade_destino, mesmo mecanismo de
+    _taxa_balsa_aplicavel (ver _campo_bate_localidade); quando mais de
+    uma linha bate, vence a mais específica."""
     par = _normalizar_par_cidades(cidade_origem, cidade_destino)
     if par is None:
         return None
-    cid_o, cid_d = par
+    cid_o, cid_d, uf_d = par
     candidatas = []
     for df in p.distancias_fixas:
         df_o, df_d = db.normalizar_texto(df.cidade_origem), db.normalizar_texto(df.cidade_destino)
-        if _campo_bate_curinga(df_o, cid_o) and _campo_bate_curinga(df_d, cid_d):
-            especificidade = (df_o != CORINGA_ROTA) + (df_d != CORINGA_ROTA)
+        if _campo_bate_curinga(df_o, cid_o) and _campo_bate_localidade(df_d, cid_d, uf_d):
+            especificidade = (df_o != CORINGA_ROTA) + _especificidade_localidade(df_d)
             candidatas.append((especificidade, df))
     if not candidatas:
         return None
@@ -938,12 +979,12 @@ def _taxa_balsa_outros_veiculos(
     par = _normalizar_par_cidades(cidade_origem, cidade_destino)
     if par is None:
         return []
-    cid_o, cid_d = par
+    cid_o, cid_d, uf_d = par
     veic_atual = db.normalizar_texto(veiculo_atual)
     encontrados = {
         t.veiculo for t in p.taxas_balsa
         if _campo_bate_curinga(db.normalizar_texto(t.cidade_origem), cid_o)
-        and _campo_bate_curinga(db.normalizar_texto(t.cidade_destino), cid_d)
+        and _campo_bate_localidade(db.normalizar_texto(t.cidade_destino), cid_d, uf_d)
         and db.normalizar_texto(t.veiculo) != veic_atual
     }
     return sorted(encontrados)
