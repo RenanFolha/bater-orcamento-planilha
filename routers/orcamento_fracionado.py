@@ -16,10 +16,13 @@ router = APIRouter(tags=["Orçamento Fracionado"])
 
 @router.post("/orcamento/fracionado")
 def orcamento_fracionado(payload: OrcamentoFracionadoRequest, usuario: dict | None = Depends(usuario_atual)):
-    # Mesma restrição de margem de 30% do orçamento normal (ver
+    # Mesma restrição de margem abaixo de 40% do orçamento normal (ver
     # routers/orcamento.py) — restrita a administradores.
-    if payload.margem_lucro_pct == 30 and not (usuario and usuario["role"] == "admin"):
-        raise HTTPException(status_code=403, detail="Margem de lucro de 30% é restrita a administradores.")
+    if payload.margem_lucro_pct < fs.MARGEM_LUCRO_MINIMA_SEM_ADMIN and not (usuario and usuario["role"] == "admin"):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Margem de lucro abaixo de {fs.MARGEM_LUCRO_MINIMA_SEM_ADMIN}% é restrita a administradores.",
+        )
     try:
         return fs.calcular_orcamento_fracionado(
             peso=payload.peso,

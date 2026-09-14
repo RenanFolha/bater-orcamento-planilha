@@ -13,12 +13,16 @@ router = APIRouter(tags=["Orçamento"])
 
 @router.post("/orcamento")
 def orcamento(payload: OrcamentoRequest, usuario: dict | None = Depends(usuario_atual)):
-    # Margem de 30% é restrita a administradores -- a tela já esconde essa
-    # opção de quem não é admin, mas isso sozinho não impede uma requisição
-    # HTTP direta (sem passar pela UI) de pedir 30% mesmo sem sessão de
-    # admin, já que este endpoint continua público pras demais margens.
-    if payload.margem_lucro_pct == 30 and not (usuario and usuario["role"] == "admin"):
-        raise HTTPException(status_code=403, detail="Margem de lucro de 30% é restrita a administradores.")
+    # Margem abaixo de 40% é restrita a administradores -- a tela já trava
+    # o campo em 40% pra quem não é admin, mas isso sozinho não impede uma
+    # requisição HTTP direta (sem passar pela UI) de pedir uma margem menor
+    # mesmo sem sessão de admin, já que este endpoint continua público pro
+    # restante do intervalo (ver fs.MARGEM_LUCRO_MINIMA_SEM_ADMIN).
+    if payload.margem_lucro_pct < fs.MARGEM_LUCRO_MINIMA_SEM_ADMIN and not (usuario and usuario["role"] == "admin"):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Margem de lucro abaixo de {fs.MARGEM_LUCRO_MINIMA_SEM_ADMIN}% é restrita a administradores.",
+        )
     try:
         return fs.calcular_orcamento(
             peso=payload.peso,

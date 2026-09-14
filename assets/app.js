@@ -1903,21 +1903,22 @@ document.querySelectorAll('.sidebar-nav a').forEach(link => {
 
 let currentUser = null;
 
-// 30% de margem de lucro só pode ser escolhido por administrador --
-// enquanto não for admin, a opção some do select (e se estava
-// selecionada, volta pro padrão de 40%). Chamado sempre que o estado de
-// login muda (ver atualizarUIAuth), não só na carga inicial da página.
-function atualizarOpcaoMargem30(admin){
-  // Mesma opção de 30% existe nos dois formulários (orçamento normal e
-  // Fracionado, ver 'opcao-margem-30'/'frac-opcao-margem-30') — os dois
-  // seguem a mesma regra de visibilidade.
-  [['opcao-margem-30', 'margem_lucro'], ['frac-opcao-margem-30', 'frac-margem_lucro']].forEach(([idOpcao, idSelect]) => {
-    const opcao30 = document.getElementById(idOpcao);
-    const selectMargem = document.getElementById(idSelect);
-    opcao30.style.display = admin ? '' : 'none';
-    opcao30.disabled = !admin;
-    if(!admin && selectMargem.value === '30'){
-      selectMargem.value = '40';
+// Margem de lucro é digitada livremente de 40% a 100% -- abaixo de 40%
+// só administrador pode digitar (mesma regra no backend, ver
+// fs.MARGEM_LUCRO_MINIMA_SEM_ADMIN em frete_service.py e a checagem em
+// routers/orcamento.py). Enquanto não for admin, o campo trava o mínimo
+// em 40% (e se já tinha um valor menor digitado, volta pro padrão de
+// 40%). Chamado sempre que o estado de login muda (ver atualizarUIAuth),
+// não só na carga inicial da página.
+function atualizarLimiteMargemLucro(admin){
+  // Mesmo campo existe nos dois formulários (orçamento normal e
+  // Fracionado, ver 'margem_lucro'/'frac-margem_lucro') — os dois seguem
+  // a mesma regra de limite mínimo.
+  ['margem_lucro', 'frac-margem_lucro'].forEach((id) => {
+    const input = document.getElementById(id);
+    input.min = admin ? 0 : 40;
+    if(!admin && parseFloat(input.value) < 40){
+      input.value = 40;
     }
   });
 }
@@ -1925,7 +1926,7 @@ function atualizarOpcaoMargem30(admin){
 function atualizarUIAuth(){
   const logado = !!currentUser;
   const admin = logado && currentUser.role === 'admin';
-  atualizarOpcaoMargem30(admin);
+  atualizarLimiteMargemLucro(admin);
 
   document.querySelectorAll('.sidebar-nav a[data-requer-login]').forEach(a => a.classList.toggle('hidden', !logado));
   document.querySelectorAll('.sidebar-nav a[data-requer-admin]').forEach(a => a.classList.toggle('hidden', !admin));

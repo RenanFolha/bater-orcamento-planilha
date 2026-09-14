@@ -80,11 +80,15 @@ def _valor_taxa(tipo: str, valor: float, valor_mercadoria: float) -> float:
 # hora, ver calcular_orcamento.
 CATEGORIAS_CUSTO_EXTRA = ["Paletização", "Carga", "Descarga", "Entrega Adicional", "Diversos"]
 
-# Margem de lucro: percentuais fixos selecionáveis por orçamento (markup
-# simples sobre o frete_total, ver calcular_orcamento). 30% é restrito a
-# administradores -- restrição só de UI (ver assets/app.js), o backend
-# aqui não tem noção de usuário/login.
-MARGENS_LUCRO_PERMITIDAS = [30, 40, 50]
+# Margem de lucro: digitada livremente por orçamento (markup simples
+# sobre o frete_total, ver calcular_orcamento), entre MARGEM_LUCRO_MINIMA
+# e MARGEM_LUCRO_MAXIMA. Abaixo de MARGEM_LUCRO_MINIMA_SEM_ADMIN só
+# administrador pode digitar -- essa parte da restrição é de UI/rota (ver
+# assets/app.js e routers/orcamento.py); esta função só valida o
+# intervalo absoluto, sem noção de usuário/login.
+MARGEM_LUCRO_MINIMA = 0
+MARGEM_LUCRO_MAXIMA = 100
+MARGEM_LUCRO_MINIMA_SEM_ADMIN = 40
 MARGEM_LUCRO_PADRAO = 40
 
 
@@ -1085,9 +1089,11 @@ def calcular_orcamento(
             )
         if custo_extra.get("valor", 0) < 0:
             raise FreteInputError("Valor de custo extra não pode ser negativo.")
-    if margem_lucro_pct not in MARGENS_LUCRO_PERMITIDAS:
-        opcoes = ", ".join(f"{m}%" for m in MARGENS_LUCRO_PERMITIDAS)
-        raise FreteInputError(f"Margem de lucro '{margem_lucro_pct}%' inválida. Opções: {opcoes}")
+    if not (MARGEM_LUCRO_MINIMA <= margem_lucro_pct <= MARGEM_LUCRO_MAXIMA):
+        raise FreteInputError(
+            f"Margem de lucro '{margem_lucro_pct}%' inválida. Deve estar entre "
+            f"{MARGEM_LUCRO_MINIMA}% e {MARGEM_LUCRO_MAXIMA}%."
+        )
 
     p = parametros
     transp = p.buscar_transporte(transporte)
@@ -1452,9 +1458,11 @@ def calcular_orcamento_fracionado(
             )
         if custo_extra.get("valor", 0) < 0:
             raise FreteInputError("Valor de custo extra não pode ser negativo.")
-    if margem_lucro_pct not in MARGENS_LUCRO_PERMITIDAS:
-        opcoes = ", ".join(f"{m}%" for m in MARGENS_LUCRO_PERMITIDAS)
-        raise FreteInputError(f"Margem de lucro '{margem_lucro_pct}%' inválida. Opções: {opcoes}")
+    if not (MARGEM_LUCRO_MINIMA <= margem_lucro_pct <= MARGEM_LUCRO_MAXIMA):
+        raise FreteInputError(
+            f"Margem de lucro '{margem_lucro_pct}%' inválida. Deve estar entre "
+            f"{MARGEM_LUCRO_MINIMA}% e {MARGEM_LUCRO_MAXIMA}%."
+        )
 
     p = parametros
     transp = p.buscar_transporte(transporte)

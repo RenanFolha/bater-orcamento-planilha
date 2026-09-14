@@ -433,12 +433,22 @@ def test_margem_lucro_padrao_e_40_por_cento(parametros):
     assert resultado["calculos_intermediarios"]["margem_lucro_pct"] == 40
 
 
-def test_margem_lucro_fora_das_opcoes_permitidas_gera_erro(parametros):
+def test_margem_lucro_fora_do_intervalo_absoluto_gera_erro(parametros):
+    # calcular_orcamento só valida o intervalo absoluto (0% a 100%, ver
+    # fs.MARGEM_LUCRO_MINIMA/MARGEM_LUCRO_MAXIMA) -- a restrição de
+    # "abaixo de 40% só admin" é de UI/rota (ver routers/orcamento.py),
+    # não dessa função, então 25% (por exemplo) passa aqui sem erro.
     with pytest.raises(fs.FreteInputError):
         fs.calcular_orcamento(
             peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=100,
             categoria="Geral", transporte="Rodoviário", sla="Padrão",
-            margem_lucro_pct=25,
+            margem_lucro_pct=-10,
+        )
+    with pytest.raises(fs.FreteInputError):
+        fs.calcular_orcamento(
+            peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=100,
+            categoria="Geral", transporte="Rodoviário", sla="Padrão",
+            margem_lucro_pct=150,
         )
 
 
