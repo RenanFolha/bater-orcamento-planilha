@@ -12,9 +12,11 @@ frete.db-journal
 frete.db-wal
 frete.db-shm
 
-# Config de conexão com o banco (pode ter host/usuário/senha de um
-# servidor SQL Server/MySQL/PostgreSQL externo — ver db_conexao.py).
+# Config de conexão com o banco (pode ter host/usuário de um servidor
+# SQL Server/MySQL/PostgreSQL externo; a senha é gravada cifrada — ver
+# db_conexao.py) e a chave local usada pra cifrar/decifrar essa senha.
 db_config.json
+db_config.key
 
 .idea/
 .vscode/
