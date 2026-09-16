@@ -12,22 +12,11 @@ histórico.
 """
 
 import pytest
+from conftest import _login
 from fastapi.testclient import TestClient
 
 import auth_service as auth
 import main
-
-
-@pytest.fixture
-def client(banco_temporario):
-    with TestClient(main.app) as c:
-        yield c
-
-
-def _login(client, username="admin", senha="admin123"):
-    r = client.post("/auth/login", json={"username": username, "senha": senha})
-    assert r.status_code == 200, r.text
-    return r
 
 
 def _orcamento_payload(**overrides):

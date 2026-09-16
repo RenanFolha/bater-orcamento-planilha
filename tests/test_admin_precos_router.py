@@ -9,22 +9,7 @@ tests/test_frete_db_*.py), mas o roteamento HTTP em si (conflito 409,
 deps.py) não passava por nenhum teste.
 """
 
-import pytest
-from fastapi.testclient import TestClient
-
-import main
-
-
-@pytest.fixture
-def client(banco_temporario):
-    with TestClient(main.app) as c:
-        yield c
-
-
-def _login(client, username="admin", senha="admin123"):
-    r = client.post("/auth/login", json={"username": username, "senha": senha})
-    assert r.status_code == 200, r.text
-    return r
+from conftest import _login
 
 
 def test_admin_reload_parametros(client):

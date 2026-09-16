@@ -1678,24 +1678,44 @@ def listar_taxas_balsa_admin() -> list[dict]:
         ]
 
 
-def _taxa_balsa_duplicada(
-    conn: sqlite3.Connection, cidade_origem: str, cidade_destino: str, veiculo: str,
-    ignorar_id: int | None = None,
+def _existe_duplicata(
+    conn: sqlite3.Connection, tabela: str, campos_lower: dict[str, str],
+    campos_exatos: dict[str, object] | None = None, ignorar_id: int | None = None,
 ) -> bool:
-    """A UNIQUE(cidade_origem, cidade_destino, veiculo) é case-sensitive no
-    SQLite, mas a aplicação no cálculo compara em minúsculas (ver
-    frete_service._taxa_balsa_aplicavel) — sem essa checagem, duas linhas
-    que só diferem em maiúsculas/minúsculas empatariam e a taxa aplicada
-    dependeria da ordem de retorno do SQLite."""
-    query = (
-        "SELECT 1 FROM taxas_balsa WHERE LOWER(cidade_origem) = LOWER(?) AND LOWER(cidade_destino) = LOWER(?) "
-        "AND LOWER(veiculo) = LOWER(?)"
-    )
-    params = [cidade_origem.strip(), cidade_destino.strip(), veiculo.strip()]
+    """Checa se já existe uma linha em `tabela` cujos campos batem com os
+    valores dados -- `campos_lower` compara case-insensitive (LOWER(campo)
+    = LOWER(?), valor já stripado antes de chamar) e `campos_exatos`
+    compara igualdade direta (ex: praca_id, que é inteiro, não texto).
+    `ignorar_id` exclui a própria linha (edição). `tabela` nunca vem de
+    entrada do usuário -- só de uma string fixa no código de cada chamador
+    (mesmo padrão de db_conexao.exportar_todas_tabelas).
+
+    Helper compartilhado pelas checagens de duplicidade de taxas_balsa,
+    prioridades_rota, aliquotas_icms, pracas_pedagio, pedagios_rota,
+    distancias_fixas e usuarios -- a UNIQUE nativa do SQLite é
+    case-sensitive, mas a aplicação sempre compara em minúsculas (ver as
+    funções `*_aplicavel` de frete_service.py)."""
+    condicoes = [f"LOWER({campo}) = LOWER(?)" for campo in campos_lower]
+    params = list(campos_lower.values())
+    if campos_exatos:
+        condicoes += [f"{campo} = ?" for campo in campos_exatos]
+        params += list(campos_exatos.values())
+    query = f"SELECT 1 FROM {tabela} WHERE " + " AND ".join(condicoes)
     if ignorar_id is not None:
         query += " AND id != ?"
         params.append(ignorar_id)
     return conn.execute(query, params).fetchone() is not None
+
+
+def _taxa_balsa_duplicada(
+    conn: sqlite3.Connection, cidade_origem: str, cidade_destino: str, veiculo: str,
+    ignorar_id: int | None = None,
+) -> bool:
+    return _existe_duplicata(
+        conn, "taxas_balsa",
+        {"cidade_origem": cidade_origem.strip(), "cidade_destino": cidade_destino.strip(), "veiculo": veiculo.strip()},
+        ignorar_id=ignorar_id,
+    )
 
 
 def inserir_taxa_balsa(cidade_origem, cidade_destino, veiculo, tipo, valor, observacao=""):
@@ -1742,18 +1762,11 @@ def listar_prioridades_rota_admin() -> list[dict]:
 def _prioridade_rota_duplicada(
     conn: sqlite3.Connection, estado_origem: str, cidade_destino: str, ignorar_id: int | None = None,
 ) -> bool:
-    """Mesmo motivo da checagem equivalente em taxas_balsa: a UNIQUE do
-    SQLite é case-sensitive, mas a aplicação compara em minúsculas (ver
-    frete_service.prioridade_rota_aplicavel)."""
-    query = (
-        "SELECT 1 FROM prioridades_rota WHERE LOWER(estado_origem) = LOWER(?) "
-        "AND LOWER(cidade_destino) = LOWER(?)"
+    return _existe_duplicata(
+        conn, "prioridades_rota",
+        {"estado_origem": estado_origem.strip(), "cidade_destino": cidade_destino.strip()},
+        ignorar_id=ignorar_id,
     )
-    params = [estado_origem.strip(), cidade_destino.strip()]
-    if ignorar_id is not None:
-        query += " AND id != ?"
-        params.append(ignorar_id)
-    return conn.execute(query, params).fetchone() is not None
 
 
 def inserir_prioridade_rota(estado_origem, cidade_destino, filial_escala, observacao=""):
@@ -1800,18 +1813,11 @@ def listar_aliquotas_icms_admin() -> list[dict]:
 def _aliquota_icms_duplicada(
     conn: sqlite3.Connection, estado_origem: str, estado_destino: str, ignorar_id: int | None = None,
 ) -> bool:
-    """Mesmo motivo da checagem equivalente em prioridades_rota: a UNIQUE
-    do SQLite é case-sensitive, mas a aplicação compara em minúsculas (ver
-    frete_service.aliquota_icms_aplicavel)."""
-    query = (
-        "SELECT 1 FROM aliquotas_icms WHERE LOWER(estado_origem) = LOWER(?) "
-        "AND LOWER(estado_destino) = LOWER(?)"
+    return _existe_duplicata(
+        conn, "aliquotas_icms",
+        {"estado_origem": estado_origem.strip(), "estado_destino": estado_destino.strip()},
+        ignorar_id=ignorar_id,
     )
-    params = [estado_origem.strip(), estado_destino.strip()]
-    if ignorar_id is not None:
-        query += " AND id != ?"
-        params.append(ignorar_id)
-    return conn.execute(query, params).fetchone() is not None
 
 
 def inserir_aliquota_icms(estado_origem, estado_destino, aliquota, observacao=""):
@@ -1871,16 +1877,10 @@ def listar_pracas_pedagio_admin() -> list[dict]:
 def _praca_pedagio_duplicada(
     conn: sqlite3.Connection, nome: str, rodovia: str, ignorar_id: int | None = None,
 ) -> bool:
-    """Mesmo motivo das checagens equivalentes em taxas_balsa/prioridades_rota:
-    a UNIQUE do SQLite é case-sensitive, mas nome/rodovia são comparados sem
-    diferenciar maiúsculas -- inclusive no upsert do import CSV, ver
-    importar_pracas_pedagio_csv."""
-    query = "SELECT 1 FROM pracas_pedagio WHERE LOWER(nome) = LOWER(?) AND LOWER(rodovia) = LOWER(?)"
-    params = [nome.strip(), rodovia.strip()]
-    if ignorar_id is not None:
-        query += " AND id != ?"
-        params.append(ignorar_id)
-    return conn.execute(query, params).fetchone() is not None
+    """Também usada pelo upsert do import CSV, ver importar_pracas_pedagio_csv."""
+    return _existe_duplicata(
+        conn, "pracas_pedagio", {"nome": nome.strip(), "rodovia": rodovia.strip()}, ignorar_id=ignorar_id,
+    )
 
 
 def _valores_eixo_tuple(valores_eixo: dict) -> tuple:
@@ -1941,15 +1941,11 @@ def _pedagio_rota_duplicado(
     conn: sqlite3.Connection, cidade_origem: str, cidade_destino: str, praca_id: int,
     ignorar_id: int | None = None,
 ) -> bool:
-    query = (
-        "SELECT 1 FROM pedagios_rota WHERE LOWER(cidade_origem) = LOWER(?) AND LOWER(cidade_destino) = LOWER(?) "
-        "AND praca_id = ?"
+    return _existe_duplicata(
+        conn, "pedagios_rota",
+        {"cidade_origem": cidade_origem.strip(), "cidade_destino": cidade_destino.strip()},
+        campos_exatos={"praca_id": praca_id}, ignorar_id=ignorar_id,
     )
-    params = [cidade_origem.strip(), cidade_destino.strip(), praca_id]
-    if ignorar_id is not None:
-        query += " AND id != ?"
-        params.append(ignorar_id)
-    return conn.execute(query, params).fetchone() is not None
 
 
 def inserir_pedagio_rota(cidade_origem, cidade_destino, praca_id, observacao=""):
@@ -1994,18 +1990,11 @@ def listar_distancias_fixas_admin() -> list[dict]:
 def _distancia_fixa_duplicada(
     conn: sqlite3.Connection, cidade_origem: str, cidade_destino: str, ignorar_id: int | None = None,
 ) -> bool:
-    """Mesmo motivo das checagens equivalentes em taxas_balsa/prioridades_rota:
-    a UNIQUE do SQLite é case-sensitive, mas a aplicação compara em
-    minúsculas (ver frete_service.distancia_fixa_aplicavel)."""
-    query = (
-        "SELECT 1 FROM distancias_fixas WHERE LOWER(cidade_origem) = LOWER(?) "
-        "AND LOWER(cidade_destino) = LOWER(?)"
+    return _existe_duplicata(
+        conn, "distancias_fixas",
+        {"cidade_origem": cidade_origem.strip(), "cidade_destino": cidade_destino.strip()},
+        ignorar_id=ignorar_id,
     )
-    params = [cidade_origem.strip(), cidade_destino.strip()]
-    if ignorar_id is not None:
-        query += " AND id != ?"
-        params.append(ignorar_id)
-    return conn.execute(query, params).fetchone() is not None
 
 
 def inserir_distancia_fixa(cidade_origem, cidade_destino, distancia_km, observacao=""):
@@ -2231,12 +2220,7 @@ def listar_alteracoes_historico(historico_id: int) -> list[dict]:
 # ============================================================
 
 def _usuario_duplicado(conn: sqlite3.Connection, username: str, ignorar_id: int | None = None) -> bool:
-    query = "SELECT 1 FROM usuarios WHERE LOWER(username) = LOWER(?)"
-    params = [username.strip()]
-    if ignorar_id is not None:
-        query += " AND id != ?"
-        params.append(ignorar_id)
-    return conn.execute(query, params).fetchone() is not None
+    return _existe_duplicata(conn, "usuarios", {"username": username.strip()}, ignorar_id=ignorar_id)
 
 
 def listar_usuarios_admin() -> list[dict]:

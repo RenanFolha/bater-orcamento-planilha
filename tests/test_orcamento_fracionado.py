@@ -4,22 +4,7 @@
 e do CRUD administrativo das faixas de peso/distância que alimentam o
 frete base dele (ver frete_service.calcular_orcamento_fracionado)."""
 
-import pytest
-from fastapi.testclient import TestClient
-
-import main
-
-
-@pytest.fixture
-def client(banco_temporario):
-    with TestClient(main.app) as c:
-        yield c
-
-
-def _login(client, username="admin", senha="admin123"):
-    r = client.post("/auth/login", json={"username": username, "senha": senha})
-    assert r.status_code == 200, r.text
-    return r
+from conftest import _login
 
 
 def _payload(**overrides):

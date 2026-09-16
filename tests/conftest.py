@@ -9,10 +9,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pytest
+from fastapi.testclient import TestClient
 
 import auth_service as auth
 import db_conexao
 import frete_db as db
+import main
 
 
 @pytest.fixture(autouse=True)
@@ -57,3 +59,22 @@ def banco_temporario(tmp_path, monkeypatch):
     monkeypatch.setattr(db_conexao, "DB_CONFIG_KEY_PATH", str(tmp_path / "nao_existe_db_config.key"))
     db.init_db()
     return caminho
+
+
+@pytest.fixture
+def client(banco_temporario):
+    """TestClient da API (ver main.py) sobre o banco temporário isolado
+    acima -- fixture compartilhada por qualquer teste de integração via
+    HTTP (test_main_api.py, test_orcamento_fracionado.py,
+    test_admin_precos_router.py etc.)."""
+    with TestClient(main.app) as c:
+        yield c
+
+
+def _login(client, username="admin", senha="admin123"):
+    """Faz login no `client` acima e devolve a resposta -- helper
+    compartilhado pelos mesmos arquivos de teste que usam a fixture
+    `client`."""
+    r = client.post("/auth/login", json={"username": username, "senha": senha})
+    assert r.status_code == 200, r.text
+    return r
