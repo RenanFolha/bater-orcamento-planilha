@@ -124,6 +124,29 @@ def test_login_bloqueia_apos_tentativas_repetidas(client):
     assert r.status_code == 429
 
 
+def test_auth_me_retorna_usuario_logado(client):
+    _login(client)
+    r = client.get("/auth/me")
+    assert r.status_code == 200
+    assert r.json()["username"] == "admin"
+
+
+def test_auth_trocar_senha_com_senha_atual_errada_da_401(client):
+    _login(client)
+    r = client.post("/auth/trocar-senha", json={"senha_atual": "senha-errada", "senha_nova": "nova-senha-123"})
+    assert r.status_code == 401
+
+
+def test_auth_trocar_senha_com_sucesso(client):
+    _login(client)
+    r = client.post("/auth/trocar-senha", json={"senha_atual": "admin123", "senha_nova": "nova-senha-123"})
+    assert r.status_code == 200, r.text
+
+    client.post("/auth/logout")
+    r = client.post("/auth/login", json={"username": "admin", "senha": "nova-senha-123"})
+    assert r.status_code == 200
+
+
 def test_rotas_admin_exigem_login(client):
     assert client.get("/admin/usuarios").status_code == 401
 
@@ -267,6 +290,63 @@ def test_nao_pode_excluir_o_ultimo_admin_ativo_via_outro_usuario(client):
 def test_historico_exige_login(client):
     assert client.get("/historico").status_code == 401
     assert client.post("/historico", json={"cliente": "X", "responsavel": "Y"}).status_code == 401
+
+
+def test_historico_detalhe_inexistente_da_404(client):
+    _login(client)
+    r = client.get("/historico/CODIGO-QUE-NAO-EXISTE")
+    assert r.status_code == 404
+
+
+def test_historico_excluir_inexistente_da_404(client):
+    _login(client)
+    r = client.delete("/historico/99999")
+    assert r.status_code == 404
+
+
+def test_historico_planilha_gera_xlsx_com_sucesso(client):
+    _login(client)
+    payload_orcamento = _orcamento_payload()
+    resultado = client.post("/orcamento", json=payload_orcamento).json()
+    r = client.post("/historico", json={
+        "cliente": "Cliente Planilha", "responsavel": "Fulano",
+        "origem_resumo": "São Paulo", "destino_resumo": "Curitiba",
+        "veiculo": resultado["entrada"]["veiculo"],
+        "distancia_km": resultado["entrada"]["distancia_km"],
+        "valor_mercadoria": resultado["entrada"]["valor_mercadoria"],
+        "frete_total": resultado["resultado"]["frete_total"],
+        "dados": {"payload": payload_orcamento, "resultado": resultado},
+    })
+    assert r.status_code == 200, r.text
+    codigo = r.json()["codigo"]
+
+    r = client.get(f"/historico/{codigo}/planilha")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    assert len(r.content) > 0
+
+    from io import BytesIO
+
+    import openpyxl
+
+    wb = openpyxl.load_workbook(BytesIO(r.content))
+    assert wb.sheetnames
+
+
+def test_historico_planilha_erro_de_exportacao_da_500(client, monkeypatch):
+    import export_service as export
+    import routers.historico as historico_router
+
+    def _gerar_fake(registro):
+        raise export.ExportacaoError("planilha modelo não encontrada")
+
+    monkeypatch.setattr(historico_router.export, "gerar_planilha_orcamento", _gerar_fake)
+
+    _login(client)
+    codigo = client.post("/historico", json={"cliente": "X", "responsavel": "Y"}).json()["codigo"]
+    r = client.get(f"/historico/{codigo}/planilha")
+    assert r.status_code == 500
+    assert "não encontrada" in r.json()["detail"]
 
 
 def test_historico_soh_pode_ser_excluido_pelo_dono_ou_admin(client):
@@ -746,6 +826,95 @@ def test_geo_distancia_sem_peso_nao_descobre_veiculo(client, monkeypatch):
     r = client.post("/geo/distancia", json={"origem": "Campinas, SP", "destino": "São Paulo, SP"})
     assert r.status_code == 200
     assert capturado["veiculo"] is None
+
+
+def test_geo_distancia_transporte_invalido_nao_quebra_descoberta_de_veiculo(client, monkeypatch):
+    """Um transporte que não existe no cadastro faz a descoberta de
+    veículo (ver teste acima) levantar FreteInputError -- capturado
+    silenciosamente em routers/geo.py, só desiste de reaproveitar do
+    histórico, não quebra a geocodificação em si."""
+    import routers.geo as geo_router
+
+    capturado = {}
+
+    async def _calcular_distancia_fake(origem, destino, veiculo=None):
+        capturado["veiculo"] = veiculo
+        return {"distancia_km": 10, "duracao_min": 10, "pedagio_valor": None, "pedagio_moeda": None,
+                "origem_resolvido": origem, "destino_resolvido": destino}
+
+    monkeypatch.setattr(geo_router.geo, "calcular_distancia", _calcular_distancia_fake)
+
+    r = client.post("/geo/distancia", json={
+        "origem": "Campinas, SP", "destino": "São Paulo, SP",
+        "peso": 50, "paletes": [{"comprimento": 40, "largura": 30, "altura": 25}],
+        "transporte": "Transporte Que Não Existe",
+    })
+    assert r.status_code == 200
+    assert capturado["veiculo"] is None
+
+
+def test_geo_distancia_erro_de_geocodificacao_da_422(client, monkeypatch):
+    import geo_service as geo
+    import routers.geo as geo_router
+
+    async def _calcular_distancia_fake(origem, destino, veiculo=None):
+        raise geo.GeoError("endereço não encontrado")
+
+    monkeypatch.setattr(geo_router.geo, "calcular_distancia", _calcular_distancia_fake)
+    r = client.post("/geo/distancia", json={"origem": "endereço inválido", "destino": "outro endereço inválido"})
+    assert r.status_code == 422
+    assert "não encontrado" in r.json()["detail"]
+
+
+def test_geo_resolver_retirada_sucesso(client, monkeypatch):
+    import routers.geo as geo_router
+
+    async def _resolver_retirada_fake(endereco, filiais):
+        return {"filial_mais_proxima": "São Paulo", "distancia_coleta_km": 5.2}
+
+    monkeypatch.setattr(geo_router.geo, "resolver_retirada", _resolver_retirada_fake)
+    r = client.post("/geo/resolver-retirada", json={"endereco_retirada": "Rua Augusta, 500, São Paulo, SP"})
+    assert r.status_code == 200
+    assert r.json()["filial_mais_proxima"] == "São Paulo"
+
+
+def test_geo_resolver_retirada_erro_da_422(client, monkeypatch):
+    import geo_service as geo
+    import routers.geo as geo_router
+
+    async def _resolver_retirada_fake(endereco, filiais):
+        raise geo.GeoError("endereço não encontrado")
+
+    monkeypatch.setattr(geo_router.geo, "resolver_retirada", _resolver_retirada_fake)
+    r = client.post("/geo/resolver-retirada", json={"endereco_retirada": "endereço inválido"})
+    assert r.status_code == 422
+
+
+def test_geo_resolver_entrega_sucesso(client, monkeypatch):
+    """Mesmo mecanismo de resolver-retirada (ver
+    routers.geo._resolver_filial_mais_proxima), só muda o campo do
+    payload que é resolvido."""
+    import routers.geo as geo_router
+
+    async def _resolver_retirada_fake(endereco, filiais):
+        return {"filial_mais_proxima": "Campinas", "distancia_coleta_km": 3.1}
+
+    monkeypatch.setattr(geo_router.geo, "resolver_retirada", _resolver_retirada_fake)
+    r = client.post("/geo/resolver-entrega", json={"endereco_entrega": "Rua X, 100, Campinas, SP"})
+    assert r.status_code == 200
+    assert r.json()["filial_mais_proxima"] == "Campinas"
+
+
+def test_geo_resolver_retorno_sucesso(client, monkeypatch):
+    import routers.geo as geo_router
+
+    async def _resolver_retirada_fake(endereco, filiais):
+        return {"filial_mais_proxima": "Belem", "distancia_coleta_km": 12.4}
+
+    monkeypatch.setattr(geo_router.geo, "resolver_retirada", _resolver_retirada_fake)
+    r = client.post("/geo/resolver-retorno", json={"endereco_destino": "Rua Y, 200, Belem, PA"})
+    assert r.status_code == 200
+    assert r.json()["filial_mais_proxima"] == "Belem"
 
 
 def test_geo_bloqueia_apos_muitas_chamadas_do_mesmo_ip(client, monkeypatch):

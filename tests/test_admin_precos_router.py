@@ -220,6 +220,34 @@ def test_admin_categorias_crud(client):
     assert r.status_code == 200
 
 
+def test_admin_categorias_atualizar_com_nome_duplicado_da_409(client):
+    # Cobre o ramo de conflito de deps.admin_atualizar (diferente do
+    # conflito no criar, já coberto acima) -- editar pra um nome que já
+    # existe em OUTRA linha também precisa dar 409.
+    _login(client)
+    client.post("/admin/categorias", json={"nome": "Categoria A", "multiplicador": 1.0})
+    id_b = client.post("/admin/categorias", json={"nome": "Categoria B", "multiplicador": 1.0}).json()["id"]
+
+    r = client.put(f"/admin/categorias/{id_b}", json={"nome": "Categoria A", "multiplicador": 1.0})
+    assert r.status_code == 409
+
+
+def test_admin_transportes_nao_exclui_o_ultimo(client):
+    # Cobre deps.admin_excluir quando contar_fn() <= 1 -- drena até
+    # sobrar só 1 transporte (seed padrão tem 2) e confirma que excluir
+    # esse último dá 422 em vez de deixar o sistema sem nenhum.
+    _login(client)
+    transportes = client.get("/admin/transportes").json()
+    for t in transportes[1:]:
+        client.delete(f"/admin/transportes/{t['id']}")
+
+    restantes = client.get("/admin/transportes").json()
+    assert len(restantes) == 1
+
+    r = client.delete(f"/admin/transportes/{restantes[0]['id']}")
+    assert r.status_code == 422
+
+
 def test_admin_transportes_crud(client):
     _login(client)
 

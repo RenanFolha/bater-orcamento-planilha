@@ -93,6 +93,47 @@ def test_campos_de_texto_livre_nao_viram_formula_na_planilha():
     assert not celula_transporte.value.startswith(("=", "+", "-", "@"))
 
 
+def test_observacoes_coleta_e_entrega_terceirizada():
+    registro = _registro_teste()
+    calc = registro["dados"]["resultado"]["calculos_intermediarios"]
+    calc["coleta_terceirizada"] = True
+    calc["transportadora_coleta_nome"] = "Transp A"
+    calc["entrega_terceirizada"] = True
+    calc["transportadora_entrega_nome"] = "Transp B"
+
+    conteudo = export.gerar_planilha_orcamento(registro)
+    wb = openpyxl.load_workbook(BytesIO(conteudo))
+    ws = wb[wb.sheetnames[0]]
+    observacao = ws.cell(row=6, column=15).value  # O: observações
+    assert "Coleta terceirizada (Transp A)" in observacao
+    assert "Entrega terceirizada (Transp B)" in observacao
+
+
+def test_observacoes_terceirizada_sem_nome_da_transportadora():
+    registro = _registro_teste()
+    calc = registro["dados"]["resultado"]["calculos_intermediarios"]
+    calc["coleta_terceirizada"] = True  # sem transportadora_coleta_nome preenchido
+
+    conteudo = export.gerar_planilha_orcamento(registro)
+    wb = openpyxl.load_workbook(BytesIO(conteudo))
+    ws = wb[wb.sheetnames[0]]
+    assert ws.cell(row=6, column=15).value == "Coleta terceirizada"
+
+
+def test_data_criacao_invalida_cai_pro_agora():
+    # _data_criacao tem um fallback pra datetime.now() quando criado_em
+    # não é um ISO válido (defensivo -- na prática a coluna sempre vem
+    # preenchida certinho pelo banco, mas não pode travar a exportação
+    # se algum registro antigo estiver malformado).
+    registro = _registro_teste()
+    registro["criado_em"] = "isso não é uma data"
+
+    conteudo = export.gerar_planilha_orcamento(registro)  # não pode levantar exceção
+    wb = openpyxl.load_workbook(BytesIO(conteudo))
+    ws = wb[wb.sheetnames[0]]
+    assert ws["N3"].value is not None
+
+
 def test_gerar_planilha_sem_modelo_gera_erro(monkeypatch, tmp_path):
     monkeypatch.setattr(export, "MODELO_PATH", tmp_path / "nao-existe.xlsx")
     with pytest.raises(export.ExportacaoError):
