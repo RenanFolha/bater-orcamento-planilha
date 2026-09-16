@@ -144,6 +144,108 @@ def test_nao_pode_excluir_o_proprio_usuario(client):
     assert r.status_code == 422
 
 
+def test_criar_usuario_com_username_duplicado_da_409(client):
+    _login(client)
+    client.post("/admin/usuarios", json={
+        "nome": "X", "username": "usuariox", "senha": "senha1234", "role": "usuario",
+    })
+    r = client.post("/admin/usuarios", json={
+        "nome": "Y", "username": "usuariox", "senha": "senha1234", "role": "usuario",
+    })
+    assert r.status_code == 409
+
+
+def test_admin_lista_usuarios(client):
+    _login(client)
+    r = client.get("/admin/usuarios")
+    assert r.status_code == 200
+    assert any(u["username"] == "admin" for u in r.json())
+
+
+def test_atualizar_usuario_inexistente_da_404(client):
+    _login(client)
+    r = client.put("/admin/usuarios/99999", json={
+        "nome": "X", "username": "usuariox", "role": "usuario", "ativo": True, "senha": "",
+    })
+    assert r.status_code == 404
+
+
+def test_atualizar_usuario_com_senha_curta_e_rejeitado(client):
+    _login(client)
+    novo_id = client.post("/admin/usuarios", json={
+        "nome": "X", "username": "usuariox", "senha": "senha1234", "role": "usuario",
+    }).json()["id"]
+    r = client.put(f"/admin/usuarios/{novo_id}", json={
+        "nome": "X", "username": "usuariox", "role": "usuario", "ativo": True, "senha": "1234567",
+    })
+    assert r.status_code == 422  # menor que SENHA_MIN_LENGTH (8)
+
+
+def test_atualizar_usuario_com_username_duplicado_da_409(client):
+    _login(client)
+    client.post("/admin/usuarios", json={
+        "nome": "X", "username": "usuariox", "senha": "senha1234", "role": "usuario",
+    })
+    outro_id = client.post("/admin/usuarios", json={
+        "nome": "Y", "username": "usuarioy", "senha": "senha1234", "role": "usuario",
+    }).json()["id"]
+    r = client.put(f"/admin/usuarios/{outro_id}", json={
+        "nome": "Y", "username": "usuariox", "role": "usuario", "ativo": True, "senha": "",
+    })
+    assert r.status_code == 409
+
+
+def test_atualizar_usuario_troca_senha_quando_campo_preenchido(client):
+    _login(client)
+    novo_id = client.post("/admin/usuarios", json={
+        "nome": "X", "username": "usuariox", "senha": "senha-velha", "role": "usuario",
+    }).json()["id"]
+    r = client.put(f"/admin/usuarios/{novo_id}", json={
+        "nome": "X", "username": "usuariox", "role": "usuario", "ativo": True, "senha": "senha-nova",
+    })
+    assert r.status_code == 200, r.text
+
+    r = client.post("/auth/login", json={"username": "usuariox", "senha": "senha-nova"})
+    assert r.status_code == 200, r.text
+
+
+def test_excluir_usuario_inexistente_da_404(client):
+    _login(client)
+    r = client.delete("/admin/usuarios/99999")
+    assert r.status_code == 404
+
+
+def test_excluir_usuario_com_sucesso(client):
+    _login(client)
+    novo_id = client.post("/admin/usuarios", json={
+        "nome": "X", "username": "usuariox", "senha": "senha1234", "role": "usuario",
+    }).json()["id"]
+    r = client.delete(f"/admin/usuarios/{novo_id}")
+    assert r.status_code == 200
+    assert all(u["id"] != novo_id for u in client.get("/admin/usuarios").json())
+
+
+def test_nao_pode_excluir_o_ultimo_admin_ativo_via_outro_usuario(client):
+    # dois admins: o segundo exclui o primeiro sem problema (ainda sobra
+    # um ativo), mas não consegue excluir a si mesmo depois (ver
+    # test_nao_pode_excluir_o_proprio_usuario) nem deixar o sistema sem
+    # nenhum admin ativo.
+    _login(client)
+    segundo_admin_id = client.post("/admin/usuarios", json={
+        "nome": "Admin 2", "username": "admin2", "senha": "senha1234", "role": "admin",
+    }).json()["id"]
+
+    client.post("/auth/logout")
+    _login(client, username="admin2", senha="senha1234")
+    r = client.delete("/admin/usuarios/1")  # exclui o admin original -- ainda sobra admin2 ativo
+    assert r.status_code == 200
+
+    r = client.put(f"/admin/usuarios/{segundo_admin_id}", json={
+        "nome": "Admin 2", "username": "admin2", "role": "usuario", "ativo": True, "senha": "",
+    })
+    assert r.status_code == 422  # não pode rebaixar o último admin ativo restante
+
+
 def test_historico_exige_login(client):
     assert client.get("/historico").status_code == 401
     assert client.post("/historico", json={"cliente": "X", "responsavel": "Y"}).status_code == 401

@@ -4,6 +4,10 @@ __pycache__/
 *.log
 .venv/
 
+# Artefato local do pytest-cov (ver `pytest --cov`) -- não é dependência
+# do projeto, só uma ferramenta de diagnóstico instalada sob demanda.
+.coverage
+
 # Banco de dados local — contém hashes de senha, sessões e histórico de
 # clientes; nunca deve ser versionado. Cada ambiente cria o seu próprio
 # na primeira execução (ver frete_db.py / README.md).

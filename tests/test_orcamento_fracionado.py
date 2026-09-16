@@ -126,6 +126,11 @@ def test_admin_faixas_distancia_fracionado_crud(client):
     assert r.status_code == 200, r.text
     novo_id = r.json()["id"]
 
+    r = client.put(f"/admin/faixas-distancia-fracionado/{novo_id}", json={
+        "de": 5000, "ate": 999999, "taxa_fixa": 550.0, "tarifa_km": 1.2, "observacao": "teste editado",
+    })
+    assert r.status_code == 200, r.text
+
     r = client.delete(f"/admin/faixas-distancia-fracionado/{novo_id}")
     assert r.status_code == 200, r.text
 
