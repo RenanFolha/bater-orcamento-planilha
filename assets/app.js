@@ -1043,10 +1043,17 @@ form.addEventListener('submit', async (ev) => {
     // sugerir a filial de retorno vazio) serve só de estimativa pra
     // mostrar essa proporção no detalhamento, sem mudar nenhum valor do
     // cálculo em si.
-    const kmEntregaPropriaEstimado = Math.min(distanciaEntregaPropriaKm, data.entrada.distancia_km);
+    //
+    // distancia_km inclui o trecho de balsa (ex: Belém -> Manaus), que o
+    // veículo não roda -- exclui esse km antes de exibir "KM de
+    // transferência", senão parece que a frota rodou estrada onde na
+    // verdade foi de balsa (a travessia já aparece à parte em "Taxa de
+    // balsa aplicada").
+    const distanciaRodadaTotal = Math.max(data.entrada.distancia_km - (calc.distancia_balsa_km || 0), 0);
+    const kmEntregaPropriaEstimado = Math.min(distanciaEntregaPropriaKm, distanciaRodadaTotal);
     const kmTransferencia = kmEntregaPropriaEstimado > 0
-      ? Math.max(data.entrada.distancia_km - kmEntregaPropriaEstimado, 0)
-      : data.entrada.distancia_km;
+      ? Math.max(distanciaRodadaTotal - kmEntregaPropriaEstimado, 0)
+      : distanciaRodadaTotal;
     document.getElementById('d-km-transferencia').textContent = `${kmTransferencia} km`;
 
     const linhaKmEntrega = document.getElementById('linha-km-entrega');
@@ -1077,8 +1084,8 @@ form.addEventListener('submit', async (ev) => {
     // exibição; a soma das duas partes é sempre igual ao frete ajustado.
     const linhaCustoTransferencia = document.getElementById('linha-custo-transferencia');
     const linhaCustoEntregaPropria = document.getElementById('linha-custo-entrega-propria');
-    if(kmEntregaPropriaEstimado > 0 && data.entrada.distancia_km > 0){
-      const proporcaoEntrega = kmEntregaPropriaEstimado / data.entrada.distancia_km;
+    if(kmEntregaPropriaEstimado > 0 && distanciaRodadaTotal > 0){
+      const proporcaoEntrega = kmEntregaPropriaEstimado / distanciaRodadaTotal;
       const custoEntregaEstimado = calc.frete_ajustado * proporcaoEntrega;
       document.getElementById('d-custo-transferencia').textContent = fmtBRL(calc.frete_ajustado - custoEntregaEstimado);
       document.getElementById('d-custo-entrega-propria').textContent = fmtBRL(custoEntregaEstimado);
@@ -2925,7 +2932,13 @@ function renderizarDetalheHistorico(registro){
   if(entrada.distancia_coleta_km > 0){
     linhas.push(['KM de coleta', `${entrada.distancia_coleta_km} km`]);
   }
-  linhas.push(['KM de transferência', `${registro.distancia_km} km`]);
+  // registro.distancia_km é a distância total salva (pode incluir trecho
+  // de balsa, ex: Belém -> Manaus, que o veículo não roda -- ver
+  // calc.distancia_balsa_km); calc.distancia_faturavel_km já exclui esse
+  // trecho. Orçamentos salvos antes desse campo existir caem no valor
+  // total mesmo (fallback).
+  const kmTransferenciaHistorico = calc.distancia_faturavel_km ?? registro.distancia_km;
+  linhas.push(['KM de transferência', `${kmTransferenciaHistorico} km`]);
   if(calc.distancia_retorno_km > 0){
     linhas.push(['KM de retorno vazio', `${calc.distancia_retorno_km} km`]);
   }
