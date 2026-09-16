@@ -62,6 +62,25 @@ def test_orcamento_fracionado_margem_30_permitida_pra_admin(client):
     assert r.status_code == 200, r.text
 
 
+def test_orcamento_fracionado_pis_cofins_configurado_acima_de_100_da_500(client):
+    # Mesmo raciocínio de test_orcamento_pis_cofins_configurado_acima_de_100_da_500
+    # em test_main_api.py (FreteConfigError -> 500, ver
+    # routers/orcamento_fracionado.py) -- o Fracionado tem sua própria
+    # cópia do try/except, então precisa do próprio teste pra cobrir.
+    import frete_db as db
+    import frete_service as fs
+
+    db.atualizar_aliquota_pis_cofins(150.0, "teste: aliquota invalida")
+    fs.carregar_parametros()
+    try:
+        r = client.post("/orcamento/fracionado", json=_payload())
+        assert r.status_code == 500
+        assert "config" in r.json()["detail"].lower()
+    finally:
+        db.atualizar_aliquota_pis_cofins(0.0, "")
+        fs.carregar_parametros()
+
+
 def test_admin_faixas_peso_fracionado_exige_login(client):
     assert client.get("/admin/faixas-peso-fracionado").status_code == 401
 

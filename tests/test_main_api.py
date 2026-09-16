@@ -49,6 +49,35 @@ def test_orcamento_repassa_prioridade_rota_pra_memoria_de_calculo(client):
     assert r.json()["entrada"]["rota_obrigatoria"] == "Belem"
 
 
+def test_orcamento_categoria_invalida_da_422(client):
+    # Categoria não vem de um schema com choices fixas (a lista válida é
+    # cadastrada no banco) -- o Pydantic sozinho não pega isso, quem
+    # valida é fs.calcular_orcamento (FreteInputError -> 422, ver
+    # routers/orcamento.py).
+    r = client.post("/orcamento", json=_orcamento_payload(categoria="Categoria Que Não Existe"))
+    assert r.status_code == 422
+
+
+def test_orcamento_pis_cofins_configurado_acima_de_100_da_500(client):
+    # PUT /admin/pis-cofins não deixa cadastrar >= 100% (schema tem
+    # lt=100), mas o banco pode ter sido editado direto por fora da API
+    # (ex: DB Browser, ver README) -- fs.calcular_orcamento ainda precisa
+    # rejeitar isso com um erro claro de configuração (FreteConfigError
+    # -> 500), não um cálculo com divisão por número negativo.
+    import frete_db as db
+    import frete_service as fs
+
+    db.atualizar_aliquota_pis_cofins(150.0, "teste: aliquota invalida")
+    fs.carregar_parametros()
+    try:
+        r = client.post("/orcamento", json=_orcamento_payload())
+        assert r.status_code == 500
+        assert "config" in r.json()["detail"].lower()
+    finally:
+        db.atualizar_aliquota_pis_cofins(0.0, "")
+        fs.carregar_parametros()
+
+
 def test_orcamento_margem_30_recusada_sem_login(client):
     r = client.post("/orcamento", json=_orcamento_payload(margem_lucro_pct=30))
     assert r.status_code == 403
