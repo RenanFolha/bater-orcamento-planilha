@@ -773,6 +773,157 @@ def test_admin_banco_dados_testar_driver_ausente_da_422(client):
     assert "psycopg2" in r.json()["detail"]
 
 
+def test_admin_banco_dados_testar_sqlite_sucesso(client, tmp_path):
+    _login(client)
+    r = client.post("/admin/banco-dados/testar", json={
+        "tipo": "sqlite", "sqlite_path": str(tmp_path / "outro.db"),
+    })
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "ok"
+
+
+def test_admin_banco_dados_testar_erro_conexao_da_422(client, monkeypatch):
+    """_conectar_ou_422 traduz db_conexao.ErroConexaoBanco (mensagem já
+    pronta pra tela) em 422 -- mocka conectar() em vez de precisar de um
+    servidor de verdade fora do ar."""
+    import db_conexao
+
+    _login(client)
+    conectar_original = db_conexao.conectar
+
+    # cfg is None -- chamada interna do próprio app (ex: validar a sessão
+    # de login em cada requisição, via get_connection()) -- só a chamada
+    # explícita com o cfg do payload deste teste deve falhar.
+    def _conectar_fake(cfg=None, **kwargs):
+        if cfg is None:
+            return conectar_original(cfg, **kwargs)
+        raise db_conexao.ErroConexaoBanco("host inacessível")
+
+    monkeypatch.setattr(db_conexao, "conectar", _conectar_fake)
+    r = client.post("/admin/banco-dados/testar", json={"tipo": "sqlite", "sqlite_path": "qualquer.db"})
+    assert r.status_code == 422
+    assert "host inacessível" in r.json()["detail"]
+
+
+def test_admin_banco_dados_testar_erro_generico_da_422(client, monkeypatch):
+    """Exceção nativa do driver não mapeada como ErroConexaoBanco também
+    vira 422 (ver _conectar_ou_422), não 500."""
+    import db_conexao
+
+    _login(client)
+    conectar_original = db_conexao.conectar
+
+    def _conectar_fake(cfg=None, **kwargs):
+        if cfg is None:  # ver comentário equivalente no teste anterior
+            return conectar_original(cfg, **kwargs)
+        raise RuntimeError("erro nativo do driver")
+
+    monkeypatch.setattr(db_conexao, "conectar", _conectar_fake)
+    r = client.post("/admin/banco-dados/testar", json={"tipo": "sqlite", "sqlite_path": "qualquer.db"})
+    assert r.status_code == 422
+    assert "Falha ao conectar" in r.json()["detail"]
+
+
+def test_admin_banco_dados_testar_conecta_mas_checagem_falha(client, monkeypatch):
+    """Conexão abre normalmente, mas o SELECT 1 de checagem falha (ex:
+    banco existe mas usuário não tem permissão de leitura) -- 422 com
+    mensagem distinta de "falha ao conectar"."""
+    import db_conexao
+
+    _login(client)
+    conectar_original = db_conexao.conectar
+
+    class _ConexaoQuebrada:
+        def execute(self, sql, params=()):
+            raise RuntimeError("SELECT 1 falhou")
+
+        def close(self):
+            pass
+
+    def _conectar_fake(cfg=None, **kwargs):
+        if cfg is None:  # ver comentário equivalente no teste anterior
+            return conectar_original(cfg, **kwargs)
+        return _ConexaoQuebrada()
+
+    monkeypatch.setattr(db_conexao, "conectar", _conectar_fake)
+    r = client.post("/admin/banco-dados/testar", json={"tipo": "sqlite", "sqlite_path": "qualquer.db"})
+    assert r.status_code == 422
+    assert "checagem falhou" in r.json()["detail"]
+
+
+def test_admin_banco_dados_aplicar_usa_schema_consolidado_pra_tipo_nao_sqlite(client, monkeypatch):
+    """POST /aplicar com tipo != sqlite entra no ramo _gerar_schema_consolidado
+    (ver routers/admin_banco.py), diferente do ramo SCHEMA/_migrar_colunas
+    usado pra sqlite. Mocka conectar() só pra essa rota de destino
+    específica (host marcador) com uma conexão fake que aceita o
+    executescript (cobrindo o ramo "else") mas falha logo depois, ainda
+    dentro do try/except da migração -- evita chegar em salvar_config/
+    carregar_parametros com uma config de banco que não existe de
+    verdade, que quebraria o resto da suíte."""
+    import db_conexao
+
+    _login(client)
+    conectar_original = db_conexao.conectar
+
+    class _ConexaoSchemaOkMasFalhaDepois:
+        def __init__(self):
+            self.executescript_chamado = False
+
+        def executescript(self, script):
+            self.executescript_chamado = True
+
+        def commit(self):
+            raise RuntimeError("falha simulada depois do schema")
+
+        def close(self):
+            pass
+
+    conexao_destino = _ConexaoSchemaOkMasFalhaDepois()
+
+    def _conectar_fake(cfg=None, **kwargs):
+        if cfg is not None and cfg.get("host") == "host-fake-schema":
+            return conexao_destino
+        return conectar_original(cfg, **kwargs)
+
+    monkeypatch.setattr(db_conexao, "conectar", _conectar_fake)
+    r = client.post("/admin/banco-dados/aplicar", json={
+        "tipo": "mysql", "host": "host-fake-schema", "porta": 3306, "banco": "x", "usuario": "x", "senha": "x",
+    })
+    assert r.status_code == 422, r.text
+    assert conexao_destino.executescript_chamado  # passou pelo ramo "else" (não-sqlite)
+    assert client.get("/admin/banco-dados").json()["tipo"] == "sqlite"  # config ativa não mudou
+
+
+def test_admin_banco_dados_aplicar_falha_ao_criar_schema_da_422(client, monkeypatch):
+    """Falha ao criar o schema no destino (ex: sintaxe incompatível de
+    verdade, permissão negada etc.) -- 422, e a config ativa NÃO muda
+    (aplicar só troca depois que tudo dá certo, ver docstring da rota)."""
+    import db_conexao
+
+    _login(client)
+    conectar_original = db_conexao.conectar
+
+    class _ConexaoQuebraNoSchema:
+        def executescript(self, script):
+            raise RuntimeError("schema inválido no servidor")
+
+        def close(self):
+            pass
+
+    def _conectar_fake(cfg=None, **kwargs):
+        if cfg is not None and cfg.get("host") == "host-fake-quebrado":
+            return _ConexaoQuebraNoSchema()
+        return conectar_original(cfg, **kwargs)
+
+    monkeypatch.setattr(db_conexao, "conectar", _conectar_fake)
+    r = client.post("/admin/banco-dados/aplicar", json={
+        "tipo": "mysql", "host": "host-fake-quebrado", "porta": 3306, "banco": "x", "usuario": "x", "senha": "x",
+    })
+    assert r.status_code == 422, r.text
+    assert "Falha ao migrar dados" in r.json()["detail"]
+    assert client.get("/admin/banco-dados").json()["tipo"] == "sqlite"  # config ativa não mudou
+
+
 def test_proxy_headers_ignorados_por_padrao_sem_trusted_proxy_hosts(client):
     """Sem TRUSTED_PROXY_HOSTS configurada (padrão), a API não confia em
     X-Forwarded-Proto vindo de ninguém -- o cookie de sessão continua sem
