@@ -710,6 +710,17 @@ def _especificidade_localidade(cadastrado: str) -> int:
     return 2
 
 
+def _mais_especifica(candidatas: list[tuple[int, object]]):
+    """Escolhe a linha cadastrada mais específica dentre as que bateram
+    (maior especificidade, ver _especificidade_localidade) — ou None se
+    não houver nenhuma candidata. Mesmo critério de desempate usado por
+    _taxa_balsa_aplicavel, prioridade_rota_aplicavel,
+    aliquota_icms_aplicavel e distancia_fixa_aplicavel."""
+    if not candidatas:
+        return None
+    return max(candidatas, key=lambda par: par[0])[1]
+
+
 def _normalizar_par_cidades(cidade_origem: str | None, cidade_destino: str | None) -> tuple[str, str, str] | None:
     """Extrai e normaliza (minúsculas, sem acento) a cidade de origem e
     destino de dois textos de endereço/filial, mais a UF do destino —
@@ -756,9 +767,7 @@ def _taxa_balsa_aplicavel(
         if _campo_bate_curinga(t_o, cid_o) and _campo_bate_localidade(t_d, cid_d, uf_d) and _campo_bate_curinga(t_v, veic):
             especificidade = (t_o != CORINGA_ROTA) + _especificidade_localidade(t_d) + (t_v != CORINGA_ROTA)
             candidatas.append((especificidade, t))
-    if not candidatas:
-        return None
-    return max(candidatas, key=lambda par: par[0])[1]
+    return _mais_especifica(candidatas)
 
 
 def prioridade_rota_aplicavel(
@@ -791,9 +800,7 @@ def prioridade_rota_aplicavel(
         if _campo_bate_curinga(e_uf, uf_o) and _campo_bate_localidade(e_d, cid_d, uf_d):
             especificidade = (e_uf != CORINGA_ROTA) + _especificidade_localidade(e_d)
             candidatas.append((especificidade, e))
-    if not candidatas:
-        return None
-    return max(candidatas, key=lambda par: par[0])[1]
+    return _mais_especifica(candidatas)
 
 
 def destino_tem_prioridade_rota_cadastrada(p: "ParametrosFrete", cidade_destino: str | None) -> bool:
@@ -870,9 +877,7 @@ def aliquota_icms_aplicavel(
         if _campo_bate_curinga(a_o, uf_o) and _campo_bate_curinga(a_d, uf_d):
             especificidade = (a_o != CORINGA_ROTA) + (a_d != CORINGA_ROTA)
             candidatas.append((especificidade, a))
-    if not candidatas:
-        return None
-    return max(candidatas, key=lambda par: par[0])[1]
+    return _mais_especifica(candidatas)
 
 
 def pedagio_rota_aplicavel(
@@ -945,9 +950,7 @@ def distancia_fixa_aplicavel(
         if _campo_bate_curinga(df_o, cid_o) and _campo_bate_localidade(df_d, cid_d, uf_d):
             especificidade = (df_o != CORINGA_ROTA) + _especificidade_localidade(df_d)
             candidatas.append((especificidade, df))
-    if not candidatas:
-        return None
-    return max(candidatas, key=lambda par: par[0])[1]
+    return _mais_especifica(candidatas)
 
 
 def distancia_balsa_km(
@@ -1031,6 +1034,145 @@ def escolher_veiculo(peso: float, paletes: list[dict], transp: Transporte) -> Se
     volume_total_m3, peso_cubado, peso_considerado = _calcular_cubagem(peso, paletes, transp)
     veiculo = parametros.buscar_veiculo_por_peso_e_volume(peso_considerado, volume_total_m3)
     return SelecaoVeiculo(veiculo, volume_total_m3, peso_cubado, peso_considerado)
+
+
+# ============================================================
+# Taxas/impostos/margem compartilhados entre calcular_orcamento e
+# calcular_orcamento_fracionado — tudo que roda depois do frete_ajustado
+# ser calculado (a parte que difere entre os dois: escolha de veículo x
+# faixas de peso/distância) e é idêntico nas duas contas. Cada helper
+# reflete exatamente o mesmo cálculo, na mesma ordem, que antes vivia
+# duplicado nas duas funções.
+# ============================================================
+
+
+def _custos_extras_aplicados(custos_extras: list[dict]) -> tuple[list[dict], float]:
+    """Detalha e soma os custos extras escolhidos no orçamento (categoria +
+    valor em R$ digitado por quem cota) — diferente das taxas adicionais
+    abaixo, não vem de um catálogo com valor pré-cadastrado."""
+    detalhe_custos_extras = []
+    custo_extra_total = 0.0
+    for custo_extra in custos_extras:
+        valor_aplicado = round(custo_extra.get("valor", 0), 2)
+        custo_extra_total += valor_aplicado
+        detalhe_custos_extras.append({"categoria": custo_extra["categoria"], "valor_aplicado": valor_aplicado})
+    return detalhe_custos_extras, custo_extra_total
+
+
+def _taxas_adicionais_aplicadas(p: "ParametrosFrete", valor_mercadoria: float) -> tuple[list[dict], float]:
+    """Taxas adicionais cadastradas (fixas em R$ ou % do valor da
+    mercadoria) — entram sempre, sem depender de rota."""
+    detalhe_taxas = []
+    custo_taxas_adicionais = 0.0
+    for taxa in p.taxas_adicionais:
+        valor_taxa = _valor_taxa(taxa.tipo, taxa.valor, valor_mercadoria)
+        custo_taxas_adicionais += valor_taxa
+        detalhe_taxas.append({
+            "nome": taxa.nome, "tipo": taxa.tipo,
+            "valor_configurado": taxa.valor, "valor_aplicado": round(valor_taxa, 2),
+        })
+    return detalhe_taxas, custo_taxas_adicionais
+
+
+def _taxas_regionais_aplicadas(
+    p: "ParametrosFrete", cidade_origem: str | None, cidade_destino: str | None, valor_mercadoria: float,
+) -> tuple[list[dict], float]:
+    """Taxas regionais cuja cidade bate com origem ou destino do frete (ex:
+    taxa de zona franca em Manaus, taxa de área de risco etc.)."""
+    detalhe_taxas_regionais = []
+    custo_taxas_regionais = 0.0
+    for taxa in _taxas_regionais_aplicaveis(p, cidade_origem, cidade_destino):
+        valor_taxa = _valor_taxa(taxa.tipo, taxa.valor, valor_mercadoria)
+        custo_taxas_regionais += valor_taxa
+        detalhe_taxas_regionais.append({
+            "nome": taxa.nome, "cidade": taxa.cidade, "tipo": taxa.tipo,
+            "valor_configurado": taxa.valor, "valor_aplicado": round(valor_taxa, 2),
+        })
+    return detalhe_taxas_regionais, custo_taxas_regionais
+
+
+def _taxa_balsa_aplicada(
+    p: "ParametrosFrete", cidade_origem: str | None, cidade_destino: str | None,
+    veiculo_nome: str, valor_mercadoria: float,
+) -> tuple[float, dict | None, list[str]]:
+    """Custo de travessia de balsa pra rota + veículo do orçamento, se
+    cadastrada — direcional (cidade_origem -> cidade_destino nessa ordem
+    exata): ida e volta são cotações independentes, porque o preço da
+    balsa pode ser diferente em cada sentido. Devolve (custo_balsa,
+    detalhe_balsa, balsa_outro_veiculo); balsa_outro_veiculo lista
+    veículos com taxa cadastrada pra essa mesma rota, quando ela bateu mas
+    não pro veículo escolhido — avisa na memória de cálculo em vez de só
+    zerar silenciosamente."""
+    custo_balsa = 0.0
+    detalhe_balsa = None
+    balsa_outro_veiculo = []
+    taxa_balsa = _taxa_balsa_aplicavel(p, cidade_origem, cidade_destino, veiculo_nome)
+    if taxa_balsa:
+        custo_balsa = _valor_taxa(taxa_balsa.tipo, taxa_balsa.valor, valor_mercadoria)
+        detalhe_balsa = {
+            "cidade_origem": taxa_balsa.cidade_origem, "cidade_destino": taxa_balsa.cidade_destino,
+            "veiculo": taxa_balsa.veiculo, "tipo": taxa_balsa.tipo,
+            "valor_configurado": taxa_balsa.valor, "valor_aplicado": round(custo_balsa, 2),
+        }
+    else:
+        balsa_outro_veiculo = _taxa_balsa_outros_veiculos(p, cidade_origem, cidade_destino, veiculo_nome)
+    return custo_balsa, detalhe_balsa, balsa_outro_veiculo
+
+
+def _aplicar_pis_cofins(p: "ParametrosFrete", frete_total: float) -> tuple[float, float, float, float]:
+    """PIS/COFINS "por dentro" (gross-up) sobre o frete_total apurado até
+    aqui, com alíquota federal única (não varia por UF, ver
+    ParametrosFrete.aliquota_pis_cofins) — aplicado ANTES do ICMS: o ICMS
+    incide sobre o frete já com PIS/COFINS embutido, não o contrário.
+    Devolve (frete_total_novo, frete_sem_pis_cofins, valor_pis_cofins,
+    aliquota_pis_cofins_pct)."""
+    frete_sem_pis_cofins = frete_total
+    valor_pis_cofins = 0.0
+    aliquota_pis_cofins_pct = p.aliquota_pis_cofins
+    if aliquota_pis_cofins_pct > 0:
+        if aliquota_pis_cofins_pct >= 100:
+            raise FreteConfigError(
+                f"Alíquota de PIS/COFINS cadastrada ({aliquota_pis_cofins_pct}%) inválida — deve ser menor que 100%."
+            )
+        frete_total = frete_sem_pis_cofins / (1 - aliquota_pis_cofins_pct / 100)
+        valor_pis_cofins = frete_total - frete_sem_pis_cofins
+    return frete_total, frete_sem_pis_cofins, valor_pis_cofins, aliquota_pis_cofins_pct
+
+
+def _aplicar_icms(
+    p: "ParametrosFrete", frete_total: float, cidade_origem: str | None, cidade_destino: str | None,
+) -> tuple[float, float, float, "AliquotaIcms | None", float]:
+    """ICMS "por dentro" (gross-up): o frete_total acima (já com PIS/COFINS
+    embutido) ainda não tem o ICMS embutido, então achamos a alíquota da
+    rota (UF origem -> UF destino, ver aliquota_icms_aplicavel) e
+    recalculamos o frete de modo que ele já saia com o imposto incluso
+    (frete_com_icms * (1 - aliquota/100) = frete_sem_icms) — diferente de
+    um simples acréscimo percentual "por fora". Devolve (frete_total_novo,
+    frete_sem_icms, valor_icms, icms_aplicavel, aliquota_icms_pct)."""
+    frete_sem_icms = frete_total
+    valor_icms = 0.0
+    icms_aplicavel = aliquota_icms_aplicavel(p, cidade_origem, cidade_destino)
+    aliquota_icms_pct = icms_aplicavel.aliquota if icms_aplicavel else 0.0
+    if aliquota_icms_pct > 0:
+        if aliquota_icms_pct >= 100:
+            raise FreteConfigError(
+                f"Alíquota de ICMS cadastrada ({aliquota_icms_pct}%) inválida — deve ser menor que 100%."
+            )
+        frete_total = frete_sem_icms / (1 - aliquota_icms_pct / 100)
+        valor_icms = frete_total - frete_sem_icms
+    return frete_total, frete_sem_icms, valor_icms, icms_aplicavel, aliquota_icms_pct
+
+
+def _aplicar_margem_lucro(frete_total: float, margem_lucro_pct: float) -> tuple[float, float, float]:
+    """Margem de lucro — markup simples aplicado por ÚLTIMO, sobre o preço
+    já com PIS/COFINS e ICMS embutidos (não sobre o custo/impostos
+    isolados): a margem é a última camada antes do preço final cobrado do
+    cliente. Devolve (frete_total_novo, frete_sem_margem_lucro,
+    valor_margem_lucro)."""
+    frete_sem_margem_lucro = frete_total
+    frete_total = frete_sem_margem_lucro * (1 + margem_lucro_pct / 100)
+    valor_margem_lucro = frete_total - frete_sem_margem_lucro
+    return frete_total, frete_sem_margem_lucro, valor_margem_lucro
 
 
 def calcular_orcamento(
@@ -1144,60 +1286,14 @@ def calcular_orcamento(
     custo_manutencao = v.tarifa_km_manutencao * (distancia_faturavel + distancia_coleta_propria + distancia_retorno)
     custo_retorno = v.tarifa_km_retorno * distancia_retorno
 
-    # Custo extra: categorias escolhidas na hora do orçamento (ver
-    # CATEGORIAS_CUSTO_EXTRA), cada uma com um valor em R$ digitado pela
-    # pessoa que cota — diferente das taxas adicionais abaixo, não vem de
-    # um catálogo com valor pré-cadastrado.
-    detalhe_custos_extras = []
-    custo_extra_total = 0.0
-    for custo_extra in custos_extras:
-        valor_aplicado = round(custo_extra.get("valor", 0), 2)
-        custo_extra_total += valor_aplicado
-        detalhe_custos_extras.append({"categoria": custo_extra["categoria"], "valor_aplicado": valor_aplicado})
-
-    # Taxas adicionais (fixas em R$ ou % do valor da mercadoria)
-    detalhe_taxas = []
-    custo_taxas_adicionais = 0.0
-    for taxa in p.taxas_adicionais:
-        valor_taxa = _valor_taxa(taxa.tipo, taxa.valor, valor_mercadoria)
-        custo_taxas_adicionais += valor_taxa
-        detalhe_taxas.append({
-            "nome": taxa.nome, "tipo": taxa.tipo,
-            "valor_configurado": taxa.valor, "valor_aplicado": round(valor_taxa, 2),
-        })
-
-    # Taxas regionais — só entram se a cidade de origem ou de destino do
-    # frete bater com alguma cidade cadastrada (ex: taxa de zona franca
-    # em Manaus, taxa de área de risco em determinada cidade etc.)
-    detalhe_taxas_regionais = []
-    custo_taxas_regionais = 0.0
-    for taxa in _taxas_regionais_aplicaveis(p, cidade_origem, cidade_destino):
-        valor_taxa = _valor_taxa(taxa.tipo, taxa.valor, valor_mercadoria)
-        custo_taxas_regionais += valor_taxa
-        detalhe_taxas_regionais.append({
-            "nome": taxa.nome, "cidade": taxa.cidade, "tipo": taxa.tipo,
-            "valor_configurado": taxa.valor, "valor_aplicado": round(valor_taxa, 2),
-        })
-
-    # Taxa de balsa — direcional (cidade_origem -> cidade_destino nessa
-    # ordem exata): só entra se essa travessia específica estiver
-    # cadastrada; ida e volta são cotações independentes, porque o preço
-    # da balsa pode ser diferente em cada sentido.
-    custo_balsa = 0.0
-    detalhe_balsa = None
-    balsa_outro_veiculo = []
-    taxa_balsa = _taxa_balsa_aplicavel(p, cidade_origem, cidade_destino, v.nome)
-    if taxa_balsa:
-        custo_balsa = _valor_taxa(taxa_balsa.tipo, taxa_balsa.valor, valor_mercadoria)
-        detalhe_balsa = {
-            "cidade_origem": taxa_balsa.cidade_origem, "cidade_destino": taxa_balsa.cidade_destino,
-            "veiculo": taxa_balsa.veiculo, "tipo": taxa_balsa.tipo,
-            "valor_configurado": taxa_balsa.valor, "valor_aplicado": round(custo_balsa, 2),
-        }
-    else:
-        # Rota bateu (ou nem foi checada) mas não pro veículo escolhido —
-        # avisa na memória de cálculo em vez de só zerar silenciosamente.
-        balsa_outro_veiculo = _taxa_balsa_outros_veiculos(p, cidade_origem, cidade_destino, v.nome)
+    detalhe_custos_extras, custo_extra_total = _custos_extras_aplicados(custos_extras)
+    detalhe_taxas, custo_taxas_adicionais = _taxas_adicionais_aplicadas(p, valor_mercadoria)
+    detalhe_taxas_regionais, custo_taxas_regionais = _taxas_regionais_aplicadas(
+        p, cidade_origem, cidade_destino, valor_mercadoria
+    )
+    custo_balsa, detalhe_balsa, balsa_outro_veiculo = _taxa_balsa_aplicada(
+        p, cidade_origem, cidade_destino, v.nome, valor_mercadoria
+    )
 
     custo_coleta = 0.0
     coleta_fixa_aplicada = False
@@ -1258,50 +1354,17 @@ def calcular_orcamento(
         + custo_retorno
     )
 
-    # PIS/COFINS — "por dentro" (gross-up) sobre o custo da operação +
-    # impostos e taxas apurado até aqui, com alíquota federal única (não
-    # varia por UF, ver ParametrosFrete.aliquota_pis_cofins) e aplicado
-    # ANTES do ICMS: o ICMS incide sobre o frete já com PIS/COFINS
-    # embutido, não o contrário. A margem de lucro só entra por último,
-    # depois dos dois impostos (ver mais abaixo) — ela é markup sobre o
-    # preço já com tudo embutido, não só sobre o custo/impostos.
-    frete_sem_pis_cofins = frete_total
-    valor_pis_cofins = 0.0
-    aliquota_pis_cofins_pct = p.aliquota_pis_cofins
-    if aliquota_pis_cofins_pct > 0:
-        if aliquota_pis_cofins_pct >= 100:
-            raise FreteConfigError(
-                f"Alíquota de PIS/COFINS cadastrada ({aliquota_pis_cofins_pct}%) inválida — deve ser menor que 100%."
-            )
-        frete_total = frete_sem_pis_cofins / (1 - aliquota_pis_cofins_pct / 100)
-        valor_pis_cofins = frete_total - frete_sem_pis_cofins
-
-    # ICMS — "por dentro" (gross-up): o frete_total acima (já com
-    # PIS/COFINS embutido) ainda não tem o ICMS embutido, então achamos a
-    # alíquota da rota (UF origem -> UF destino, ver
-    # aliquota_icms_aplicavel) e recalculamos o frete de modo que ele já
-    # saia com o imposto incluso (frete_com_icms * (1 - aliquota/100) =
-    # frete_sem_icms) -- diferente de um simples acréscimo percentual
-    # "por fora".
-    frete_sem_icms = frete_total
-    valor_icms = 0.0
-    icms_aplicavel = aliquota_icms_aplicavel(p, cidade_origem, cidade_destino)
-    aliquota_icms_pct = icms_aplicavel.aliquota if icms_aplicavel else 0.0
-    if aliquota_icms_pct > 0:
-        if aliquota_icms_pct >= 100:
-            raise FreteConfigError(
-                f"Alíquota de ICMS cadastrada ({aliquota_icms_pct}%) inválida — deve ser menor que 100%."
-            )
-        frete_total = frete_sem_icms / (1 - aliquota_icms_pct / 100)
-        valor_icms = frete_total - frete_sem_icms
-
-    # Margem de lucro — markup simples aplicado por ÚLTIMO, sobre o preço
-    # já com PIS/COFINS e ICMS embutidos (não sobre o custo/impostos
-    # isolados): a margem é a última camada antes do preço final cobrado
-    # do cliente.
-    frete_sem_margem_lucro = frete_total
-    frete_total = frete_sem_margem_lucro * (1 + margem_lucro_pct / 100)
-    valor_margem_lucro = frete_total - frete_sem_margem_lucro
+    # PIS/COFINS, ICMS e margem de lucro — aplicados em cascata "por
+    # dentro" (gross-up) sobre o frete_total apurado até aqui, nessa ordem
+    # fixa: PIS/COFINS primeiro, ICMS depois (incide sobre o frete já com
+    # PIS/COFINS embutido), e a margem de lucro por último, como markup
+    # simples sobre o preço já com os dois impostos embutidos (ver
+    # _aplicar_pis_cofins/_aplicar_icms/_aplicar_margem_lucro).
+    frete_total, frete_sem_pis_cofins, valor_pis_cofins, aliquota_pis_cofins_pct = _aplicar_pis_cofins(p, frete_total)
+    frete_total, frete_sem_icms, valor_icms, icms_aplicavel, aliquota_icms_pct = _aplicar_icms(
+        p, frete_total, cidade_origem, cidade_destino
+    )
+    frete_total, frete_sem_margem_lucro, valor_margem_lucro = _aplicar_margem_lucro(frete_total, margem_lucro_pct)
 
     return {
         "entrada": {
@@ -1487,46 +1550,14 @@ def calcular_orcamento_fracionado(
     frete_base = custo_base_peso + custo_base_distancia
     frete_ajustado = frete_base * cat.multiplicador * transp.multiplicador * s.multiplicador
 
-    detalhe_custos_extras = []
-    custo_extra_total = 0.0
-    for custo_extra in custos_extras:
-        valor_aplicado = round(custo_extra.get("valor", 0), 2)
-        custo_extra_total += valor_aplicado
-        detalhe_custos_extras.append({"categoria": custo_extra["categoria"], "valor_aplicado": valor_aplicado})
-
-    detalhe_taxas = []
-    custo_taxas_adicionais = 0.0
-    for taxa in p.taxas_adicionais:
-        valor_taxa = _valor_taxa(taxa.tipo, taxa.valor, valor_mercadoria)
-        custo_taxas_adicionais += valor_taxa
-        detalhe_taxas.append({
-            "nome": taxa.nome, "tipo": taxa.tipo,
-            "valor_configurado": taxa.valor, "valor_aplicado": round(valor_taxa, 2),
-        })
-
-    detalhe_taxas_regionais = []
-    custo_taxas_regionais = 0.0
-    for taxa in _taxas_regionais_aplicaveis(p, cidade_origem, cidade_destino):
-        valor_taxa = _valor_taxa(taxa.tipo, taxa.valor, valor_mercadoria)
-        custo_taxas_regionais += valor_taxa
-        detalhe_taxas_regionais.append({
-            "nome": taxa.nome, "cidade": taxa.cidade, "tipo": taxa.tipo,
-            "valor_configurado": taxa.valor, "valor_aplicado": round(valor_taxa, 2),
-        })
-
-    custo_balsa = 0.0
-    detalhe_balsa = None
-    balsa_outro_veiculo = []
-    taxa_balsa = _taxa_balsa_aplicavel(p, cidade_origem, cidade_destino, v.nome)
-    if taxa_balsa:
-        custo_balsa = _valor_taxa(taxa_balsa.tipo, taxa_balsa.valor, valor_mercadoria)
-        detalhe_balsa = {
-            "cidade_origem": taxa_balsa.cidade_origem, "cidade_destino": taxa_balsa.cidade_destino,
-            "veiculo": taxa_balsa.veiculo, "tipo": taxa_balsa.tipo,
-            "valor_configurado": taxa_balsa.valor, "valor_aplicado": round(custo_balsa, 2),
-        }
-    else:
-        balsa_outro_veiculo = _taxa_balsa_outros_veiculos(p, cidade_origem, cidade_destino, v.nome)
+    detalhe_custos_extras, custo_extra_total = _custos_extras_aplicados(custos_extras)
+    detalhe_taxas, custo_taxas_adicionais = _taxas_adicionais_aplicadas(p, valor_mercadoria)
+    detalhe_taxas_regionais, custo_taxas_regionais = _taxas_regionais_aplicadas(
+        p, cidade_origem, cidade_destino, valor_mercadoria
+    )
+    custo_balsa, detalhe_balsa, balsa_outro_veiculo = _taxa_balsa_aplicada(
+        p, cidade_origem, cidade_destino, v.nome, valor_mercadoria
+    )
 
     # Mesma separação de calcular_orcamento: custo da operação (frete
     # ajustado, pedágio, custos extras) x impostos e taxas (taxas
@@ -1547,33 +1578,13 @@ def calcular_orcamento_fracionado(
 
     # Mesma ordem de calcular_orcamento: PIS/COFINS e ICMS incidem sobre o
     # custo da operação + impostos e taxas, e a margem de lucro é aplicada
-    # por último, sobre o preço já com os dois impostos embutidos.
-    frete_sem_pis_cofins = frete_total
-    valor_pis_cofins = 0.0
-    aliquota_pis_cofins_pct = p.aliquota_pis_cofins
-    if aliquota_pis_cofins_pct > 0:
-        if aliquota_pis_cofins_pct >= 100:
-            raise FreteConfigError(
-                f"Alíquota de PIS/COFINS cadastrada ({aliquota_pis_cofins_pct}%) inválida — deve ser menor que 100%."
-            )
-        frete_total = frete_sem_pis_cofins / (1 - aliquota_pis_cofins_pct / 100)
-        valor_pis_cofins = frete_total - frete_sem_pis_cofins
-
-    frete_sem_icms = frete_total
-    valor_icms = 0.0
-    icms_aplicavel = aliquota_icms_aplicavel(p, cidade_origem, cidade_destino)
-    aliquota_icms_pct = icms_aplicavel.aliquota if icms_aplicavel else 0.0
-    if aliquota_icms_pct > 0:
-        if aliquota_icms_pct >= 100:
-            raise FreteConfigError(
-                f"Alíquota de ICMS cadastrada ({aliquota_icms_pct}%) inválida — deve ser menor que 100%."
-            )
-        frete_total = frete_sem_icms / (1 - aliquota_icms_pct / 100)
-        valor_icms = frete_total - frete_sem_icms
-
-    frete_sem_margem_lucro = frete_total
-    frete_total = frete_sem_margem_lucro * (1 + margem_lucro_pct / 100)
-    valor_margem_lucro = frete_total - frete_sem_margem_lucro
+    # por último, sobre o preço já com os dois impostos embutidos (ver
+    # _aplicar_pis_cofins/_aplicar_icms/_aplicar_margem_lucro).
+    frete_total, frete_sem_pis_cofins, valor_pis_cofins, aliquota_pis_cofins_pct = _aplicar_pis_cofins(p, frete_total)
+    frete_total, frete_sem_icms, valor_icms, icms_aplicavel, aliquota_icms_pct = _aplicar_icms(
+        p, frete_total, cidade_origem, cidade_destino
+    )
+    frete_total, frete_sem_margem_lucro, valor_margem_lucro = _aplicar_margem_lucro(frete_total, margem_lucro_pct)
 
     return {
         "entrada": {
