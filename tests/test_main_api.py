@@ -682,6 +682,44 @@ def test_admin_banco_dados_testar_driver_ausente_da_422(client):
     assert "psycopg2" in r.json()["detail"]
 
 
+def test_proxy_headers_ignorados_por_padrao_sem_trusted_proxy_hosts(client):
+    """Sem TRUSTED_PROXY_HOSTS configurada (padrão), a API não confia em
+    X-Forwarded-Proto vindo de ninguém -- o cookie de sessão continua sem
+    "secure" mesmo que o header diga "https" (só a conexão real, que o
+    TestClient enxerga como http, decide isso)."""
+    r = client.post(
+        "/auth/login", json={"username": "admin", "senha": "admin123"},
+        headers={"X-Forwarded-Proto": "https"},
+    )
+    assert r.status_code == 200
+    assert "secure" not in r.headers.get("set-cookie", "").lower()
+
+
+def test_proxy_headers_confia_em_x_forwarded_proto_quando_host_configurado(banco_temporario, monkeypatch):
+    """TRUSTED_PROXY_HOSTS ativa o ProxyHeadersMiddleware (ver main.py) --
+    sem ele, atrás de um proxy reverso fazendo TLS o ASGI só enxerga a
+    conexão proxy->app (scheme "http"), e o cookie de sessão sai sem
+    "secure" mesmo a conexão real (navegador->proxy) sendo HTTPS. A decisão
+    de montar o middleware é resolvida na importação de main.py, então o
+    teste recarrega o módulo com a env var setada e desfaz no final para
+    não vazar estado pros outros testes."""
+    import importlib
+
+    monkeypatch.setenv("TRUSTED_PROXY_HOSTS", "testclient")  # host que o TestClient usa como "client" por padrão
+    importlib.reload(main)
+    try:
+        with TestClient(main.app) as c:
+            r = c.post(
+                "/auth/login", json={"username": "admin", "senha": "admin123"},
+                headers={"X-Forwarded-Proto": "https"},
+            )
+            assert r.status_code == 200
+            assert "secure" in r.headers.get("set-cookie", "").lower()
+    finally:
+        monkeypatch.delenv("TRUSTED_PROXY_HOSTS", raising=False)
+        importlib.reload(main)
+
+
 def test_admin_banco_dados_aplicar_sqlite_para_sqlite_migra_tudo(client, tmp_path):
     """Único cenário de troca de banco testável de ponta a ponta neste
     ambiente (sem SQL Server/MySQL/PostgreSQL disponíveis): sqlite ->

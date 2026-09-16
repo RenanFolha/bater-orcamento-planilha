@@ -27,6 +27,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 import auth_service as auth
 import db_conexao
@@ -77,6 +78,25 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Confia em X-Forwarded-Proto/X-Forwarded-For só quando a conexão chega de
+# um host em TRUSTED_PROXY_HOSTS (lista separada por vírgula, ex:
+# "127.0.0.1") — o deploy com TLS recomendado no README é HOST=127.0.0.1
+# aqui com um proxy reverso (Caddy/nginx) fazendo a terminação HTTPS na
+# mesma máquina. Sem isso, o ASGI só enxerga a conexão proxy→app: o cookie
+# de sessão sai sem "secure" (ver secure=request.url.scheme=="https" em
+# routers/auth.py) e o rate limit de login/geo (que lê request.client.host)
+# vira um limite único compartilhado por todo mundo atrás do proxy, em vez
+# de por pessoa (ver auth_service.py, routers/geo.py). Vazio por padrão —
+# não confia em ninguém, comportamento idêntico a antes desta opção existir.
+# Só aponte para o IP de origem de um proxy que você controla — nunca "*"
+# nem o IP de uma rede inteira, ou um cliente malicioso poderia forjar o
+# próprio IP/scheme direto no header.
+_TRUSTED_PROXY_HOSTS = [
+    h.strip() for h in os.environ.get("TRUSTED_PROXY_HOSTS", "").split(",") if h.strip()
+]
+if _TRUSTED_PROXY_HOSTS:
+    app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=_TRUSTED_PROXY_HOSTS)
 
 if ASSETS_DIR.exists():
     app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")

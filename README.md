@@ -514,6 +514,7 @@ ativo no momento (`"geo_provider": "google"` ou `"osm"`).
 | `GEO_USER_AGENT` | `SistemaOrcamentoFrete/1.0 (uso interno da empresa)` | User-Agent enviado ao Nominatim (exigido pela política de uso deles). |
 | `FRETE_DB_PATH` | `frete.db` na pasta do projeto | Caminho do arquivo do banco SQLite — útil para apontar para outro arquivo/pasta. |
 | `CORS_ORIGINS` | `http://localhost:8000,http://127.0.0.1:8000` | Lista de origens (separadas por vírgula) autorizadas a chamar a API via CORS. Só importa se algo fora da própria UI (servida pelo FastAPI) consumir a API do navegador noutro host/porta. |
+| `TRUSTED_PROXY_HOSTS` | (vazio) | Lista de IPs (separados por vírgula) de proxy(s) reverso(s) confiáveis — quando definida, a API passa a confiar nos headers `X-Forwarded-Proto`/`X-Forwarded-For` enviados por eles. Necessário no deploy com proxy reverso fazendo TLS (ver seção acima): sem isso, atrás do proxy o cookie de sessão sai sem `secure` e o rate limit de login/geo vira um limite único compartilhado por todo mundo (a API só enxerga o IP do proxy). Normalmente `127.0.0.1`, quando o proxy roda na mesma máquina. **Nunca** aponte para um IP que não seja realmente o do seu proxy — confiar no header errado permite forjar IP/scheme. |
 
 ## Estrutura dos arquivos
 
