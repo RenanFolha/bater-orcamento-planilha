@@ -29,6 +29,22 @@ def obter_config_atual(usuario: dict = Depends(exigir_admin)):
     return db_conexao.config_sem_senha()
 
 
+def _cfg_com_senha_atual(cfg: dict) -> dict:
+    """Se o campo `senha` vier vazio no formulário, reaproveita a senha já
+    salva na config ativa. A tela sempre limpa esse campo e só mostra
+    "(mantida — digite pra trocar)" como placeholder (ver GET, que nunca
+    ecoa a senha de volta pro navegador) — sem isso, testar/aplicar sem
+    redigitar a senha sobrescreveria (ou testaria com) uma senha vazia em
+    vez da que já estava configurada."""
+    if cfg.get("senha"):
+        return cfg
+    senha_atual = db_conexao.carregar_config().get("senha")
+    if senha_atual:
+        cfg = dict(cfg)
+        cfg["senha"] = senha_atual
+    return cfg
+
+
 def _conectar_ou_422(cfg: dict):
     try:
         return db_conexao.conectar(cfg, sqlite_path_padrao=db.DB_PATH)
@@ -42,7 +58,7 @@ def _conectar_ou_422(cfg: dict):
 def testar_conexao(payload: BancoDadosConfigIn, usuario: dict = Depends(exigir_admin)):
     """Tenta abrir a conexão com a config recebida SEM aplicar nada —
     não muda o banco em uso, não mexe em schema nem dado nenhum."""
-    conn = _conectar_ou_422(payload.model_dump())
+    conn = _conectar_ou_422(_cfg_com_senha_atual(payload.model_dump()))
     try:
         conn.execute("SELECT 1").fetchone()
     except Exception as e:
@@ -58,7 +74,7 @@ def aplicar_config(payload: BancoDadosConfigIn, usuario: dict = Depends(exigir_a
     pra ele, e só então troca a config ativa. Se qualquer etapa falhar,
     o banco em uso continua sendo o de antes (nada é trocado até o
     final)."""
-    cfg = payload.model_dump()
+    cfg = _cfg_com_senha_atual(payload.model_dump())
     tipo = cfg["tipo"]
 
     conn_destino = _conectar_ou_422(cfg)

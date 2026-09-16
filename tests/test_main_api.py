@@ -720,6 +720,33 @@ def test_proxy_headers_confia_em_x_forwarded_proto_quando_host_configurado(banco
         importlib.reload(main)
 
 
+def test_admin_banco_dados_reaproveita_senha_quando_campo_vem_vazio(client, tmp_path):
+    """A tela sempre limpa o campo senha e só mostra "(mantida — digite pra
+    trocar)" como placeholder (ver GET .../banco-dados, que nunca ecoa a
+    senha) -- então testar/aplicar com o campo vazio, exatamente o que
+    acontece se o admin não redigitar, não pode apagar a senha já salva."""
+    import db_conexao
+
+    _login(client)
+
+    destino1 = str(tmp_path / "destino1.db")
+    r = client.post("/admin/banco-dados/aplicar", json={
+        "tipo": "sqlite", "sqlite_path": destino1, "senha": "segredo-1",
+    })
+    assert r.status_code == 200, r.text
+    assert db_conexao.carregar_config()["senha"] == "segredo-1"
+
+    # reaplica pra outro arquivo sem preencher a senha (campo vazio)
+    destino2 = str(tmp_path / "destino2.db")
+    r = client.post("/admin/banco-dados/aplicar", json={
+        "tipo": "sqlite", "sqlite_path": destino2, "senha": "",
+    })
+    assert r.status_code == 200, r.text
+
+    assert db_conexao.carregar_config()["senha"] == "segredo-1"  # não foi apagada
+    assert client.get("/admin/banco-dados").json()["senha_configurada"] is True
+
+
 def test_admin_banco_dados_aplicar_sqlite_para_sqlite_migra_tudo(client, tmp_path):
     """Único cenário de troca de banco testável de ponta a ponta neste
     ambiente (sem SQL Server/MySQL/PostgreSQL disponíveis): sqlite ->
