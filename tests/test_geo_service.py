@@ -11,6 +11,7 @@ nunca toca no frete.db real nem em rede de verdade.
 
 import asyncio
 
+import httpx
 import pytest
 
 import frete_db as db
@@ -343,3 +344,376 @@ def test_calcular_distancia_usa_distancia_fixa_numa_perna_da_prioridade_de_rota(
     # perna 2 (Belém -> Manaus) veio da distância fixa (2096), não da rota_fake
     assert resultado["distancia_km"] == 2849 + 2096
     assert len(chamadas_rota_de_verdade) == 1  # só a perna 1 chamou o serviço de rota
+
+
+# ============================================================
+# calcular_distancia -- validação de entrada
+# ============================================================
+
+
+def test_calcular_distancia_sem_origem_da_erro():
+    with pytest.raises(geo.GeoError, match="origem"):
+        asyncio.run(geo.calcular_distancia("", "Curitiba, PR, Brasil"))
+    with pytest.raises(geo.GeoError, match="origem"):
+        asyncio.run(geo.calcular_distancia("   ", "Curitiba, PR, Brasil"))
+
+
+def test_calcular_distancia_sem_destino_da_erro():
+    with pytest.raises(geo.GeoError, match="destino"):
+        asyncio.run(geo.calcular_distancia("Campinas, SP", ""))
+
+
+# ============================================================
+# usando_google / cache de geocodificação
+# ============================================================
+
+
+def test_usando_google_falso_por_padrao():
+    assert geo.usando_google() is False
+
+
+def test_usando_google_verdadeiro_com_chave_configurada(monkeypatch):
+    monkeypatch.setattr(geo, "GOOGLE_MAPS_API_KEY", "chave-de-teste")
+    assert geo.usando_google() is True
+
+
+def test_geocode_cache_get_set_e_lru():
+    geo._geocode_cache.clear()
+    assert geo._geocode_cache_get("campinas, sp") is None
+
+    geo._geocode_cache_set("campinas, sp", (1.0, 2.0, "Campinas, SP, Brasil"))
+    assert geo._geocode_cache_get("campinas, sp") == (1.0, 2.0, "Campinas, SP, Brasil")
+
+
+def test_geocode_cache_descarta_o_mais_antigo_quando_cheio(monkeypatch):
+    geo._geocode_cache.clear()
+    monkeypatch.setattr(geo, "_GEOCODE_CACHE_MAX", 2)
+
+    geo._geocode_cache_set("a", (0.0, 0.0, "A"))
+    geo._geocode_cache_set("b", (0.0, 0.0, "B"))
+    geo._geocode_cache_set("c", (0.0, 0.0, "C"))  # estoura o limite -> descarta "a" (o mais antigo)
+
+    assert geo._geocode_cache_get("a") is None
+    assert geo._geocode_cache_get("b") is not None
+    assert geo._geocode_cache_get("c") is not None
+
+
+# ============================================================
+# _extrair_cep
+# ============================================================
+
+
+@pytest.mark.parametrize("endereco,esperado", [
+    ("Rua X, 100, CEP: 13.054-740, Campinas, SP", "13054-740"),
+    ("Rua X, 100, 13054740, Campinas, SP", "13054-740"),
+    ("Rua X, 100, Campinas, SP", None),
+])
+def test_extrair_cep(endereco, esperado):
+    assert geo._extrair_cep(endereco) == esperado
+
+
+# ============================================================
+# _variantes_endereco
+# ============================================================
+
+
+def test_variantes_endereco_sempre_inclui_o_original():
+    assert "Rua X, 100, Campinas, SP" in geo._variantes_endereco("Rua X, 100, Campinas, SP")
+
+
+def test_variantes_endereco_remove_parenteses():
+    variantes = geo._variantes_endereco("Rua X, 100 (Zona Sul), Campinas, SP")
+    assert any("Zona Sul" not in v and "(" not in v for v in variantes)
+
+
+def test_variantes_endereco_remove_segmento_de_cep():
+    variantes = geo._variantes_endereco("Rua X, 100, CEP: 13054-740, Campinas, SP")
+    # pelo menos uma variante não deve mais citar o rótulo "CEP"
+    assert any("cep" not in v.lower() for v in variantes)
+
+
+def test_variantes_endereco_remove_rotulo_bairro():
+    variantes = geo._variantes_endereco("Rua X, 100, bairro Distrito Industrial, Campinas, SP")
+    assert any("bairro" not in v.lower() for v in variantes)
+
+
+def test_variantes_endereco_rua_mais_ultimo_segmento_quando_tem_mais_de_2_partes():
+    # remove o miolo (número, complemento, bairro), fica só primeiro
+    # segmento + último -- não "rua + cidade", literalmente o último
+    # segmento do endereço (aqui, a UF).
+    variantes = geo._variantes_endereco("Rua X, 100, sala 5, Distrito Industrial, Campinas, SP")
+    assert "Rua X, SP" in variantes
+
+
+def test_variantes_endereco_remove_qualificador_de_unidade():
+    variantes = geo._variantes_endereco("Rodovia BR 316, Km 05, Bloco A, Belém, PA")
+    # a rua limpa (sem "Km 05" nem "Bloco A") deve aparecer em alguma variante
+    assert any("Km 05" not in v and "Bloco A" not in v for v in variantes)
+
+
+def test_variantes_endereco_acrescenta_dica_de_cidade_quando_ausente():
+    variantes = geo._variantes_endereco("Rua X, 100", dica_cidade="Campinas")
+    assert any("Campinas" in v for v in variantes)
+
+
+def test_variantes_endereco_nao_duplica_dica_de_cidade_ja_presente():
+    variantes = geo._variantes_endereco("Rua X, 100, Campinas, SP", dica_cidade="Campinas")
+    # não deve ter nenhuma variante repetida (case-insensitive)
+    assert len(variantes) == len({v.strip().lower() for v in variantes})
+
+
+def test_variantes_endereco_sem_duplicatas():
+    variantes = geo._variantes_endereco("Rua X, 100, Campinas, SP, Brasil")
+    assert len(variantes) == len(set(v.lower() for v in variantes))
+
+
+# ============================================================
+# _haversine_km
+# ============================================================
+
+
+def test_haversine_km_mesmo_ponto_e_zero():
+    assert geo._haversine_km(-22.9, -47.1, -22.9, -47.1) == pytest.approx(0.0)
+
+
+def test_haversine_km_distancia_conhecida_sp_rj():
+    # São Paulo -> Rio de Janeiro em linha reta é ~360km (valor de referência,
+    # tolerância generosa só pra pegar erro grosseiro de fórmula/unidade).
+    distancia = geo._haversine_km(-23.5505, -46.6333, -22.9068, -43.1729)
+    assert 340 < distancia < 380
+
+
+# ============================================================
+# resolver_retirada (nível de geo_service, não do router)
+# ============================================================
+
+
+def _filial_fake(nome, lat, lon):
+    return fs.Filial(nome, f"Endereço de {nome}", lat, lon)
+
+
+def test_resolver_retirada_sem_endereco_da_erro():
+    with pytest.raises(geo.GeoError, match="retirada"):
+        asyncio.run(geo.resolver_retirada("", [_filial_fake("SP", -23.5, -46.6)]))
+
+
+def test_resolver_retirada_sem_filiais_cadastradas_da_erro():
+    with pytest.raises(geo.GeoError, match="filial"):
+        asyncio.run(geo.resolver_retirada("Rua X, 100, Campinas, SP", []))
+
+
+def test_resolver_retirada_escolhe_a_filial_mais_proxima(monkeypatch):
+    filiais = [
+        _filial_fake("São Paulo", -23.5505, -46.6333),
+        _filial_fake("Campinas", -22.9099, -47.0626),  # mais perto do endereço de teste
+    ]
+
+    async def _geocode_fake(client, endereco, dica_cidade=None):
+        return (-22.90, -47.05, "Rua X, 100, Campinas, SP, Brasil")  # perto de Campinas
+
+    async def _coordenadas_filial_fake(client, filial):
+        return filial.latitude, filial.longitude
+
+    chamou_rota_com = []
+
+    async def _rota_fake(client, lat1, lon1, lat2, lon2):
+        chamou_rota_com.append((lat1, lon1, lat2, lon2))
+        return {"distancia_km": 12, "duracao_min": 20, "pedagio_valor": None, "pedagio_moeda": None}
+
+    monkeypatch.setattr(geo, "_geocode", _geocode_fake)
+    monkeypatch.setattr(geo, "coordenadas_filial", _coordenadas_filial_fake)
+    monkeypatch.setattr(geo, "_rota", _rota_fake)
+
+    resultado = asyncio.run(geo.resolver_retirada("Rua X, 100, Campinas, SP", filiais))
+    assert resultado["filial_mais_proxima"] == "Campinas"
+    assert resultado["distancia_coleta_km"] == 12
+    assert resultado["duracao_coleta_min"] == 20
+    # a rota real só é calculada pra filial vencedora (Campinas), não pras duas
+    assert len(chamou_rota_com) == 1
+    assert chamou_rota_com[0] == (-22.9099, -47.0626, -22.90, -47.05)
+
+
+# ============================================================
+# _rota -- escolhe OSRM ou Google conforme usando_google()
+# ============================================================
+
+
+def test_rota_usa_osrm_por_padrao(monkeypatch):
+    chamou = []
+
+    async def _osrm_fake(client, lat1, lon1, lat2, lon2):
+        chamou.append("osrm")
+        return {"distancia_km": 1, "duracao_min": 1, "pedagio_valor": None, "pedagio_moeda": None}
+
+    async def _google_fake(client, lat1, lon1, lat2, lon2):
+        chamou.append("google")
+        return {"distancia_km": 1, "duracao_min": 1, "pedagio_valor": None, "pedagio_moeda": None}
+
+    monkeypatch.setattr(geo, "_rota_osrm", _osrm_fake)
+    monkeypatch.setattr(geo, "_rota_google", _google_fake)
+
+    asyncio.run(geo._rota(None, 0, 0, 0, 0))
+    assert chamou == ["osrm"]
+
+
+def test_rota_usa_google_quando_configurado(monkeypatch):
+    monkeypatch.setattr(geo, "GOOGLE_MAPS_API_KEY", "chave-de-teste")
+    chamou = []
+
+    async def _osrm_fake(client, lat1, lon1, lat2, lon2):
+        chamou.append("osrm")
+        return {"distancia_km": 1, "duracao_min": 1, "pedagio_valor": None, "pedagio_moeda": None}
+
+    async def _google_fake(client, lat1, lon1, lat2, lon2):
+        chamou.append("google")
+        return {"distancia_km": 1, "duracao_min": 1, "pedagio_valor": None, "pedagio_moeda": None}
+
+    monkeypatch.setattr(geo, "_rota_osrm", _osrm_fake)
+    monkeypatch.setattr(geo, "_rota_google", _google_fake)
+
+    asyncio.run(geo._rota(None, 0, 0, 0, 0))
+    assert chamou == ["google"]
+
+
+# ============================================================
+# Funções de baixo nível que chamam o serviço externo de verdade
+# (Nominatim/OSRM/Google) -- mocadas com um httpx.AsyncClient fake, sem
+# nenhuma chamada de rede real.
+# ============================================================
+
+
+class _RespostaFake:
+    def __init__(self, dados, status_code=200):
+        self._dados = dados
+        self.status_code = status_code
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            request = httpx.Request("GET", "http://teste")
+            response = httpx.Response(self.status_code, request=request)
+            raise httpx.HTTPStatusError("erro de status", request=request, response=response)
+
+    def json(self):
+        return self._dados
+
+
+class _ClienteFake:
+    """Confunde httpx.AsyncClient o suficiente pras funções de
+    _tentar_busca/_geocode_google/_rota_osrm/_rota_google (só usam
+    .get/.post) -- devolve sempre a mesma resposta fake, ou levanta o
+    erro de conexão configurado."""
+
+    def __init__(self, resposta=None, erro_conexao=None):
+        self._resposta = resposta
+        self._erro_conexao = erro_conexao
+
+    async def get(self, *args, **kwargs):
+        if self._erro_conexao:
+            raise self._erro_conexao
+        return self._resposta
+
+    async def post(self, *args, **kwargs):
+        if self._erro_conexao:
+            raise self._erro_conexao
+        return self._resposta
+
+
+def test_geocode_nominatim_sucesso():
+    resposta = _RespostaFake([{"lat": "-22.9", "lon": "-47.1", "display_name": "Campinas, SP, Brasil"}])
+    resultado = asyncio.run(geo._geocode_nominatim(_ClienteFake(resposta), {"q": "Campinas"}))
+    assert resultado == (-22.9, -47.1, "Campinas, SP, Brasil")
+
+
+def test_geocode_nominatim_sem_resultado():
+    resposta = _RespostaFake([])
+    resultado = asyncio.run(geo._geocode_nominatim(_ClienteFake(resposta), {"q": "endereço inexistente"}))
+    assert resultado is None
+
+
+def test_geocode_google_sucesso():
+    dados = {
+        "status": "OK",
+        "results": [{
+            "geometry": {"location": {"lat": -22.9, "lng": -47.1}},
+            "formatted_address": "Campinas, SP, Brasil",
+        }],
+    }
+    resultado = asyncio.run(geo._geocode_google(_ClienteFake(_RespostaFake(dados)), "Campinas"))
+    assert resultado == (-22.9, -47.1, "Campinas, SP, Brasil")
+
+
+def test_geocode_google_zero_results():
+    dados = {"status": "ZERO_RESULTS", "results": []}
+    resultado = asyncio.run(geo._geocode_google(_ClienteFake(_RespostaFake(dados)), "endereço inexistente"))
+    assert resultado is None
+
+
+def test_geocode_google_erro_de_configuracao():
+    dados = {"status": "REQUEST_DENIED", "results": []}
+    with pytest.raises(geo.GeoError, match="Google Maps"):
+        asyncio.run(geo._geocode_google(_ClienteFake(_RespostaFake(dados)), "Campinas"))
+
+
+def test_geocode_erro_de_conexao_tenta_variantes_e_por_fim_desiste(monkeypatch):
+    # todas as tentativas falham por erro de conexão (não por endereço não
+    # encontrado) -- o erro final reportado precisa ser o de conexão, não
+    # o genérico de "endereço não encontrado".
+    monkeypatch.setattr(geo, "_variantes_endereco", lambda endereco, dica_cidade=None: [endereco])
+    geo._geocode_cache.clear()
+
+    cliente = _ClienteFake(erro_conexao=httpx.ConnectError("falha de rede"))
+    with pytest.raises(geo.GeoError, match="Falha ao consultar"):
+        asyncio.run(geo._geocode(cliente, "Rua Inacessível, 1"))
+
+
+def test_rota_osrm_sucesso():
+    dados = {"code": "Ok", "routes": [{"distance": 12345, "duration": 600}]}
+    resultado = asyncio.run(geo._rota_osrm(_ClienteFake(_RespostaFake(dados)), -22.9, -47.1, -23.5, -46.6))
+    assert resultado["distancia_km"] == 12  # 12345m arredondado pra km
+    assert resultado["duracao_min"] == 10  # 600s = 10min
+    assert resultado["pedagio_valor"] is None
+
+
+def test_rota_osrm_sem_rota_encontrada():
+    dados = {"code": "NoRoute", "routes": []}
+    with pytest.raises(geo.GeoError, match="rota rodoviária"):
+        asyncio.run(geo._rota_osrm(_ClienteFake(_RespostaFake(dados)), -22.9, -47.1, -23.5, -46.6))
+
+
+def test_rota_osrm_erro_de_conexao():
+    cliente = _ClienteFake(erro_conexao=httpx.ConnectError("falha de rede"))
+    with pytest.raises(geo.GeoError, match="Falha ao calcular"):
+        asyncio.run(geo._rota_osrm(cliente, -22.9, -47.1, -23.5, -46.6))
+
+
+def test_rota_google_sucesso_com_pedagio():
+    dados = {
+        "routes": [{
+            "distanceMeters": 12345, "duration": "600s",
+            "travelAdvisory": {"tollInfo": {"estimatedPrice": [{"units": "10", "nanos": 500000000, "currencyCode": "BRL"}]}},
+        }],
+    }
+    resultado = asyncio.run(geo._rota_google(_ClienteFake(_RespostaFake(dados)), -22.9, -47.1, -23.5, -46.6))
+    assert resultado["distancia_km"] == 12
+    assert resultado["duracao_min"] == 10
+    assert resultado["pedagio_valor"] == pytest.approx(10.5)
+    assert resultado["pedagio_moeda"] == "BRL"
+
+
+def test_rota_google_sucesso_sem_pedagio():
+    dados = {"routes": [{"distanceMeters": 5000, "duration": "300s"}]}
+    resultado = asyncio.run(geo._rota_google(_ClienteFake(_RespostaFake(dados)), -22.9, -47.1, -23.5, -46.6))
+    assert resultado["pedagio_valor"] is None
+    assert resultado["pedagio_moeda"] is None
+
+
+def test_rota_google_sem_rotas_da_erro():
+    dados = {"routes": []}
+    with pytest.raises(geo.GeoError, match="Google Maps"):
+        asyncio.run(geo._rota_google(_ClienteFake(_RespostaFake(dados)), -22.9, -47.1, -23.5, -46.6))
+
+
+def test_rota_google_erro_de_conexao():
+    cliente = _ClienteFake(erro_conexao=httpx.ConnectError("falha de rede"))
+    with pytest.raises(geo.GeoError, match="Falha ao calcular"):
+        asyncio.run(geo._rota_google(cliente, -22.9, -47.1, -23.5, -46.6))
