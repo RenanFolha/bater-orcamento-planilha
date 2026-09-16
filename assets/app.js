@@ -116,6 +116,13 @@ const MEMORIA_CALCULO_CAMPOS = [
 
   {header: 'Margem de lucro'},
   {chave: 'margem_lucro_pct', rotulo: 'Margem de lucro', tipo: 'pct'},
+  {
+    chave: 'markup_lucro', rotulo: 'Markup aplicado', tipo: 'mult',
+    // Não vem pronto do backend (só margem_lucro_pct, em %) -- markup é
+    // essa mesma margem expressa como multiplicador (40% = 1,40x), igual
+    // ao formato já usado pra multiplicador_categoria/transporte/sla.
+    calculado: (fonte) => 1 + (fonte.margem_lucro_pct ?? 0) / 100,
+  },
   {chave: 'frete_sem_margem_lucro', rotulo: 'Frete sem margem de lucro (já com impostos)', tipo: 'brl'},
   {chave: 'valor_margem_lucro', rotulo: 'Valor da margem de lucro', tipo: 'brl'},
 
@@ -168,7 +175,8 @@ function renderizarMemoriaCalculo(data, containerId = 'bloco-memoria-calculo', c
     if(item.header){
       return `<div style="margin:12px 0 4px;font-size:10.5px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-dim);">${esc(item.header)}</div>`;
     }
-    const valor = _formatarValorMemoria(fonte[item.chave], item.tipo);
+    const bruto = item.calculado ? item.calculado(fonte) : fonte[item.chave];
+    const valor = _formatarValorMemoria(bruto, item.tipo);
     return `<div class="line"><span>${esc(item.rotulo)}</span><span>${esc(valor)}</span></div>`;
   }).join('');
   container.innerHTML = (comTitulo ? '<h3>Memória de cálculo completa</h3>' : '') + linhas;
