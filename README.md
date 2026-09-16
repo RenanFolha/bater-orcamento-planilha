@@ -476,9 +476,13 @@ servidor SQL Server, MySQL ou PostgreSQL:
   no sistema operacional (não é um pacote Python — [baixe aqui](https://learn.microsoft.com/sql/connect/odbc/download-odbc-driver-for-sql-server)).
   MySQL e PostgreSQL não exigem nada além do `pip install -r requirements.txt`.
 - A config ativa (incluindo host/usuário/senha, se houver) fica em
-  `db_config.json` na raiz do projeto — arquivo local, fora do git,
-  **sem criptografia** (mesma exposição que o `frete.db` sempre teve).
-  Sem esse arquivo, o padrão é SQLite normalmente.
+  `db_config.json` na raiz do projeto — arquivo local, fora do git. A
+  senha é gravada **cifrada** (Fernet/AES, chave local gerada na
+  primeira vez em `db_config.key`, também fora do git); host/usuário
+  ficam em texto claro, mesmo padrão de qualquer arquivo de config local.
+  Sem `db_config.json`, o padrão é SQLite normalmente. Perder o arquivo
+  `db_config.key` torna a senha já salva ilegível — basta recadastrar
+  pela tela Configurações → "Banco de dados".
 
 **Limitação conhecida:** o ambiente onde este recurso foi construído
 não tinha SQL Server/MySQL/PostgreSQL disponíveis pra testar contra um

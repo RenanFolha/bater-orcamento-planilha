@@ -16,16 +16,20 @@ frete_db.py continuam exatamente iguais, sem saber qual driver está por
 trás.
 
 A config de qual banco usar fica em `db_config.json` (fora do git — pode
-ter host/usuário/senha de um servidor externo, mesma exposição que o
-frete.db sempre teve: arquivo local, sem criptografia). Sem esse
-arquivo (instalação nova ou já existente), o padrão é SQLite apontando
-pro caminho de sempre (frete_db.DB_PATH) — ninguém precisa mexer na tela
-nova pra continuar exatamente como estava.
+ter host/usuário de um servidor externo). O campo `senha` é gravado
+cifrado (Fernet/AES) com uma chave local gerada na primeira vez em
+`db_config.key` (também fora do git, ver `_obter_chave`) — nunca em
+texto puro no arquivo. Sem `db_config.json` (instalação nova ou já
+existente), o padrão é SQLite apontando pro caminho de sempre
+(frete_db.DB_PATH) — ninguém precisa mexer na tela nova pra continuar
+exatamente como estava.
 """
 
 import json
 import os
 import sqlite3
+
+from cryptography.fernet import Fernet, InvalidToken
 
 TIPOS_BANCO = ("sqlite", "sqlserver", "mysql", "postgresql")
 
@@ -33,6 +37,45 @@ DB_CONFIG_PATH = os.environ.get(
     "FRETE_DB_CONFIG_PATH",
     os.path.join(os.path.dirname(__file__), "db_config.json"),
 )
+
+DB_CONFIG_KEY_PATH = os.environ.get(
+    "FRETE_DB_CONFIG_KEY_PATH",
+    os.path.join(os.path.dirname(__file__), "db_config.key"),
+)
+
+
+def _obter_chave() -> bytes:
+    """Chave simétrica local usada só pra cifrar/decifrar o campo `senha`
+    de db_config.json. Gerada e salva em DB_CONFIG_KEY_PATH na primeira
+    vez que alguém salva uma config com senha; depois disso é sempre
+    reaproveitada (perder o arquivo da chave torna qualquer senha já
+    salva ilegível, exigindo recadastro pela tela)."""
+    if os.path.exists(DB_CONFIG_KEY_PATH):
+        with open(DB_CONFIG_KEY_PATH, "rb") as f:
+            return f.read().strip()
+    chave = Fernet.generate_key()
+    with open(DB_CONFIG_KEY_PATH, "wb") as f:
+        f.write(chave)
+    return chave
+
+
+def _cifrar_senha(senha: str) -> str:
+    if not senha:
+        return ""
+    return Fernet(_obter_chave()).encrypt(senha.encode("utf-8")).decode("ascii")
+
+
+def _decifrar_senha(senha: str) -> str:
+    """Decifra o valor gravado em disco. Se não for um token Fernet
+    válido (ex: db_config.json de uma versão anterior a esta mudança,
+    com a senha ainda em texto puro), devolve o valor como veio — a
+    próxima chamada a salvar_config já regrava cifrado."""
+    if not senha:
+        return ""
+    try:
+        return Fernet(_obter_chave()).decrypt(senha.encode("ascii")).decode("utf-8")
+    except (InvalidToken, ValueError):
+        return senha
 
 
 class ConflitoIntegridade(Exception):
@@ -74,12 +117,15 @@ def carregar_config() -> dict:
         dados = json.load(f)
     cfg = config_padrao()
     cfg.update(dados)
+    cfg["senha"] = _decifrar_senha(cfg.get("senha", ""))
     return cfg
 
 
 def salvar_config(cfg: dict) -> None:
+    cfg_para_salvar = dict(cfg)
+    cfg_para_salvar["senha"] = _cifrar_senha(cfg.get("senha", ""))
     with open(DB_CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, ensure_ascii=False, indent=2)
+        json.dump(cfg_para_salvar, f, ensure_ascii=False, indent=2)
 
 
 def config_sem_senha(cfg: dict | None = None) -> dict:

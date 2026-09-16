@@ -47,9 +47,13 @@ def banco_temporario(tmp_path, monkeypatch):
     existe: se a máquina que roda os testes já tiver configurado um banco
     externo de verdade pela tela "Banco de dados" (`db_config.json` na
     raiz do projeto), sem isso os testes tentariam conectar nesse banco
-    externo em vez do SQLite temporário — inclusive escrevendo nele."""
+    externo em vez do SQLite temporário — inclusive escrevendo nele.
+    `db_conexao.DB_CONFIG_KEY_PATH` (chave de criptografia da senha) segue
+    o mesmo isolamento, pra nenhum teste que salve uma config com senha
+    gerar/gravar essa chave na raiz real do projeto."""
     caminho = tmp_path / "teste_frete.db"
     monkeypatch.setattr(db, "DB_PATH", str(caminho))
     monkeypatch.setattr(db_conexao, "DB_CONFIG_PATH", str(tmp_path / "nao_existe_db_config.json"))
+    monkeypatch.setattr(db_conexao, "DB_CONFIG_KEY_PATH", str(tmp_path / "nao_existe_db_config.key"))
     db.init_db()
     return caminho

@@ -126,6 +126,7 @@ def test_carregar_config_sem_arquivo_devolve_padrao_sqlite(tmp_path, monkeypatch
 def test_salvar_e_carregar_config(tmp_path, monkeypatch):
     caminho = tmp_path / "db_config.json"
     monkeypatch.setattr(db_conexao, "DB_CONFIG_PATH", str(caminho))
+    monkeypatch.setattr(db_conexao, "DB_CONFIG_KEY_PATH", str(tmp_path / "db_config.key"))
 
     db_conexao.salvar_config({
         "tipo": "postgresql", "host": "meuserver", "porta": 5432,
@@ -136,11 +137,24 @@ def test_salvar_e_carregar_config(tmp_path, monkeypatch):
     assert cfg["host"] == "meuserver"
     assert cfg["senha"] == "segredo"
 
-    # o JSON salvo em disco de fato contém a senha em texto puro (mesma
-    # exposição que o frete.db sempre teve -- arquivo local sem
-    # criptografia, ver docstring do módulo)
+    # a senha grava cifrada em disco (Fernet, chave local em
+    # DB_CONFIG_KEY_PATH) -- nunca em texto puro, ver docstring do módulo
     bruto = json.loads(caminho.read_text(encoding="utf-8"))
-    assert bruto["senha"] == "segredo"
+    assert bruto["senha"] != "segredo"
+    assert bruto["senha"] != ""
+
+
+def test_carregar_config_aceita_senha_em_texto_puro_de_versao_antiga(tmp_path, monkeypatch):
+    """db_config.json gravado por uma versão anterior a essa mudança
+    ainda tem a senha em texto puro -- carregar_config precisa continuar
+    lendo esse valor (a próxima salvar_config já regrava cifrado)."""
+    caminho = tmp_path / "db_config.json"
+    caminho.write_text(json.dumps({"tipo": "mysql", "senha": "texto-puro-antigo"}), encoding="utf-8")
+    monkeypatch.setattr(db_conexao, "DB_CONFIG_PATH", str(caminho))
+    monkeypatch.setattr(db_conexao, "DB_CONFIG_KEY_PATH", str(tmp_path / "db_config.key"))
+
+    cfg = db_conexao.carregar_config()
+    assert cfg["senha"] == "texto-puro-antigo"
 
 
 @pytest.mark.parametrize("tipo,driver", [
