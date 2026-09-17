@@ -73,6 +73,22 @@ def test_usa_a_cotacao_mais_recente_quando_ha_varias(banco_temporario):
     assert achado["distancia_km"] == 2950
 
 
+def test_buscar_rota_no_historico_none_quando_origem_ou_destino_atual_nao_identificavel(banco_temporario):
+    _salvar_rota("Campinas", "Belém, Pará, Brasil", 2900, veiculo="VUC")
+    assert geo._buscar_rota_no_historico(" , , ", "Belém, Pará, Brasil", "VUC") is None
+
+
+def test_buscar_rota_no_historico_ignora_linha_salva_com_origem_ou_destino_vazio(banco_temporario):
+    # registro antigo/malformado (origem_resumo ou destino_resumo em
+    # branco) não pode quebrar a busca -- só é ignorado, segue pras
+    # próximas linhas.
+    _salvar_rota("", "", 2900, veiculo="VUC")
+    _salvar_rota("Campinas", "Belém, Pará, Brasil", 3000, veiculo="VUC")
+    achado = geo._buscar_rota_no_historico("Campinas", "Belém, Pará, Brasil", "VUC")
+    assert achado is not None
+    assert achado["distancia_km"] == 3000
+
+
 def test_calcular_distancia_nao_chama_servico_externo_quando_ja_no_historico(banco_temporario, monkeypatch):
     _salvar_rota("Campinas", "Belém, Pará, Brasil", 2900, veiculo="VUC")
 
@@ -346,6 +362,90 @@ def test_calcular_distancia_usa_distancia_fixa_numa_perna_da_prioridade_de_rota(
     assert len(chamadas_rota_de_verdade) == 1  # só a perna 1 chamou o serviço de rota
 
 
+def test_calcular_distancia_prioridade_rota_com_filial_escala_inexistente_da_erro(banco_temporario, monkeypatch):
+    # Prioridade de rota cadastrada aponta pra uma filial que foi excluída
+    # (ou nunca existiu) -- precisa de um erro claro, não travar/quebrar.
+    p = fs.ParametrosFrete()
+    p.filiais = {}  # "Belém" não está cadastrada
+    p.prioridades_rota = [fs.PrioridadeRota(estado_origem="*", cidade_destino="Manaus", filial_escala="Belém")]
+    monkeypatch.setattr(fs, "parametros", p)
+
+    async def _geocode_fake(client, endereco, dica_cidade=None):
+        resolvidos = {
+            "São Paulo": (0.0, 0.0, "São Paulo, São Paulo, Brasil"),
+            "Manaus": (0.0, 0.0, "Manaus, Amazonas, Brasil"),
+        }
+        return resolvidos[endereco]
+
+    monkeypatch.setattr(geo, "_geocode", _geocode_fake)
+
+    with pytest.raises(geo.GeoError, match="Belém"):
+        asyncio.run(geo.calcular_distancia("São Paulo", "Manaus"))
+
+
+def test_calcular_distancia_prioridade_rota_tambem_usa_pedagio_local(banco_temporario, monkeypatch):
+    # Mesmo raciocínio de test_calcular_distancia_usa_pedagio_local_quando_corredor_cadastrado
+    # (mais abaixo), mas dentro do ramo de Prioridade de Rota -- o
+    # corredor cadastrado é pela rota completa (origem->destino), não por
+    # perna da escala.
+    p = _parametros_com_pedagio_local()
+    p.filiais = {"belém": fs.Filial("Belém", "Centro, Belém, PA, Brasil", None, None)}
+    p.prioridades_rota = [fs.PrioridadeRota(estado_origem="*", cidade_destino="Florianópolis", filial_escala="Belém")]
+    monkeypatch.setattr(fs, "parametros", p)
+
+    async def _geocode_fake(client, endereco, dica_cidade=None):
+        resolvidos = {
+            "Curitiba": (0.0, 0.0, "Curitiba, PR, Brasil"),
+            "Florianópolis": (0.0, 0.0, "Florianópolis, SC, Brasil"),
+        }
+        return resolvidos[endereco]
+
+    async def _coordenadas_filial_fake(client, filial):
+        return (1.0, 1.0)
+
+    async def _rota_fake(client, lat1, lon1, lat2, lon2):
+        return {"distancia_km": 300, "duracao_min": 200, "pedagio_valor": 99.0, "pedagio_moeda": "USD"}
+
+    monkeypatch.setattr(geo, "_geocode", _geocode_fake)
+    monkeypatch.setattr(geo, "coordenadas_filial", _coordenadas_filial_fake)
+    monkeypatch.setattr(geo, "_rota", _rota_fake)
+
+    resultado = asyncio.run(geo.calcular_distancia("Curitiba", "Florianópolis", veiculo="VUC"))
+    assert resultado["pedagio_valor"] == pytest.approx(42.0)  # veio do corredor cadastrado, não da _rota_fake (99.0)
+    assert resultado["pedagio_moeda"] == "BRL"
+
+
+# ============================================================
+# coordenadas_filial
+# ============================================================
+
+
+def test_coordenadas_filial_usa_cache_quando_ja_geocodificada():
+    filial = fs.Filial("SP", "Endereço Teste", -23.5, -46.6)
+    resultado = asyncio.run(geo.coordenadas_filial(None, filial))  # client nem chega a ser usado
+    assert resultado == (-23.5, -46.6)
+
+
+def test_coordenadas_filial_geocodifica_e_persiste_quando_ausente(banco_temporario, monkeypatch):
+    db.inserir_filial("Filial Teste Coordenadas", "Rua X, 100, Campinas, SP", uf="SP")
+    filial = fs.Filial("Filial Teste Coordenadas", "Rua X, 100, Campinas, SP", None, None)
+
+    async def _geocode_fake(client, endereco, dica_cidade=None):
+        assert dica_cidade == "Filial Teste Coordenadas"  # usa o nome da filial como dica de cidade
+        return (-22.9, -47.1, "Rua X, 100, Campinas, SP, Brasil")
+
+    monkeypatch.setattr(geo, "_geocode", _geocode_fake)
+    lat, lon = asyncio.run(geo.coordenadas_filial(None, filial))
+    assert (lat, lon) == (-22.9, -47.1)
+    assert filial.latitude == -22.9  # objeto em memória também atualizado
+    assert filial.longitude == -47.1
+
+    # persistiu no banco -- uma próxima leitura já vem com coordenada
+    salva = [f for f in db.listar_filiais_admin() if f["nome"] == "Filial Teste Coordenadas"][0]
+    assert salva["latitude"] == pytest.approx(-22.9)
+    assert salva["longitude"] == pytest.approx(-47.1)
+
+
 # ============================================================
 # calcular_distancia -- validação de entrada
 # ============================================================
@@ -449,6 +549,22 @@ def test_variantes_endereco_remove_qualificador_de_unidade():
     variantes = geo._variantes_endereco("Rodovia BR 316, Km 05, Bloco A, Belém, PA")
     # a rua limpa (sem "Km 05" nem "Bloco A") deve aparecer em alguma variante
     assert any("Km 05" not in v and "Bloco A" not in v for v in variantes)
+
+
+def test_variantes_endereco_remove_qualificador_no_meio_do_primeiro_segmento():
+    # qualificador colado no fim do primeiro segmento (não isolado numa
+    # vírgula própria, como no teste acima) -- ainda assim precisa sumir
+    # numa variante própria (rua limpa + último segmento).
+    variantes = geo._variantes_endereco("Rua Exemplo Bloco B, Belém, PA")
+    assert "Rua Exemplo, PA" in variantes
+    assert "Rua Exemplo" in variantes
+
+
+def test_variantes_endereco_qualificador_em_endereco_de_um_segmento_so():
+    # endereço sem vírgula nenhuma (1 segmento só) -- cai no ramo "elif"
+    # (len(partes_sem_cep) < 2), não no "if" usado pelos testes acima.
+    variantes = geo._variantes_endereco("Sala 5 Rua Exemplo")
+    assert "Rua Exemplo" in variantes
 
 
 def test_variantes_endereco_acrescenta_dica_de_cidade_quando_ausente():
@@ -664,6 +780,91 @@ def test_geocode_erro_de_conexao_tenta_variantes_e_por_fim_desiste(monkeypatch):
     cliente = _ClienteFake(erro_conexao=httpx.ConnectError("falha de rede"))
     with pytest.raises(geo.GeoError, match="Falha ao consultar"):
         asyncio.run(geo._geocode(cliente, "Rua Inacessível, 1"))
+
+
+def test_geocode_usa_cache_quando_ja_tem_endereco_geocodificado():
+    geo._geocode_cache.clear()
+    geo._geocode_cache_set("rua já geocodificada, 1", (-22.9, -47.1, "Rua Já Geocodificada, 1, Brasil"))
+    # client=None -- se caísse pra rede de verdade, quebraria aqui
+    resultado = asyncio.run(geo._geocode(None, "Rua Já Geocodificada, 1"))
+    assert resultado == (-22.9, -47.1, "Rua Já Geocodificada, 1, Brasil")
+
+
+def test_geocode_branch_google_sucesso_na_primeira_variante(monkeypatch):
+    monkeypatch.setattr(geo, "GOOGLE_MAPS_API_KEY", "chave-de-teste")
+    monkeypatch.setattr(geo, "_variantes_endereco", lambda endereco, dica_cidade=None: [endereco])
+    geo._geocode_cache.clear()
+
+    dados = {
+        "status": "OK",
+        "results": [{
+            "geometry": {"location": {"lat": -22.9, "lng": -47.1}},
+            "formatted_address": "Campinas, SP, Brasil",
+        }],
+    }
+    cliente = _ClienteFake(_RespostaFake(dados))
+    resultado = asyncio.run(geo._geocode(cliente, "Campinas"))
+    assert resultado == (-22.9, -47.1, "Campinas, SP, Brasil")
+    assert geo._geocode_cache_get("campinas") == (-22.9, -47.1, "Campinas, SP, Brasil")
+
+
+def test_geocode_branch_google_erro_de_configuracao_interrompe_tentativas(monkeypatch):
+    # REQUEST_DENIED (chave inválida) não deve continuar tentando as
+    # demais variações do endereço -- é um erro de configuração, não de
+    # endereço mal formatado.
+    monkeypatch.setattr(geo, "GOOGLE_MAPS_API_KEY", "chave-invalida")
+    monkeypatch.setattr(
+        geo, "_variantes_endereco", lambda endereco, dica_cidade=None: [endereco, "variante 2"]
+    )
+    geo._geocode_cache.clear()
+
+    chamadas = []
+
+    async def _geocode_google_fake(client, texto):
+        chamadas.append(texto)
+        raise geo.GeoError("Google Maps recusou a consulta de geocodificação (status: REQUEST_DENIED).")
+
+    monkeypatch.setattr(geo, "_geocode_google", _geocode_google_fake)
+
+    with pytest.raises(geo.GeoError, match="REQUEST_DENIED"):
+        asyncio.run(geo._geocode(_ClienteFake(), "Rua Exemplo"))
+    assert chamadas == ["Rua Exemplo"]  # parou na primeira, não tentou "variante 2"
+
+
+def test_geocode_branch_nominatim_usa_cep_como_busca_estruturada(monkeypatch):
+    # Quando o endereço tem CEP e as variações de texto livre não encontram
+    # nada, tenta uma busca estruturada só pelo CEP como último recurso.
+    monkeypatch.setattr(geo, "GOOGLE_MAPS_API_KEY", "")
+    monkeypatch.setattr(geo, "_variantes_endereco", lambda endereco, dica_cidade=None: ["Rua Exemplo, 100"])
+    geo._geocode_cache.clear()
+
+    chamadas_params = []
+
+    async def _geocode_nominatim_fake(client, params):
+        chamadas_params.append(params)
+        if "postalcode" in params:
+            return (-22.9, -47.1, "Rua Exemplo, 100, Campinas, SP, 13000-000, Brasil")
+        return None
+
+    monkeypatch.setattr(geo, "_geocode_nominatim", _geocode_nominatim_fake)
+
+    resultado = asyncio.run(geo._geocode(_ClienteFake(), "Rua Exemplo, 100, CEP 13000-000"))
+    assert resultado[2] == "Rua Exemplo, 100, Campinas, SP, 13000-000, Brasil"
+    assert chamadas_params[-1] == {"postalcode": "13000-000", "country": "Brazil"}
+
+
+def test_geocode_endereco_nao_encontrado_gera_erro_generico(monkeypatch):
+    monkeypatch.setattr(geo, "GOOGLE_MAPS_API_KEY", "")
+    monkeypatch.setattr(geo, "_variantes_endereco", lambda endereco, dica_cidade=None: [endereco])
+    geo._geocode_cache.clear()
+
+    async def _geocode_nominatim_fake(client, params):
+        return None
+
+    monkeypatch.setattr(geo, "_geocode_nominatim", _geocode_nominatim_fake)
+
+    with pytest.raises(geo.GeoError, match="Endereço não encontrado"):
+        asyncio.run(geo._geocode(_ClienteFake(), "Rua Que Não Existe Em Lugar Nenhum, 999999"))
 
 
 def test_rota_osrm_sucesso():
