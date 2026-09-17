@@ -9,6 +9,7 @@ isolado e não depende do frete.db do ambiente.
 
 import pytest
 
+import frete_db as db
 import frete_service as fs
 
 
@@ -883,6 +884,67 @@ def test_buscar_filial_invalida_gera_erro_com_opcoes(parametros):
         parametros.buscar_filial("Filial Que Não Existe")
 
 
+def test_buscar_veiculo_por_peso_abaixo_da_menor_faixa_gera_erro():
+    p = fs.ParametrosFrete()
+    p.veiculos = {
+        "vuc": fs.Veiculo(nome="VUC", de=500, ate=1000, tarifa_km=2.0, valor_tonelada_excedente=1.0),
+    }
+    p.veiculos_por_peso = sorted(p.veiculos.values(), key=lambda v: v.de)
+    with pytest.raises(fs.FreteInputError, match="abaixo da menor faixa"):
+        p.buscar_veiculo_por_peso(100)
+
+
+def test_buscar_veiculo_por_peso_e_volume_sem_volume_nao_verifica_capacidade(parametros):
+    # volume_total_m3 <= 0 (chamador não informou paletes com dimensão) --
+    # não faz sentido checar capacidade, devolve o veículo escolhido só
+    # pelo peso mesmo que ele não tenha capacidade_m3 cadastrada pra caber
+    # qualquer coisa.
+    escolhido = parametros.buscar_veiculo_por_peso_e_volume(peso_considerado=50, volume_total_m3=0)
+    assert escolhido.nome == "VUC"
+
+
+def test_buscar_faixa_coleta_abaixo_da_menor_faixa_gera_erro():
+    p = fs.ParametrosFrete()
+    p.faixas_coleta = [fs.FaixaDistancia(de=50, ate=999999, taxa_fixa=20, tarifa_km=0.3)]
+    with pytest.raises(fs.FreteInputError, match="abaixo da menor faixa"):
+        p.buscar_faixa_coleta(10)
+
+
+def test_buscar_faixa_peso_fracionado_abaixo_da_menor_faixa_gera_erro():
+    p = fs.ParametrosFrete()
+    p.faixas_peso_fracionado = [fs.FaixaPeso(de=100, ate=999999, tarifa_base=50, custo_kg_adicional=1)]
+    with pytest.raises(fs.FreteInputError, match="abaixo da menor faixa de peso do Fracionado"):
+        p.buscar_faixa_peso_fracionado(10)
+
+
+def test_buscar_faixa_distancia_fracionado_abaixo_da_menor_faixa_gera_erro():
+    p = fs.ParametrosFrete()
+    p.faixas_distancia_fracionado = [fs.FaixaDistancia(de=100, ate=999999, taxa_fixa=20, tarifa_km=0.3)]
+    with pytest.raises(fs.FreteInputError, match="abaixo da menor faixa de distância do Fracionado"):
+        p.buscar_faixa_distancia_fracionado(10)
+
+
+def test_buscar_coleta_cidade_fixa_outros_veiculos_ignora_filial_diferente(parametros):
+    parametros.coleta_cidades_fixas = [
+        fs.ColetaCidadeFixa(filial_origem="RJ", cidade_destino="Niterói", veiculo="Truck", valor_fixo=80.0),
+    ]
+    achados = parametros.buscar_coleta_cidade_fixa_outros_veiculos("SP", "Niterói", "VUC")
+    assert achados == []  # linha cadastrada é de outra filial (RJ != SP)
+
+
+def test_buscar_coleta_cidade_fixa_outros_veiculos_ignora_o_proprio_veiculo(parametros):
+    parametros.coleta_cidades_fixas = [
+        fs.ColetaCidadeFixa(filial_origem="SP", cidade_destino="Niterói", veiculo="VUC", valor_fixo=80.0),
+    ]
+    achados = parametros.buscar_coleta_cidade_fixa_outros_veiculos("SP", "Niterói", "VUC")
+    assert achados == []  # só tem o próprio veículo cadastrado, não é "outro"
+
+
+def test_uf_de_origem_ou_destino_vazio_quando_texto_ausente(parametros):
+    assert fs._uf_de_origem_ou_destino(parametros, None) == ""
+    assert fs._uf_de_origem_ou_destino(parametros, "") == ""
+
+
 @pytest.mark.parametrize("endereco,esperado", [
     # Formato típico do Nominatim (provedor padrão, sem GOOGLE_MAPS_API_KEY) —
     # estado por extenso, não a sigla de 2 letras.
@@ -1246,6 +1308,20 @@ def test_calcular_orcamento_fracionado_custo_extra_categoria_invalida(parametros
         ))
 
 
+def test_calcular_orcamento_fracionado_custo_extra_valor_negativo(parametros):
+    with pytest.raises(fs.FreteInputError, match="negativo"):
+        fs.calcular_orcamento_fracionado(**_fracionado_base(
+            custos_extras=[{"categoria": "Diversos", "valor": -10.0}],
+        ))
+
+
+def test_calcular_orcamento_fracionado_quantidade_do_palete_menor_que_1(parametros):
+    with pytest.raises(fs.FreteInputError, match="quantidade"):
+        fs.calcular_orcamento_fracionado(**_fracionado_base(
+            paletes=[{"comprimento": 40, "largura": 30, "altura": 25, "quantidade": 0}],
+        ))
+
+
 def test_buscar_faixa_peso_fracionado_sem_cadastro_da_erro_de_configuracao(parametros):
     # parametros de teste (ver _parametros_teste) não populam faixas do
     # Fracionado -- diferente das outras tabelas, essas têm falha
@@ -1258,3 +1334,27 @@ def test_buscar_faixa_peso_fracionado_sem_cadastro_da_erro_de_configuracao(param
 def test_buscar_faixa_distancia_fracionado_sem_cadastro_da_erro_de_configuracao(parametros):
     with pytest.raises(fs.FreteConfigError, match="Fracionado"):
         parametros.buscar_faixa_distancia_fracionado(100)
+
+
+# ============================================================
+# ParametrosFrete.load() -- validação de configuração mínima no banco
+# (diferente dos testes acima, que usam parametros montados em memória,
+# aqui carrega de verdade do banco_temporario pra exercitar os "Nenhum(a)
+# ... cadastrado" de load(), disparados quando uma tabela obrigatória
+# fica vazia).
+# ============================================================
+
+
+@pytest.mark.parametrize("tabela,mensagem", [
+    ("veiculos", "Nenhum veículo cadastrado"),
+    ("faixas_coleta", "Nenhuma faixa de coleta cadastrada"),
+    ("categorias", "Nenhuma categoria cadastrada"),
+    ("transportes", "Nenhum transporte cadastrado"),
+    ("slas", "Nenhum SLA cadastrado"),
+    ("filiais", "Nenhuma filial cadastrada"),
+])
+def test_parametros_load_falha_quando_tabela_obrigatoria_fica_vazia(banco_temporario, tabela, mensagem):
+    with db.get_connection() as conn:
+        conn.execute(f"DELETE FROM {tabela}")
+    with pytest.raises(fs.FreteConfigError, match=mensagem):
+        fs.ParametrosFrete().load()
