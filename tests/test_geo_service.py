@@ -81,9 +81,11 @@ def test_buscar_rota_no_historico_none_quando_origem_ou_destino_atual_nao_identi
 def test_buscar_rota_no_historico_ignora_linha_salva_com_origem_ou_destino_vazio(banco_temporario):
     # registro antigo/malformado (origem_resumo ou destino_resumo em
     # branco) não pode quebrar a busca -- só é ignorado, segue pras
-    # próximas linhas.
-    _salvar_rota("", "", 2900, veiculo="VUC")
+    # próximas linhas. A malformada é salva DEPOIS (id maior) pra vir
+    # primeiro na varredura (mais recente primeiro) e realmente exercitar
+    # o "continue" antes de achar a linha válida.
     _salvar_rota("Campinas", "Belém, Pará, Brasil", 3000, veiculo="VUC")
+    _salvar_rota("", "", 2900, veiculo="VUC")
     achado = geo._buscar_rota_no_historico("Campinas", "Belém, Pará, Brasil", "VUC")
     assert achado is not None
     assert achado["distancia_km"] == 3000
@@ -806,6 +808,53 @@ def test_geocode_branch_google_sucesso_na_primeira_variante(monkeypatch):
     resultado = asyncio.run(geo._geocode(cliente, "Campinas"))
     assert resultado == (-22.9, -47.1, "Campinas, SP, Brasil")
     assert geo._geocode_cache_get("campinas") == (-22.9, -47.1, "Campinas, SP, Brasil")
+
+
+def test_geocode_branch_google_usa_cep_como_tentativa_extra(monkeypatch):
+    # Quando o endereço tem CEP e nenhuma variação de texto livre acha
+    # nada, tenta mais uma vez só com "{cep}, Brasil" (ver linha 220).
+    monkeypatch.setattr(geo, "GOOGLE_MAPS_API_KEY", "chave-de-teste")
+    monkeypatch.setattr(geo, "_variantes_endereco", lambda endereco, dica_cidade=None: ["Rua Exemplo, 100"])
+    geo._geocode_cache.clear()
+
+    chamadas = []
+
+    async def _geocode_google_fake(client, texto):
+        chamadas.append(texto)
+        if texto == "13000-000, Brasil":
+            return (-22.9, -47.1, "Rua Exemplo, 100, Campinas, SP, 13000-000, Brasil")
+        return None
+
+    monkeypatch.setattr(geo, "_geocode_google", _geocode_google_fake)
+
+    resultado = asyncio.run(geo._geocode(_ClienteFake(), "Rua Exemplo, 100, CEP 13000-000"))
+    assert resultado[2] == "Rua Exemplo, 100, Campinas, SP, 13000-000, Brasil"
+    assert chamadas == ["Rua Exemplo, 100", "13000-000, Brasil"]
+
+
+def test_geocode_branch_google_erro_de_conexao_continua_tentando_variantes(monkeypatch):
+    # Diferente do erro de configuração (GeoError, break): erro de conexão
+    # (httpx.HTTPError) numa variante não desiste, continua tentando as
+    # próximas (ver linhas 225-229).
+    monkeypatch.setattr(geo, "GOOGLE_MAPS_API_KEY", "chave-de-teste")
+    monkeypatch.setattr(
+        geo, "_variantes_endereco", lambda endereco, dica_cidade=None: ["variante 1", "variante 2"]
+    )
+    geo._geocode_cache.clear()
+
+    chamadas = []
+
+    async def _geocode_google_fake(client, texto):
+        chamadas.append(texto)
+        if texto == "variante 1":
+            raise httpx.ConnectError("falha de rede")
+        return (-22.9, -47.1, "Campinas, SP, Brasil")
+
+    monkeypatch.setattr(geo, "_geocode_google", _geocode_google_fake)
+
+    resultado = asyncio.run(geo._geocode(_ClienteFake(), "Rua Exemplo"))
+    assert resultado == (-22.9, -47.1, "Campinas, SP, Brasil")
+    assert chamadas == ["variante 1", "variante 2"]
 
 
 def test_geocode_branch_google_erro_de_configuracao_interrompe_tentativas(monkeypatch):

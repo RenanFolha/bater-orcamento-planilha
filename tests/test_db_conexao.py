@@ -14,6 +14,8 @@ seguro de FK sem depender de nada externo).
 """
 
 import json
+import sqlite3
+import sys
 
 import pytest
 
@@ -198,6 +200,16 @@ def test_cursor_adaptado_iteravel():
 
 
 # ============================================================
+# _cifrar_senha / _decifrar_senha
+# ============================================================
+
+
+def test_cifrar_e_decifrar_senha_vazia_nao_chama_fernet():
+    assert db_conexao._cifrar_senha("") == ""
+    assert db_conexao._decifrar_senha("") == ""
+
+
+# ============================================================
 # Config em disco (db_config.json)
 # ============================================================
 
@@ -291,6 +303,55 @@ def test_conectar_sem_driver_instalado_da_erro_amigavel(tipo, driver):
     cfg = {"tipo": tipo, "host": "x", "porta": 1, "banco": "x", "usuario": "x", "senha": "x"}
     with pytest.raises(db_conexao.ErroConexaoBanco, match=driver):
         db_conexao.conectar(cfg)
+
+
+@pytest.mark.parametrize("tipo,driver", [
+    ("sqlserver", "pyodbc"), ("mysql", "pymysql"), ("postgresql", "psycopg2"),
+])
+def test_conectar_sem_driver_instalado_via_sys_modules(tipo, driver, monkeypatch):
+    # Complementa test_conectar_sem_driver_instalado_da_erro_amigavel (que
+    # só roda quando o driver de fato não está instalado neste ambiente):
+    # aqui força o ImportError via sys.modules[driver] = None (truque
+    # padrão do CPython -- faz "import <driver>" levantar ImportError
+    # mesmo com o pacote instalado), rodando sempre, em qualquer ambiente.
+    monkeypatch.setitem(sys.modules, driver, None)
+    cfg = {"tipo": tipo, "host": "x", "porta": 1, "banco": "x", "usuario": "x", "senha": "x"}
+    with pytest.raises(db_conexao.ErroConexaoBanco, match=driver):
+        db_conexao.conectar(cfg)
+
+
+@pytest.mark.parametrize("tipo,driver", [
+    ("sqlserver", "pyodbc"), ("mysql", "pymysql"), ("postgresql", "psycopg2"),
+])
+def test_conectar_sucesso_devolve_conexao_adaptada(tipo, driver, monkeypatch):
+    # Mocka connect() do driver de baixo nível pra simular uma conexão
+    # bem-sucedida sem precisar de um servidor de verdade -- cobre o
+    # `return _ConexaoAdaptada(...)` de cada dialeto.
+    modulo = pytest.importorskip(driver)
+
+    class _NativaFake:
+        pass
+
+    nativa_fake = _NativaFake()
+    monkeypatch.setattr(modulo, "connect", lambda *args, **kwargs: nativa_fake)
+
+    cfg = {"tipo": tipo, "host": "x", "porta": 1, "banco": "x", "usuario": "x", "senha": "x"}
+    conn = db_conexao.conectar(cfg)
+    assert isinstance(conn, db_conexao._ConexaoAdaptada)
+    assert conn._conexao is nativa_fake
+    assert conn._paramstyle == modulo.paramstyle
+
+
+def test_conectar_tipo_desconhecido_da_erro():
+    with pytest.raises(db_conexao.ErroConexaoBanco, match="desconhecido"):
+        db_conexao.conectar({"tipo": "banco-que-nao-existe"})
+
+
+def test_erros_integridade_nativos_ignora_driver_nao_instalado(monkeypatch):
+    monkeypatch.setitem(sys.modules, "pyodbc", None)
+    monkeypatch.setitem(sys.modules, "pymysql", None)
+    monkeypatch.setitem(sys.modules, "psycopg2", None)
+    assert db_conexao._erros_integridade_nativos() == (sqlite3.IntegrityError,)
 
 
 def test_config_sem_senha_nunca_ecoa_a_senha():

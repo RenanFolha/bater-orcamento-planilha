@@ -96,6 +96,20 @@ def test_sessao_expirada_e_removida_do_banco(banco_temporario):
     assert db.buscar_sessao("token-expirado") is None
 
 
+def test_sessao_de_usuario_desativado_apos_a_sessao_criada_e_invalidada(banco_temporario):
+    # A sessão em si continua válida (não expirou) mas o usuário foi
+    # desativado depois de já ter logado -- validar_sessao precisa
+    # recusar mesmo assim, não só checar a validade do token isolado.
+    usuario_id = db.inserir_usuario(
+        nome="Teste", username="teste-inativo", senha_hash="x", senha_salt="y",
+        role="usuario", ativo=True,
+    )
+    token = auth.criar_sessao(usuario_id)
+    with db.get_connection() as conn:
+        conn.execute("UPDATE usuarios SET ativo=0 WHERE id=?", (usuario_id,))
+    assert auth.validar_sessao(token) is None
+
+
 def test_encerrar_sessao_remove_token(banco_temporario):
     auth.garantir_usuario_padrao()
     admin = db.buscar_usuario_por_username(auth.ADMIN_USERNAME_PADRAO)

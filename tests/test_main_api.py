@@ -287,6 +287,32 @@ def test_nao_pode_excluir_o_ultimo_admin_ativo_via_outro_usuario(client):
     assert r.status_code == 422  # não pode rebaixar o último admin ativo restante
 
 
+def test_excluir_usuario_bloqueia_ultimo_admin_ativo_mesmo_excluindo_outro_id(banco_temporario):
+    # Diferente do PUT (que permite auto-edição e por isso consegue
+    # naturalmente acionar essa mesma regra via test_nao_pode_excluir_o_
+    # ultimo_admin_ativo_via_outro_usuario acima): o DELETE já bloqueia
+    # excluir a si mesmo mais cedo (id_ == usuario["id"]), então -- com
+    # exigir_admin garantindo que quem chama já É um admin ativo --
+    # sempre sobra pelo menos 1 admin ativo (o próprio chamador) ao
+    # excluir OUTRO id, tornando esse guard de "último admin" no DELETE
+    # inatingível por uma sessão HTTP legítima. Chama a função da rota
+    # direto (Depends não é forçado numa chamada Python normal) só pra
+    # cobrir esse ramo defensivo, com um usuário chamador fabricado que
+    # não corresponde a ninguém no banco.
+    from fastapi import HTTPException
+
+    import auth_service as auth
+    import frete_db as db
+    from routers import admin_usuarios
+
+    auth.garantir_usuario_padrao()
+    admin_id = db.buscar_usuario_por_username(auth.ADMIN_USERNAME_PADRAO)["id"]
+    with pytest.raises(HTTPException) as exc_info:
+        admin_usuarios.admin_excluir_usuario(id_=admin_id, usuario={"id": 999999})
+    assert exc_info.value.status_code == 422
+    assert "último administrador" in exc_info.value.detail
+
+
 def test_historico_exige_login(client):
     assert client.get("/historico").status_code == 401
     assert client.post("/historico", json={"cliente": "X", "responsavel": "Y"}).status_code == 401
@@ -1122,6 +1148,45 @@ def test_admin_banco_dados_aplicar_falha_ao_criar_schema_da_422(client, monkeypa
     assert client.get("/admin/banco-dados").json()["tipo"] == "sqlite"  # config ativa não mudou
 
 
+def test_admin_banco_dados_aplicar_repassa_httpexception_sem_reembrulhar(client, monkeypatch):
+    """Se algo dentro do try de aplicar_config levantar HTTPException
+    diretamente (não uma exceção genérica), a rota repassa como veio --
+    não reembrulha como 422 genérico de "Falha ao migrar dados" (ver
+    `except HTTPException: raise` antes do `except Exception` em
+    routers/admin_banco.py::aplicar_config)."""
+    from fastapi import HTTPException
+
+    import db_conexao
+    import frete_db as db
+
+    _login(client)
+    conectar_original = db_conexao.conectar
+
+    class _ConexaoDestinoFake:
+        def executescript(self, script):
+            pass
+
+        def close(self):
+            pass
+
+    def _conectar_fake(cfg=None, **kwargs):
+        if cfg is not None and cfg.get("host") == "host-fake-httpexception":
+            return _ConexaoDestinoFake()
+        return conectar_original(cfg, **kwargs)
+
+    def _migrar_colunas_fake(conn):
+        raise HTTPException(status_code=418, detail="erro customizado repassado sem alteração")
+
+    monkeypatch.setattr(db_conexao, "conectar", _conectar_fake)
+    monkeypatch.setattr(db, "_migrar_colunas", _migrar_colunas_fake)
+    r = client.post("/admin/banco-dados/aplicar", json={
+        "tipo": "sqlite", "sqlite_path": "qualquer-destino-fake.db", "host": "host-fake-httpexception",
+    })
+    assert r.status_code == 418, r.text
+    assert r.json()["detail"] == "erro customizado repassado sem alteração"
+    assert client.get("/admin/banco-dados").json()["tipo"] == "sqlite"  # config ativa não mudou
+
+
 def test_proxy_headers_ignorados_por_padrao_sem_trusted_proxy_hosts(client):
     """Sem TRUSTED_PROXY_HOSTS configurada (padrão), a API não confia em
     X-Forwarded-Proto vindo de ninguém -- o cookie de sessão continua sem
@@ -1224,3 +1289,52 @@ def test_admin_banco_dados_aplicar_sqlite_para_sqlite_migra_tudo(client, tmp_pat
         assert conn.execute("SELECT COUNT(*) FROM pracas_pedagio").fetchone()[0] == 1
     finally:
         conn.close()
+
+
+# ============================================================
+# Rotas estáticas/infra de main.py (favicon, index.html, /api/status)
+# ============================================================
+
+
+def test_favicon_devolve_arquivo_quando_existe(client):
+    r = client.get("/favicon.ico")
+    assert r.status_code == 200
+
+
+def test_favicon_ausente_da_404(client, monkeypatch):
+    monkeypatch.setattr(main, "FAVICON_PATH", main.BASE_DIR / "nao-existe-favicon.png")
+    r = client.get("/favicon.ico")
+    assert r.status_code == 404
+
+
+def test_raiz_devolve_index_quando_existe(client):
+    r = client.get("/")
+    assert r.status_code == 200
+
+
+def test_raiz_index_ausente_da_500(client, monkeypatch):
+    monkeypatch.setattr(main, "INDEX_PATH", main.BASE_DIR / "nao-existe-index.html")
+    r = client.get("/")
+    assert r.status_code == 500
+
+
+def test_api_status_com_banco_sqlite(client):
+    r = client.get("/api/status")
+    assert r.status_code == 200
+    dados = r.json()
+    assert dados["status"] == "ok"
+    assert dados["banco_tipo"] == "sqlite"
+    assert dados["banco"]  # caminho do arquivo .db em uso
+
+
+def test_api_status_com_banco_externo(client, monkeypatch):
+    import db_conexao
+
+    monkeypatch.setattr(db_conexao, "carregar_config", lambda: {
+        "tipo": "mysql", "host": "meuserver", "porta": 3306, "banco": "frete", "usuario": "x", "senha": "x",
+    })
+    r = client.get("/api/status")
+    assert r.status_code == 200
+    dados = r.json()
+    assert dados["banco_tipo"] == "mysql"
+    assert dados["banco"] == "mysql://meuserver/frete"

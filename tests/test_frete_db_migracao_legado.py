@@ -11,6 +11,7 @@ zero.
 
 import sqlite3
 
+import db_conexao
 import frete_db as db
 
 
@@ -135,6 +136,37 @@ def test_completar_carreta_fechada_insere_exemplo_quando_ausente(banco_temporari
         ).fetchone()[0]
     assert peso == 3
     assert distancia == 3
+
+
+def test_init_db_usa_schema_consolidado_para_tipo_nao_sqlite(monkeypatch):
+    # init_db() com um banco de destino != sqlite (SQL Server/MySQL/
+    # PostgreSQL) pula o SCHEMA + _migrar_colunas (só faz sentido pra
+    # SQLite, que acumulou a cadeia histórica de ALTER TABLE) e cria tudo
+    # já no formato final via _gerar_schema_consolidado. Mocka conectar()
+    # e o seed (testados à parte) pra isolar só esse ramo de init_db().
+    class _ConexaoFake:
+        def __init__(self):
+            self.scripts_executados = []
+
+        def executescript(self, script):
+            self.scripts_executados.append(script)
+
+        def commit(self):
+            pass
+
+        def close(self):
+            pass
+
+    conexao_fake = _ConexaoFake()
+    monkeypatch.setattr(db_conexao, "carregar_config", lambda: {"tipo": "mysql"})
+    monkeypatch.setattr(db_conexao, "conectar", lambda *args, **kwargs: conexao_fake)
+    monkeypatch.setattr(db, "_seed_se_vazio", lambda conn: None)
+    monkeypatch.setattr(db, "_completar_carreta_fechada", lambda conn: None)
+
+    db.init_db()
+
+    assert len(conexao_fake.scripts_executados) == 1
+    assert conexao_fake.scripts_executados[0] == db._gerar_schema_consolidado("mysql")
 
 
 def test_completar_carreta_fechada_nao_duplica_quando_ja_existe(banco_temporario):

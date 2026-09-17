@@ -19,6 +19,17 @@ def test_admin_reload_parametros(client):
     assert r.json()["status"] == "ok"
 
 
+def test_admin_reload_parametros_com_tabela_obrigatoria_vazia_da_500(client):
+    import frete_db as db
+
+    _login(client)
+    with db.get_connection() as conn:
+        conn.execute("DELETE FROM veiculos")
+    r = client.post("/admin/reload")
+    assert r.status_code == 500, r.text
+    assert "veículo" in r.json()["detail"]
+
+
 def test_admin_filiais_crud(client):
     _login(client)
 
@@ -39,6 +50,13 @@ def test_admin_filiais_crud(client):
 
     r = client.delete(f"/admin/filiais/{filial_id}")
     assert r.status_code == 200
+
+
+def test_admin_filiais_uf_invalida_da_422(client):
+    _login(client)
+    r = client.post("/admin/filiais", json={"nome": "Filial UF Inválida", "endereco": "Rua X, 1", "uf": "XX"})
+    assert r.status_code == 422
+    assert "UF" in r.text
 
 
 def test_admin_veiculos_post_e_delete(client):
