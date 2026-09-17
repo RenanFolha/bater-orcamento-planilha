@@ -623,6 +623,38 @@ def test_prioridade_rota_nao_aplicada_quando_uf_origem_nao_bate(parametros):
     assert achada is None
 
 
+def test_prioridade_rota_none_quando_origem_ou_destino_vazio(parametros):
+    parametros.prioridades_rota.append(
+        fs.PrioridadeRota(estado_origem="*", cidade_destino="Manaus", filial_escala="Belém")
+    )
+    assert fs.prioridade_rota_aplicavel(parametros, "", "Manaus, Amazonas, Brasil") is None
+    assert fs.prioridade_rota_aplicavel(parametros, "São Paulo, SP, Brasil", "") is None
+
+
+def test_prioridade_rota_none_quando_destino_nao_identificavel(parametros):
+    parametros.prioridades_rota.append(
+        fs.PrioridadeRota(estado_origem="*", cidade_destino="Manaus", filial_escala="Belém")
+    )
+    assert fs.prioridade_rota_aplicavel(parametros, "São Paulo, SP, Brasil", " , , ") is None
+
+
+def test_destino_tem_prioridade_rota_cadastrada(parametros):
+    parametros.prioridades_rota.append(
+        fs.PrioridadeRota(estado_origem="*", cidade_destino="Manaus", filial_escala="Belém")
+    )
+    assert fs.destino_tem_prioridade_rota_cadastrada(parametros, "Manaus, Amazonas, Brasil") is True
+    assert fs.destino_tem_prioridade_rota_cadastrada(parametros, "Curitiba, PR, Brasil") is False
+
+
+def test_destino_tem_prioridade_rota_cadastrada_com_entrada_vazia_ou_nao_identificavel(parametros):
+    parametros.prioridades_rota.append(
+        fs.PrioridadeRota(estado_origem="*", cidade_destino="Manaus", filial_escala="Belém")
+    )
+    assert fs.destino_tem_prioridade_rota_cadastrada(parametros, "") is False
+    assert fs.destino_tem_prioridade_rota_cadastrada(parametros, None) is False
+    assert fs.destino_tem_prioridade_rota_cadastrada(parametros, " , , ") is False
+
+
 def test_aliquota_icms_curinga_vale_para_qualquer_uf(parametros):
     parametros.aliquotas_icms.append(fs.AliquotaIcms(estado_origem="*", estado_destino="*", aliquota=18.0))
     achada = fs.aliquota_icms_aplicavel(parametros, "São Paulo, SP, Brasil", "Curitiba, PR, Brasil")
@@ -693,6 +725,28 @@ def test_aliquota_icms_resolve_uf_de_endereco_curto_cidade_uf(parametros):
     assert achada.aliquota == pytest.approx(12.0)
 
 
+def test_aliquota_icms_nao_aplicada_quando_uf_nao_resolvivel(parametros):
+    # endereço sem nenhuma UF identificável (nem sigla de filial cadastrada,
+    # nem no texto) -- _uf_de_origem_ou_destino devolve "" e a função
+    # desiste sem levantar erro nenhum, só não aplica ICMS.
+    parametros.aliquotas_icms.append(fs.AliquotaIcms(estado_origem="*", estado_destino="*", aliquota=18.0))
+    achada = fs.aliquota_icms_aplicavel(parametros, "endereço sem UF nenhuma", "Rio de Janeiro, RJ, Brasil")
+    assert achada is None
+
+
+def test_icms_aliquota_maior_ou_igual_a_100_gera_erro_de_configuracao(parametros):
+    # Uma alíquota cadastrada >= 100% faria o gross-up dividir por zero ou
+    # por um número negativo -- calcular_orcamento precisa recusar isso
+    # com um erro claro de configuração, não travar/gerar um valor absurdo.
+    parametros.aliquotas_icms.append(fs.AliquotaIcms(estado_origem="SP", estado_destino="RJ", aliquota=100.0))
+    with pytest.raises(fs.FreteConfigError, match="ICMS"):
+        fs.calcular_orcamento(
+            peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+            categoria="Geral", transporte="Rodoviário", sla="Padrão",
+            cidade_origem="São Paulo, SP, Brasil", cidade_destino="Rio de Janeiro, RJ, Brasil",
+        )
+
+
 def test_pis_cofins_aplica_gross_up_no_frete_total(parametros):
     # Mesmo raciocínio do gross-up de ICMS: o frete sem imposto (220 de
     # custo da operação + impostos e taxas, ainda sem margem de lucro)
@@ -713,6 +767,15 @@ def test_pis_cofins_aplica_gross_up_no_frete_total(parametros):
     assert calc["valor_pis_cofins"] == pytest.approx(esperado - 220.0, abs=0.01)
     assert calc["frete_sem_margem_lucro"] == pytest.approx(esperado, abs=0.01)
     assert resultado["resultado"]["frete_total"] == pytest.approx(esperado * 1.40, abs=0.01)
+
+
+def test_pis_cofins_aliquota_maior_ou_igual_a_100_gera_erro_de_configuracao(parametros):
+    parametros.aliquota_pis_cofins = 100.0
+    with pytest.raises(fs.FreteConfigError, match="PIS/COFINS"):
+        fs.calcular_orcamento(
+            peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+            categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        )
 
 
 def test_pis_cofins_e_icms_aplicados_antes_da_margem_de_lucro(parametros):
@@ -799,6 +862,27 @@ def test_categoria_invalida_gera_erro_com_opcoes(parametros):
         )
 
 
+def test_transporte_invalido_gera_erro_com_opcoes(parametros):
+    with pytest.raises(fs.FreteInputError, match="Rodoviário"):
+        fs.calcular_orcamento(
+            peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=100,
+            categoria="Geral", transporte="Transporte Inexistente", sla="Padrão",
+        )
+
+
+def test_sla_invalido_gera_erro_com_opcoes(parametros):
+    with pytest.raises(fs.FreteInputError, match="Padrão"):
+        fs.calcular_orcamento(
+            peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=100,
+            categoria="Geral", transporte="Rodoviário", sla="SLA Inexistente",
+        )
+
+
+def test_buscar_filial_invalida_gera_erro_com_opcoes(parametros):
+    with pytest.raises(fs.FreteInputError, match="SP"):
+        parametros.buscar_filial("Filial Que Não Existe")
+
+
 @pytest.mark.parametrize("endereco,esperado", [
     # Formato típico do Nominatim (provedor padrão, sem GOOGLE_MAPS_API_KEY) —
     # estado por extenso, não a sigla de 2 letras.
@@ -817,6 +901,53 @@ def test_categoria_invalida_gera_erro_com_opcoes(parametros):
 ])
 def test_cidade_da_retirada(endereco, esperado):
     assert fs._cidade_da_retirada(endereco) == esperado
+
+
+# ============================================================
+# _campo_bate_localidade / _especificidade_localidade /
+# _normalizar_par_cidades -- helpers compartilhados por taxa de balsa,
+# prioridade de rota, distância fixa e pedágio por rota.
+# ============================================================
+
+
+def test_campo_bate_localidade_curinga_bate_com_qualquer_coisa():
+    assert fs._campo_bate_localidade("*", "qualquer cidade", "SP") is True
+    assert fs._campo_bate_localidade("*", "", "") is True
+
+
+def test_campo_bate_localidade_sigla_uf_exige_uf_resolvida():
+    assert fs._campo_bate_localidade("sp", "campinas", "sp") is True
+    # UF vazia (não resolvida) nunca bate, mesmo cadastrado sendo uma UF
+    assert fs._campo_bate_localidade("sp", "campinas", "") is False
+
+
+def test_campo_bate_localidade_nome_exato_de_cidade():
+    assert fs._campo_bate_localidade("manaus", "manaus", "am") is True
+    assert fs._campo_bate_localidade("manaus", "belem", "pa") is False
+
+
+def test_especificidade_localidade_curinga_menos_especifico_que_uf_e_cidade():
+    assert fs._especificidade_localidade("*") == 0
+    assert fs._especificidade_localidade("sp") == 1  # sigla de UF
+    assert fs._especificidade_localidade("campinas") == 2  # nome de cidade
+
+
+def test_normalizar_par_cidades_none_quando_algum_lado_vazio():
+    assert fs._normalizar_par_cidades("", "Belém, PA, Brasil") is None
+    assert fs._normalizar_par_cidades("Campinas", "") is None
+    assert fs._normalizar_par_cidades(None, "Belém, PA, Brasil") is None
+
+
+def test_normalizar_par_cidades_none_quando_cidade_nao_identificavel():
+    # string não vazia, mas sem nenhum segmento de verdade depois de
+    # dividir por vírgula e remover espaços -- _cidade_da_retirada não
+    # consegue extrair nenhuma cidade dali.
+    assert fs._normalizar_par_cidades(" , , ", "Belém, PA, Brasil") is None
+
+
+def test_normalizar_par_cidades_sucesso():
+    resultado = fs._normalizar_par_cidades("Campinas", "Belém, Pará, Brasil")
+    assert resultado == ("campinas", "belem", "pa")
 
 
 def test_pedagio_rota_sem_corredor_cadastrado_retorna_none(parametros):
@@ -839,6 +970,20 @@ def test_pedagio_rota_soma_todas_as_pracas_do_corredor(parametros):
     total, pracas = fs.pedagio_rota_aplicavel(parametros, "Curitiba, PR, Brasil", "Florianópolis, SC, Brasil", 2)
     assert total == pytest.approx(22.4)
     assert set(pracas) == {"Praça 5", "Praça 8"}
+
+
+def test_pedagio_rota_ignora_praca_id_pendurado_sem_cadastro(parametros):
+    # pedagios_rota referencia um praca_id que não existe mais em
+    # pracas_pedagio (ex: praça excluída, mas o vínculo ficou órfão) --
+    # não pode quebrar a soma, só ignora essa praça.
+    parametros.pracas_pedagio = {1: fs.PracaPedagio(1, "Praça 5", "BR-101", "ViaSul", {2: 12.4})}
+    parametros.pedagios_rota = [
+        fs.PedagioRota("Curitiba", "Florianópolis", 1),
+        fs.PedagioRota("Curitiba", "Florianópolis", 999),  # praca_id órfão
+    ]
+    total, pracas = fs.pedagio_rota_aplicavel(parametros, "Curitiba, PR, Brasil", "Florianópolis, SC, Brasil", 2)
+    assert total == pytest.approx(12.4)
+    assert pracas == ["Praça 5"]
 
 
 def test_pedagio_rota_curinga_origem_vale_para_qualquer_origem(parametros):
@@ -993,3 +1138,123 @@ def test_calcular_orcamento_sem_corredor_de_balsa_cobra_distancia_inteira(parame
     assert calc["distancia_balsa_km"] == 0
     assert calc["distancia_faturavel_km"] == 300
     assert calc["custo_km"] == pytest.approx(300 * 2.0)
+
+
+# ============================================================
+# calcular_orcamento -- validação de entrada (cada campo isoladamente)
+# ============================================================
+
+
+def _orcamento_base(**overrides):
+    base = dict(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+    )
+    base.update(overrides)
+    return base
+
+
+@pytest.mark.parametrize("overrides,mensagem", [
+    ({"distancia_coleta": -1}, "coleta"),
+    ({"valor_mercadoria": -1}, "mercadoria"),
+    ({"valor_coleta_terceirizada": -1}, "coleta terceirizada"),
+    ({"valor_entrega_terceirizada": -1}, "entrega terceirizada"),
+    ({"pedagio": -1}, "pedágio"),
+    ({"distancia_retorno": -1}, "retorno"),
+    ({"margem_lucro_pct": 200}, "Margem de lucro"),
+    ({"margem_lucro_pct": -10}, "Margem de lucro"),
+])
+def test_calcular_orcamento_rejeita_campo_negativo_ou_fora_do_intervalo(parametros, overrides, mensagem):
+    with pytest.raises(fs.FreteInputError, match=mensagem):
+        fs.calcular_orcamento(**_orcamento_base(**overrides))
+
+
+def test_calcular_orcamento_palete_com_dimensao_invalida(parametros):
+    with pytest.raises(fs.FreteInputError, match="Comprimento"):
+        fs.calcular_orcamento(**_orcamento_base(paletes=[{"comprimento": 0, "largura": 30, "altura": 25}]))
+
+
+def test_calcular_orcamento_custo_extra_categoria_invalida(parametros):
+    with pytest.raises(fs.FreteInputError, match="Categoria de custo extra"):
+        fs.calcular_orcamento(**_orcamento_base(
+            custos_extras=[{"categoria": "Categoria Inexistente", "valor": 10}],
+        ))
+
+
+def test_calcular_orcamento_custo_extra_valor_negativo(parametros):
+    with pytest.raises(fs.FreteInputError, match="custo extra"):
+        fs.calcular_orcamento(**_orcamento_base(
+            custos_extras=[{"categoria": "Paletização", "valor": -10}],
+        ))
+
+
+def test_upgrade_de_veiculo_por_volume_passa_pelo_veiculo_inicial_ate_achar_um_que_caiba(parametros):
+    # fator_cubagem baixo o bastante pra não empurrar o peso considerado
+    # pra fora da faixa do VUC (que continua sendo escolhido por peso),
+    # mas o volume em si (9 m³) não cabe na capacidade útil do VUC (8 m³)
+    # -- precisa subir pro Truck (24 m³ útil), passando pelo laço de
+    # "veículos maiores" em vez de já vir certo de cara (diferente de
+    # test_upgrade_de_veiculo_por_volume, onde o fator_cubagem alto já
+    # escolhe o veículo maior direto pelo peso cubado).
+    parametros.transportes["baixacubagem"] = fs.Transporte("BaixaCubagem", 1.0, fator_cubagem=10)
+    paletes = _paletes(comprimento=300, largura=300, altura=100)  # 9 m³
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=paletes, distancia=10, valor_mercadoria=100,
+        categoria="Geral", transporte="BaixaCubagem", sla="Padrão",
+    )
+    assert resultado["entrada"]["veiculo"] == "Truck"
+
+
+# ============================================================
+# calcular_orcamento_fracionado -- validação de entrada e faixas
+# ============================================================
+
+
+def _fracionado_base(**overrides):
+    base = dict(
+        peso=80, paletes=_paletes(), distancia=350, valor_mercadoria=1200,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão", veiculo="VUC",
+    )
+    base.update(overrides)
+    return base
+
+
+@pytest.mark.parametrize("overrides,mensagem", [
+    ({"peso": 0}, "Peso"),
+    ({"paletes": []}, "palete"),
+    ({"distancia": 0}, "Distância"),
+    ({"valor_mercadoria": -1}, "mercadoria"),
+    ({"pedagio": -1}, "pedágio"),
+    ({"margem_lucro_pct": 200}, "Margem de lucro"),
+])
+def test_calcular_orcamento_fracionado_rejeita_campo_invalido(parametros, overrides, mensagem):
+    with pytest.raises(fs.FreteInputError, match=mensagem):
+        fs.calcular_orcamento_fracionado(**_fracionado_base(**overrides))
+
+
+def test_calcular_orcamento_fracionado_palete_com_dimensao_invalida(parametros):
+    with pytest.raises(fs.FreteInputError, match="Comprimento"):
+        fs.calcular_orcamento_fracionado(**_fracionado_base(
+            paletes=[{"comprimento": 0, "largura": 30, "altura": 25}],
+        ))
+
+
+def test_calcular_orcamento_fracionado_custo_extra_categoria_invalida(parametros):
+    with pytest.raises(fs.FreteInputError, match="Categoria de custo extra"):
+        fs.calcular_orcamento_fracionado(**_fracionado_base(
+            custos_extras=[{"categoria": "Categoria Inexistente", "valor": 10}],
+        ))
+
+
+def test_buscar_faixa_peso_fracionado_sem_cadastro_da_erro_de_configuracao(parametros):
+    # parametros de teste (ver _parametros_teste) não populam faixas do
+    # Fracionado -- diferente das outras tabelas, essas têm falha
+    # tolerada no carregamento (ver ParametrosFrete.load), só quebra
+    # quando alguém de fato tenta cotar um Fracionado.
+    with pytest.raises(fs.FreteConfigError, match="Fracionado"):
+        parametros.buscar_faixa_peso_fracionado(100)
+
+
+def test_buscar_faixa_distancia_fracionado_sem_cadastro_da_erro_de_configuracao(parametros):
+    with pytest.raises(fs.FreteConfigError, match="Fracionado"):
+        parametros.buscar_faixa_distancia_fracionado(100)
