@@ -52,6 +52,13 @@ def test_atualizar_praca_pedagio(banco_temporario):
     assert linha["observacao"] == "reajuste"
 
 
+def test_atualizar_praca_pedagio_com_nome_rodovia_de_outra_linha_da_conflito(banco_temporario):
+    db.inserir_praca_pedagio("Praça 5", "BR-101", "ViaSul")
+    id2 = db.inserir_praca_pedagio("Praça 8", "BR-101", "ViaSul")
+    with pytest.raises(db_conexao.ConflitoIntegridade):
+        db.atualizar_praca_pedagio(id2, "Praça 5", "BR-101", "ViaSul")
+
+
 def test_excluir_praca_pedagio(banco_temporario):
     id_ = db.inserir_praca_pedagio("Praça 5", "BR-101", "ViaSul")
     db.excluir_praca_pedagio(id_)
@@ -90,6 +97,14 @@ def test_excluir_praca_em_uso_falha_por_fk(banco_temporario):
     db.inserir_pedagio_rota("Curitiba", "Florianópolis", praca_id)
     with pytest.raises(db_conexao.ConflitoIntegridade):
         db.excluir_praca_pedagio(praca_id)
+
+
+def test_atualizar_pedagio_rota_com_corredor_de_outra_linha_da_conflito(banco_temporario):
+    praca_id = db.inserir_praca_pedagio("Praça 5", "BR-101", "ViaSul")
+    db.inserir_pedagio_rota("Curitiba", "Florianópolis", praca_id)
+    id2 = db.inserir_pedagio_rota("São Paulo", "Curitiba", praca_id)
+    with pytest.raises(db_conexao.ConflitoIntegridade):
+        db.atualizar_pedagio_rota(id2, "Curitiba", "Florianópolis", praca_id)
 
 
 def test_excluir_pedagio_rota(banco_temporario):

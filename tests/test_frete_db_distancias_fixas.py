@@ -42,6 +42,13 @@ def test_atualizar_distancia_fixa(banco_temporario):
     assert linha["observacao"] == "ajustada"
 
 
+def test_atualizar_distancia_fixa_com_corredor_de_outra_linha_da_conflito(banco_temporario):
+    db.inserir_distancia_fixa("Belem", "Manaus", 2096)
+    id2 = db.inserir_distancia_fixa("Belem", "Santarem", 700)
+    with pytest.raises(db_conexao.ConflitoIntegridade):
+        db.atualizar_distancia_fixa(id2, "Belem", "Manaus", 2100)
+
+
 def test_excluir_distancia_fixa(banco_temporario):
     id_ = db.inserir_distancia_fixa("Belem", "Manaus", 2096)
     db.excluir_distancia_fixa(id_)

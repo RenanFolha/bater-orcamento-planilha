@@ -76,6 +76,12 @@ def test_inserir_sem_cidade_da_erro(banco_temporario):
         db.inserir_taxa_regional("   ", "Zona Franca", "fixo", 50.0)
 
 
+def test_atualizar_sem_cidade_da_erro(banco_temporario):
+    id_ = db.inserir_taxa_regional("Manaus", "Zona Franca", "fixo", 50.0)
+    with pytest.raises(db_conexao.ConflitoIntegridade):
+        db.atualizar_taxa_regional(id_, "   ", "Zona Franca", "fixo", 50.0)
+
+
 def test_migracao_do_schema_antigo_preserva_linhas(banco_temporario):
     # simula um banco no schema anterior (com UNIQUE(cidade, nome) e uma
     # cidade por linha) e confirma que _migrar_taxas_regionais_lista

@@ -79,6 +79,13 @@ def test_atualizar_aliquota_icms(tabela_icms_vazia):
     assert linha["observacao"] == "corrigida pra alíquota de produto importado"
 
 
+def test_atualizar_aliquota_icms_com_rota_de_outra_linha_da_conflito(tabela_icms_vazia):
+    db.inserir_aliquota_icms("SP", "RJ", 12.0)
+    id2 = db.inserir_aliquota_icms("SP", "MG", 12.0)
+    with pytest.raises(db_conexao.ConflitoIntegridade):
+        db.atualizar_aliquota_icms(id2, "SP", "RJ", 7.0)
+
+
 def test_excluir_aliquota_icms(tabela_icms_vazia):
     id_ = db.inserir_aliquota_icms("SP", "RJ", 12.0)
     db.excluir_aliquota_icms(id_)

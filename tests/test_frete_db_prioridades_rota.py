@@ -44,6 +44,13 @@ def test_atualizar_prioridade_rota(banco_temporario):
     assert linha["observacao"] == "trocou a filial de escala"
 
 
+def test_atualizar_prioridade_rota_com_rota_de_outra_linha_da_conflito(banco_temporario):
+    db.inserir_prioridade_rota("SP", "Manaus", "Belém")
+    id2 = db.inserir_prioridade_rota("RR", "Manaus", "Boa Vista")
+    with pytest.raises(db_conexao.ConflitoIntegridade):
+        db.atualizar_prioridade_rota(id2, "SP", "Manaus", "Boa Vista")
+
+
 def test_excluir_prioridade_rota(banco_temporario):
     id_ = db.inserir_prioridade_rota("*", "Manaus", "Belém")
     db.excluir_prioridade_rota(id_)

@@ -55,6 +55,13 @@ def test_atualizar_taxa_balsa(banco_temporario):
     assert linha["observacao"] == "reajuste"
 
 
+def test_atualizar_taxa_balsa_com_rota_de_outra_linha_da_conflito(banco_temporario):
+    db.inserir_taxa_balsa("Belém", "Macapá", "VUC", "fixo", 120.0)
+    id2 = db.inserir_taxa_balsa("Belém", "Santarém", "VUC", "fixo", 200.0)
+    with pytest.raises(db_conexao.ConflitoIntegridade):
+        db.atualizar_taxa_balsa(id2, "Belém", "Macapá", "VUC", "fixo", 200.0)
+
+
 def test_excluir_taxa_balsa(banco_temporario):
     id_ = db.inserir_taxa_balsa("Belém", "Macapá", "VUC", "fixo", 120.0)
     db.excluir_taxa_balsa(id_)

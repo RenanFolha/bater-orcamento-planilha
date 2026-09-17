@@ -60,6 +60,33 @@ def test_lista_vazia_e_rejeitada(banco_temporario):
         db.inserir_coleta_cidade_fixa("São Paulo", "  ,  ,", "VUC", 80.0)
 
 
+def test_atualizar_com_lista_vazia_e_rejeitada(banco_temporario):
+    id_ = db.inserir_coleta_cidade_fixa("São Paulo", "Osasco", "VUC", 80.0)
+    with pytest.raises(db_conexao.ConflitoIntegridade):
+        db.atualizar_coleta_cidade_fixa(id_, "São Paulo", "  ,  ,", "VUC", 80.0)
+
+
+def test_buscar_outros_veiculos_encontra_cidade_cadastrada_em_veiculo_diferente(banco_temporario):
+    db.inserir_coleta_cidade_fixa("São Paulo", "Osasco", "VUC", 80.0)
+    db.inserir_coleta_cidade_fixa("São Paulo", "Osasco", "Carreta", 150.0)
+
+    # veículo "Toco" não tem preço fixo cadastrado pra Osasco, mas VUC e
+    # Carreta têm -- usado só como aviso na memória de cálculo (ver
+    # frete_service.calcular_orcamento), não achar o próprio veículo atual
+    encontrados = db.buscar_coleta_cidade_fixa_outros_veiculos("São Paulo", "Osasco", "Toco")
+    assert encontrados == ["Carreta", "VUC"]
+
+    # o próprio veículo que já bate não deve aparecer na lista
+    encontrados_vuc = db.buscar_coleta_cidade_fixa_outros_veiculos("São Paulo", "Osasco", "VUC")
+    assert encontrados_vuc == ["Carreta"]
+
+
+def test_buscar_outros_veiculos_vazio_quando_nada_bate(banco_temporario):
+    db.inserir_coleta_cidade_fixa("São Paulo", "Osasco", "VUC", 80.0)
+    assert db.buscar_coleta_cidade_fixa_outros_veiculos("São Paulo", "Cidade Sem Cadastro", "Toco") == []
+    assert db.buscar_coleta_cidade_fixa_outros_veiculos("Filial Sem Cadastro", "Osasco", "Toco") == []
+
+
 def test_migracao_do_schema_antigo_preserva_dados(banco_temporario):
     with db.get_connection() as conn:
         conn.execute("DROP TABLE coleta_cidades_fixas")

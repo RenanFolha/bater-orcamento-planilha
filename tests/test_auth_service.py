@@ -102,3 +102,31 @@ def test_encerrar_sessao_remove_token(banco_temporario):
     token = auth.criar_sessao(admin["id"])
     auth.encerrar_sessao(token)
     assert auth.validar_sessao(token) is None
+
+
+def test_marca_admin_padrao_pendente_quando_banco_antigo_nao_tinha_o_sinalizador(banco_temporario):
+    # simula um banco criado antes de existir a coluna deve_trocar_senha
+    # (ver frete_db._migrar_colunas): admin com a senha padrão, mas sem o
+    # sinalizador marcado -- garantir_usuario_padrao (chamada de novo, como
+    # se a API tivesse reiniciado) precisa detectar e marcar a pendência.
+    auth.garantir_usuario_padrao()
+    admin = db.buscar_usuario_por_username(auth.ADMIN_USERNAME_PADRAO)
+    with db.get_connection() as conn:
+        conn.execute("UPDATE usuarios SET deve_trocar_senha=0 WHERE id=?", (admin["id"],))
+
+    auth.garantir_usuario_padrao()  # contar_usuarios() > 0 -> cai no ramo de marcar pendência
+
+    admin_depois = db.buscar_usuario_por_username(auth.ADMIN_USERNAME_PADRAO)
+    assert admin_depois["deve_trocar_senha"] == 1
+
+
+def test_nao_marca_pendente_quando_senha_ja_foi_trocada(banco_temporario):
+    auth.garantir_usuario_padrao()
+    admin = db.buscar_usuario_por_username(auth.ADMIN_USERNAME_PADRAO)
+    senha_hash, senha_salt = auth.gerar_hash_senha("outra-senha-diferente")
+    db.atualizar_senha_usuario(admin["id"], senha_hash, senha_salt)  # já limpa deve_trocar_senha
+
+    auth.garantir_usuario_padrao()
+
+    admin_depois = db.buscar_usuario_por_username(auth.ADMIN_USERNAME_PADRAO)
+    assert admin_depois["deve_trocar_senha"] == 0
