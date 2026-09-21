@@ -78,33 +78,20 @@ def test_orcamento_pis_cofins_configurado_acima_de_100_da_500(client):
         fs.carregar_parametros()
 
 
-def test_orcamento_margem_30_recusada_sem_login(client):
-    r = client.post("/orcamento", json=_orcamento_payload(margem_lucro_pct=30))
-    assert r.status_code == 403
-
-
-def test_orcamento_margem_30_recusada_pra_usuario_comum(client):
-    _login(client)
-    client.post("/admin/usuarios", json={
-        "nome": "Comum", "username": "comum", "senha": "senha1234", "role": "usuario",
-    })
-    client.post("/auth/logout")
-    _login(client, username="comum", senha="senha1234")
-    r = client.post("/orcamento", json=_orcamento_payload(margem_lucro_pct=30))
-    assert r.status_code == 403
-
-
-def test_orcamento_margem_30_permitida_pra_admin_logado(client):
-    _login(client)
-    r = client.post("/orcamento", json=_orcamento_payload(margem_lucro_pct=30))
+def test_orcamento_margem_lucro_e_sempre_40_por_cento_mesmo_sem_login(client):
+    r = client.post("/orcamento", json=_orcamento_payload())
     assert r.status_code == 200
-    assert r.json()["calculos_intermediarios"]["margem_lucro_pct"] == 30
+    assert r.json()["calculos_intermediarios"]["margem_lucro_pct"] == 40
 
 
-def test_orcamento_margens_40_e_50_continuam_publicas_sem_login(client):
-    for margem in (40, 50):
-        r = client.post("/orcamento", json=_orcamento_payload(margem_lucro_pct=margem))
-        assert r.status_code == 200
+def test_orcamento_ignora_margem_lucro_pct_enviado_no_payload(client):
+    # Margem de lucro não é mais digitável (fixa em 40%, ver
+    # fs.MARGEM_LUCRO_PADRAO) -- mesmo que um cliente antigo (cache do
+    # navegador) ou uma chamada direta à API ainda mande o campo, ele é
+    # ignorado, nunca muda o resultado.
+    r = client.post("/orcamento", json=_orcamento_payload(margem_lucro_pct=90))
+    assert r.status_code == 200
+    assert r.json()["calculos_intermediarios"]["margem_lucro_pct"] == 40
 
 
 def test_login_com_admin_padrao(client):

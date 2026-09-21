@@ -998,7 +998,6 @@ form.addEventListener('submit', async (ev) => {
     transportadora_entrega_nome: transportadoraEntrega ? transportadoraEntrega.nome : '',
     valor_entrega_terceirizada: transportadoraEntrega ? transportadoraEntrega.valor : 0,
     custos_extras: coletarCustosExtras(),
-    margem_lucro_pct: parseFloat(document.getElementById('margem_lucro').value),
   };
 
   btn.disabled = true;
@@ -1601,7 +1600,6 @@ document.getElementById('frac-form-frete').addEventListener('submit', async (ev)
     sla: document.getElementById('frac-sla').value,
     veiculo: document.getElementById('frac-veiculo').value,
     custos_extras: fracColetarCustosExtras(),
-    margem_lucro_pct: parseFloat(document.getElementById('frac-margem_lucro').value),
   };
 
   btnFrac.disabled = true;
@@ -1918,30 +1916,9 @@ document.querySelectorAll('.sidebar-nav a').forEach(link => {
 
 let currentUser = null;
 
-// Margem de lucro é digitada livremente de 40% a 100% -- abaixo de 40%
-// só administrador pode digitar (mesma regra no backend, ver
-// fs.MARGEM_LUCRO_MINIMA_SEM_ADMIN em frete_service.py e a checagem em
-// routers/orcamento.py). Enquanto não for admin, o campo trava o mínimo
-// em 40% (e se já tinha um valor menor digitado, volta pro padrão de
-// 40%). Chamado sempre que o estado de login muda (ver atualizarUIAuth),
-// não só na carga inicial da página.
-function atualizarLimiteMargemLucro(admin){
-  // Mesmo campo existe nos dois formulários (orçamento normal e
-  // Fracionado, ver 'margem_lucro'/'frac-margem_lucro') — os dois seguem
-  // a mesma regra de limite mínimo.
-  ['margem_lucro', 'frac-margem_lucro'].forEach((id) => {
-    const input = document.getElementById(id);
-    input.min = admin ? 0 : 40;
-    if(!admin && parseFloat(input.value) < 40){
-      input.value = 40;
-    }
-  });
-}
-
 function atualizarUIAuth(){
   const logado = !!currentUser;
   const admin = logado && currentUser.role === 'admin';
-  atualizarLimiteMargemLucro(admin);
 
   document.querySelectorAll('.sidebar-nav a[data-requer-login]').forEach(a => a.classList.toggle('hidden', !logado));
   document.querySelectorAll('.sidebar-nav a[data-requer-admin]').forEach(a => a.classList.toggle('hidden', !admin));

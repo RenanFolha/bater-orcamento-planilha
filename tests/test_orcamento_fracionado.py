@@ -51,15 +51,12 @@ def test_orcamento_fracionado_veiculo_invalido_da_422(client):
     assert r.status_code == 422
 
 
-def test_orcamento_fracionado_margem_30_recusada_sem_login(client):
-    r = client.post("/orcamento/fracionado", json=_payload(margem_lucro_pct=30))
-    assert r.status_code == 403
-
-
-def test_orcamento_fracionado_margem_30_permitida_pra_admin(client):
-    _login(client)
+def test_orcamento_fracionado_ignora_margem_lucro_pct_enviado_no_payload(client):
+    # Margem de lucro não é mais digitável (fixa em 40%, ver
+    # fs.MARGEM_LUCRO_PADRAO) -- mesmo enviando o campo, é ignorado.
     r = client.post("/orcamento/fracionado", json=_payload(margem_lucro_pct=30))
     assert r.status_code == 200, r.text
+    assert r.json()["calculos_intermediarios"]["margem_lucro_pct"] == 40
 
 
 def test_orcamento_fracionado_pis_cofins_configurado_acima_de_100_da_500(client):

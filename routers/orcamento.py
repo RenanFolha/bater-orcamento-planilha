@@ -2,27 +2,16 @@
 
 """Rota de cálculo de orçamento — pública, não exige login."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 
 import frete_service as fs
-from deps import usuario_atual
 from schemas import OrcamentoRequest
 
 router = APIRouter(tags=["Orçamento"])
 
 
 @router.post("/orcamento")
-def orcamento(payload: OrcamentoRequest, usuario: dict | None = Depends(usuario_atual)):
-    # Margem abaixo de 40% é restrita a administradores -- a tela já trava
-    # o campo em 40% pra quem não é admin, mas isso sozinho não impede uma
-    # requisição HTTP direta (sem passar pela UI) de pedir uma margem menor
-    # mesmo sem sessão de admin, já que este endpoint continua público pro
-    # restante do intervalo (ver fs.MARGEM_LUCRO_MINIMA_SEM_ADMIN).
-    if payload.margem_lucro_pct < fs.MARGEM_LUCRO_MINIMA_SEM_ADMIN and not (usuario and usuario["role"] == "admin"):
-        raise HTTPException(
-            status_code=403,
-            detail=f"Margem de lucro abaixo de {fs.MARGEM_LUCRO_MINIMA_SEM_ADMIN}% é restrita a administradores.",
-        )
+def orcamento(payload: OrcamentoRequest):
     try:
         return fs.calcular_orcamento(
             peso=payload.peso,
@@ -46,7 +35,6 @@ def orcamento(payload: OrcamentoRequest, usuario: dict | None = Depends(usuario_
             distancia_retorno=payload.distancia_retorno,
             prioridade_rota=payload.prioridade_rota or None,
             custos_extras=[c.model_dump() for c in payload.custos_extras],
-            margem_lucro_pct=payload.margem_lucro_pct,
         )
     except fs.FreteInputError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e

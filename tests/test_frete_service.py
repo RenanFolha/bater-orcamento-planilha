@@ -403,27 +403,21 @@ def test_taxa_regional_lista_de_cidades_aplica_em_qualquer_uma(parametros):
         assert resultado["calculos_intermediarios"]["custo_taxas_regionais"] == pytest.approx(30.0)
 
 
-def test_margem_lucro_e_markup_simples_depois_dos_impostos(parametros):
-    # Sem PIS/COFINS nem ICMS cadastrados nessa rota (aliquotas 0%), então
-    # a margem incide direto sobre o custo -- não dá pra ver aqui a
-    # diferença de aplicar a margem por último (ver
+def test_margem_lucro_e_markup_simples_de_40_por_cento_depois_dos_impostos(parametros):
+    # Margem de lucro é fixa em 40% (ver fs.MARGEM_LUCRO_PADRAO) -- não é
+    # mais um parâmetro digitável. Sem PIS/COFINS nem ICMS cadastrados
+    # nessa rota (alíquotas 0%), a margem incide direto sobre o custo --
+    # não dá pra ver aqui a diferença de aplicar a margem por último (ver
     # test_pis_cofins_e_icms_aplicados_antes_da_margem_de_lucro pra isso).
-    resultado_30 = fs.calcular_orcamento(
+    resultado = fs.calcular_orcamento(
         peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
         categoria="Geral", transporte="Rodoviário", sla="Padrão",
-        margem_lucro_pct=30,
     )
-    resultado_50 = fs.calcular_orcamento(
-        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
-        categoria="Geral", transporte="Rodoviário", sla="Padrão",
-        margem_lucro_pct=50,
-    )
-    calc_30 = resultado_30["calculos_intermediarios"]
+    calc = resultado["calculos_intermediarios"]
     # frete_ajustado=200 + custo_manutencao=10 + custo_taxas_adicionais=10 = 220 de custo
-    assert calc_30["frete_sem_margem_lucro"] == pytest.approx(220.0)
-    assert calc_30["valor_margem_lucro"] == pytest.approx(66.0)  # 220 * 0.30
-    assert resultado_30["resultado"]["frete_total"] == pytest.approx(286.0)  # 220 * 1.30
-    assert resultado_50["resultado"]["frete_total"] == pytest.approx(330.0)  # 220 * 1.50
+    assert calc["frete_sem_margem_lucro"] == pytest.approx(220.0)
+    assert calc["valor_margem_lucro"] == pytest.approx(88.0)  # 220 * 0.40
+    assert resultado["resultado"]["frete_total"] == pytest.approx(308.0)  # 220 * 1.40
 
 
 def test_margem_lucro_padrao_e_40_por_cento(parametros):
@@ -432,25 +426,6 @@ def test_margem_lucro_padrao_e_40_por_cento(parametros):
         categoria="Geral", transporte="Rodoviário", sla="Padrão",
     )
     assert resultado["calculos_intermediarios"]["margem_lucro_pct"] == 40
-
-
-def test_margem_lucro_fora_do_intervalo_absoluto_gera_erro(parametros):
-    # calcular_orcamento só valida o intervalo absoluto (0% a 100%, ver
-    # fs.MARGEM_LUCRO_MINIMA/MARGEM_LUCRO_MAXIMA) -- a restrição de
-    # "abaixo de 40% só admin" é de UI/rota (ver routers/orcamento.py),
-    # não dessa função, então 25% (por exemplo) passa aqui sem erro.
-    with pytest.raises(fs.FreteInputError):
-        fs.calcular_orcamento(
-            peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=100,
-            categoria="Geral", transporte="Rodoviário", sla="Padrão",
-            margem_lucro_pct=-10,
-        )
-    with pytest.raises(fs.FreteInputError):
-        fs.calcular_orcamento(
-            peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=100,
-            categoria="Geral", transporte="Rodoviário", sla="Padrão",
-            margem_lucro_pct=150,
-        )
 
 
 def test_custo_extra_soma_ao_frete_e_aparece_no_detalhamento(parametros):
@@ -1223,8 +1198,6 @@ def _orcamento_base(**overrides):
     ({"valor_entrega_terceirizada": -1}, "entrega terceirizada"),
     ({"pedagio": -1}, "pedágio"),
     ({"distancia_retorno": -1}, "retorno"),
-    ({"margem_lucro_pct": 200}, "Margem de lucro"),
-    ({"margem_lucro_pct": -10}, "Margem de lucro"),
 ])
 def test_calcular_orcamento_rejeita_campo_negativo_ou_fora_do_intervalo(parametros, overrides, mensagem):
     with pytest.raises(fs.FreteInputError, match=mensagem):
@@ -1287,7 +1260,6 @@ def _fracionado_base(**overrides):
     ({"distancia": 0}, "Distância"),
     ({"valor_mercadoria": -1}, "mercadoria"),
     ({"pedagio": -1}, "pedágio"),
-    ({"margem_lucro_pct": 200}, "Margem de lucro"),
 ])
 def test_calcular_orcamento_fracionado_rejeita_campo_invalido(parametros, overrides, mensagem):
     with pytest.raises(fs.FreteInputError, match=mensagem):

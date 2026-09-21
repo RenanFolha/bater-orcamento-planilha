@@ -80,15 +80,8 @@ def _valor_taxa(tipo: str, valor: float, valor_mercadoria: float) -> float:
 # hora, ver calcular_orcamento.
 CATEGORIAS_CUSTO_EXTRA = ["Paletização", "Carga", "Descarga", "Entrega Adicional", "Diversos"]
 
-# Margem de lucro: digitada livremente por orçamento (markup simples
-# sobre o frete_total, ver calcular_orcamento), entre MARGEM_LUCRO_MINIMA
-# e MARGEM_LUCRO_MAXIMA. Abaixo de MARGEM_LUCRO_MINIMA_SEM_ADMIN só
-# administrador pode digitar -- essa parte da restrição é de UI/rota (ver
-# assets/app.js e routers/orcamento.py); esta função só valida o
-# intervalo absoluto, sem noção de usuário/login.
-MARGEM_LUCRO_MINIMA = 0
-MARGEM_LUCRO_MAXIMA = 100
-MARGEM_LUCRO_MINIMA_SEM_ADMIN = 40
+# Margem de lucro: fixa, não é mais digitável por quem cota (markup
+# simples sobre o frete_total, ver calcular_orcamento).
 MARGEM_LUCRO_PADRAO = 40
 
 
@@ -1197,7 +1190,6 @@ def calcular_orcamento(
     distancia_retorno: float = 0,
     prioridade_rota: str | None = None,
     custos_extras: list[dict] | None = None,
-    margem_lucro_pct: float = MARGEM_LUCRO_PADRAO,
 ) -> dict:
     if peso <= 0:
         raise FreteInputError("Peso deve ser maior que zero.")
@@ -1231,11 +1223,6 @@ def calcular_orcamento(
             )
         if custo_extra.get("valor", 0) < 0:
             raise FreteInputError("Valor de custo extra não pode ser negativo.")
-    if not (MARGEM_LUCRO_MINIMA <= margem_lucro_pct <= MARGEM_LUCRO_MAXIMA):
-        raise FreteInputError(
-            f"Margem de lucro '{margem_lucro_pct}%' inválida. Deve estar entre "
-            f"{MARGEM_LUCRO_MINIMA}% e {MARGEM_LUCRO_MAXIMA}%."
-        )
 
     p = parametros
     transp = p.buscar_transporte(transporte)
@@ -1364,7 +1351,7 @@ def calcular_orcamento(
     frete_total, frete_sem_icms, valor_icms, icms_aplicavel, aliquota_icms_pct = _aplicar_icms(
         p, frete_total, cidade_origem, cidade_destino
     )
-    frete_total, frete_sem_margem_lucro, valor_margem_lucro = _aplicar_margem_lucro(frete_total, margem_lucro_pct)
+    frete_total, frete_sem_margem_lucro, valor_margem_lucro = _aplicar_margem_lucro(frete_total, MARGEM_LUCRO_PADRAO)
 
     return {
         "entrada": {
@@ -1437,7 +1424,7 @@ def calcular_orcamento(
             "balsa_outro_veiculo": balsa_outro_veiculo or None,
             "total_custo_operacao": round(total_custo_operacao, 2),
             "total_impostos_taxas": round(total_impostos_taxas, 2),
-            "margem_lucro_pct": margem_lucro_pct,
+            "margem_lucro_pct": MARGEM_LUCRO_PADRAO,
             "frete_sem_margem_lucro": round(frete_sem_margem_lucro, 2),
             "valor_margem_lucro": round(valor_margem_lucro, 2),
             "aliquota_pis_cofins_pct": aliquota_pis_cofins_pct,
@@ -1470,7 +1457,6 @@ def calcular_orcamento_fracionado(
     pedagio: float = 0,
     prioridade_rota: str | None = None,
     custos_extras: list[dict] | None = None,
-    margem_lucro_pct: float = MARGEM_LUCRO_PADRAO,
 ) -> dict:
     """Frete Fracionado -- mesma logica de calcular_orcamento pra tudo que
     nao eh o frete base (categoria/transporte/SLA, taxas adicionais e
@@ -1521,11 +1507,6 @@ def calcular_orcamento_fracionado(
             )
         if custo_extra.get("valor", 0) < 0:
             raise FreteInputError("Valor de custo extra não pode ser negativo.")
-    if not (MARGEM_LUCRO_MINIMA <= margem_lucro_pct <= MARGEM_LUCRO_MAXIMA):
-        raise FreteInputError(
-            f"Margem de lucro '{margem_lucro_pct}%' inválida. Deve estar entre "
-            f"{MARGEM_LUCRO_MINIMA}% e {MARGEM_LUCRO_MAXIMA}%."
-        )
 
     p = parametros
     transp = p.buscar_transporte(transporte)
@@ -1584,7 +1565,7 @@ def calcular_orcamento_fracionado(
     frete_total, frete_sem_icms, valor_icms, icms_aplicavel, aliquota_icms_pct = _aplicar_icms(
         p, frete_total, cidade_origem, cidade_destino
     )
-    frete_total, frete_sem_margem_lucro, valor_margem_lucro = _aplicar_margem_lucro(frete_total, margem_lucro_pct)
+    frete_total, frete_sem_margem_lucro, valor_margem_lucro = _aplicar_margem_lucro(frete_total, MARGEM_LUCRO_PADRAO)
 
     return {
         "entrada": {
@@ -1633,7 +1614,7 @@ def calcular_orcamento_fracionado(
             "balsa_outro_veiculo": balsa_outro_veiculo or None,
             "total_custo_operacao": round(total_custo_operacao, 2),
             "total_impostos_taxas": round(total_impostos_taxas, 2),
-            "margem_lucro_pct": margem_lucro_pct,
+            "margem_lucro_pct": MARGEM_LUCRO_PADRAO,
             "frete_sem_margem_lucro": round(frete_sem_margem_lucro, 2),
             "valor_margem_lucro": round(valor_margem_lucro, 2),
             "aliquota_pis_cofins_pct": aliquota_pis_cofins_pct,
