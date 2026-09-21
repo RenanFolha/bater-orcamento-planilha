@@ -125,6 +125,7 @@ const MEMORIA_CALCULO_CAMPOS = [
   },
   {chave: 'frete_sem_margem_lucro', rotulo: 'Frete sem margem de lucro (já com impostos)', tipo: 'brl'},
   {chave: 'valor_margem_lucro', rotulo: 'Valor da margem de lucro', tipo: 'brl'},
+  {chave: 'ajuste_piso_markup', rotulo: 'Ajuste pro markup mínimo de 1,4x', tipo: 'brl'},
 
   {header: 'Resultado'},
   {chave: 'frete_total', rotulo: 'Frete total', tipo: 'brl'},
@@ -255,6 +256,33 @@ let ultimoOrcamento = null;
 const stamp = document.getElementById('stamp');
 document.getElementById('config-conn-status').textContent = location.origin;
 
+// GRIS/Ad Valorem cadastrados em Tabela de Preços (ver
+// routers/parametros.py::listar_taxas_adicionais_publico) -- usados só
+// pra pré-preencher os campos digitáveis 'gris_pct'/'ad_valorem_pct' (e
+// os equivalentes 'frac-') com o valor cadastrado; digitar um valor MENOR
+// que o cadastrado é rejeitado pela API (ver
+// fs._piso_taxa_customizavel/calcular_orcamento). 0 quando não há nenhuma
+// taxa cadastrada com esse nome.
+let taxasCustomizaveisCache = {gris: 0, adValorem: 0};
+
+async function carregarTaxasCustomizaveis(){
+  try{
+    const res = await fetch(`${API_BASE}/parametros/taxas-adicionais`);
+    if(!res.ok) throw new Error(`Erro HTTP ${res.status}`);
+    const data = await res.json();
+    const gris = data.find(t => t.nome.trim().toLowerCase() === 'gris');
+    const adValorem = data.find(t => t.nome.trim().toLowerCase() === 'ad valorem');
+    taxasCustomizaveisCache = {gris: gris ? gris.valor : 0, adValorem: adValorem ? adValorem.valor : 0};
+  }catch(e){
+    taxasCustomizaveisCache = {gris: 0, adValorem: 0};
+  }
+}
+
+function preencherCamposTaxasCustomizaveis(idGris, idAdValorem){
+  document.getElementById(idGris).value = taxasCustomizaveisCache.gris;
+  document.getElementById(idAdValorem).value = taxasCustomizaveisCache.adValorem;
+}
+
 async function inicializarFormulario(){
   let carregouParametros = false;
   btn.disabled = true;
@@ -267,9 +295,11 @@ async function inicializarFormulario(){
       carregarOpcoes('slas', document.getElementById('sla')),
       carregarFiliais(),
       carregarTransportadoras(),
+      carregarTaxasCustomizaveis(),
     ]);
     carregouParametros = true;
     statusTag.textContent = 'Aguardando';
+    preencherCamposTaxasCustomizaveis('gris_pct', 'ad_valorem_pct');
     // "Geral" é a categoria padrão (multiplicador 1.00, sem cuidado
     // especial) -- pré-seleciona pra cobrir o caso comum sem exigir que a
     // pessoa escolha toda vez.
@@ -998,6 +1028,8 @@ form.addEventListener('submit', async (ev) => {
     transportadora_entrega_nome: transportadoraEntrega ? transportadoraEntrega.nome : '',
     valor_entrega_terceirizada: transportadoraEntrega ? transportadoraEntrega.valor : 0,
     custos_extras: coletarCustosExtras(),
+    gris_pct: parseFloat(document.getElementById('gris_pct').value),
+    ad_valorem_pct: parseFloat(document.getElementById('ad_valorem_pct').value),
   };
 
   btn.disabled = true;
@@ -1209,6 +1241,14 @@ form.addEventListener('submit', async (ev) => {
       linhaMargemLucro.style.display = 'none';
     }
 
+    const linhaAjustePiso = document.getElementById('linha-ajuste-piso');
+    if(calc.ajuste_piso_markup > 0){
+      document.getElementById('d-ajuste-piso').textContent = fmtBRL(calc.ajuste_piso_markup);
+      linhaAjustePiso.style.display = 'flex';
+    }else{
+      linhaAjustePiso.style.display = 'none';
+    }
+
     const linhaPisCofins = document.getElementById('linha-pis-cofins');
     if(calc.valor_pis_cofins > 0){
       document.getElementById('d-pis-cofins').textContent = fmtBRL(calc.valor_pis_cofins);
@@ -1411,6 +1451,9 @@ async function fracInicializarFormulario(){
     // seletores daqui com o que já está em memória.
     preencherOpcoes(document.getElementById('frac-origem-filial'), filiaisCache);
     preencherOpcoes(document.getElementById('frac-destino-filial'), filiaisCache);
+    // taxasCustomizaveisCache também já foi carregado pelo formulário
+    // principal (ver carregarTaxasCustomizaveis em inicializarFormulario).
+    preencherCamposTaxasCustomizaveis('frac-gris_pct', 'frac-ad_valorem_pct');
     const categoriaSel = document.getElementById('frac-categoria');
     if([...categoriaSel.options].some(o => o.value === 'Geral')) categoriaSel.value = 'Geral';
     fracAtualizarCubagem();
@@ -1600,6 +1643,8 @@ document.getElementById('frac-form-frete').addEventListener('submit', async (ev)
     sla: document.getElementById('frac-sla').value,
     veiculo: document.getElementById('frac-veiculo').value,
     custos_extras: fracColetarCustosExtras(),
+    gris_pct: parseFloat(document.getElementById('frac-gris_pct').value),
+    ad_valorem_pct: parseFloat(document.getElementById('frac-ad_valorem_pct').value),
   };
 
   btnFrac.disabled = true;
@@ -1688,6 +1733,12 @@ document.getElementById('frac-form-frete').addEventListener('submit', async (ev)
       document.getElementById('frac-d-margem-lucro').textContent = `${fmtBRL(calc.valor_margem_lucro)} (${calc.margem_lucro_pct}%)`;
       linhaMargemLucro.style.display = 'flex';
     }else{ linhaMargemLucro.style.display = 'none'; }
+
+    const linhaAjustePiso = document.getElementById('frac-linha-ajuste-piso');
+    if(calc.ajuste_piso_markup > 0){
+      document.getElementById('frac-d-ajuste-piso').textContent = fmtBRL(calc.ajuste_piso_markup);
+      linhaAjustePiso.style.display = 'flex';
+    }else{ linhaAjustePiso.style.display = 'none'; }
 
     const linhaPisCofins = document.getElementById('frac-linha-pis-cofins');
     if(calc.valor_pis_cofins > 0){

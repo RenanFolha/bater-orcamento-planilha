@@ -94,6 +94,36 @@ def test_orcamento_ignora_margem_lucro_pct_enviado_no_payload(client):
     assert r.json()["calculos_intermediarios"]["margem_lucro_pct"] == 40
 
 
+def test_orcamento_gris_pct_digitado_substitui_o_cadastrado(client):
+    # Seed padrão cadastra GRIS a 0.30% (ver frete_db.py) -- digitando um
+    # valor maior no orçamento, ele substitui o cadastrado.
+    r = client.post("/orcamento", json=_orcamento_payload(gris_pct=5.0))
+    assert r.status_code == 200, r.text
+    gris = next(t for t in r.json()["calculos_intermediarios"]["taxas_adicionais"] if t["nome"] == "GRIS")
+    assert gris["valor_configurado"] == pytest.approx(5.0)
+
+
+def test_orcamento_gris_pct_abaixo_do_cadastrado_da_422(client):
+    r = client.post("/orcamento", json=_orcamento_payload(gris_pct=0.1))
+    assert r.status_code == 422
+    assert "GRIS" in r.json()["detail"]
+
+
+def test_orcamento_piso_markup_minimo_ajusta_impostos_e_taxas(client):
+    # Ad Valorem digitado bem alto empurra impostos/taxas pra cima o
+    # bastante pra o piso de 1.4x (fs.MARKUP_MINIMO) precisar de ajuste
+    # além da margem fixa de 40% -- ver
+    # test_piso_markup_minimo_ajusta_taxas_pra_bater_1_4x em
+    # test_frete_service.py pro mesmo mecanismo testado a nível de unidade.
+    r = client.post("/orcamento", json=_orcamento_payload(valor_mercadoria=100000, ad_valorem_pct=50.0))
+    assert r.status_code == 200, r.text
+    calc = r.json()["calculos_intermediarios"]
+    assert calc["ajuste_piso_markup"] > 0
+    base_piso = calc["total_custo_operacao"] + calc["total_impostos_taxas"] - calc["ajuste_piso_markup"]
+    piso = round(base_piso * 1.4, 2)
+    assert r.json()["resultado"]["frete_total"] == pytest.approx(piso, abs=0.05)
+
+
 def test_login_com_admin_padrao(client):
     r = _login(client)
     assert r.json()["role"] == "admin"

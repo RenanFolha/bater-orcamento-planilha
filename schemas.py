@@ -15,6 +15,26 @@ _UFS_BR_SIGLAS = {
 }
 
 
+def _campo_gris_pct() -> float | None:
+    """Campo `gris_pct` — idêntico em OrcamentoRequest e
+    OrcamentoFracionadoRequest. Quando informado, substitui o % de GRIS
+    cadastrado em Tabela de Preços (nunca abaixo dele — ver
+    frete_service._piso_taxa_customizavel); None (padrão) usa o
+    cadastrado sem alteração."""
+    return Field(
+        None, ge=0,
+        description="% de GRIS pra este orçamento — substitui o % cadastrado em Tabela de Preços, nunca abaixo dele. Deixe em branco (null) pra usar o cadastrado.",
+    )
+
+
+def _campo_ad_valorem_pct() -> float | None:
+    """Campo `ad_valorem_pct` — mesma regra de _campo_gris_pct(), pra Ad Valorem."""
+    return Field(
+        None, ge=0,
+        description="% de Ad Valorem pra este orçamento — substitui o % cadastrado em Tabela de Preços, nunca abaixo dele. Deixe em branco (null) pra usar o cadastrado.",
+    )
+
+
 class PaleteIn(BaseModel):
     comprimento: float = Field(..., gt=0, description="Comprimento do palete em cm", examples=[40])
     largura: float = Field(..., gt=0, description="Largura do palete em cm", examples=[30])
@@ -52,6 +72,8 @@ class OrcamentoRequest(BaseModel):
     distancia_retorno: float = Field(0, ge=0, description="Distância (km) do retorno vazio do veículo, do destino até a filial mais próxima — só quando a entrega é feita direto ao cliente pela frota própria")
     prioridade_rota: str = Field("", description="Nome da filial de escala obrigatória usada no trajeto (preenchido automaticamente por /geo/distancia quando a rota bate uma prioridade de rota cadastrada) — só para exibir na memória de cálculo, não afeta o valor do frete")
     custos_extras: list[CustoExtraIn] = Field(default_factory=list, description="Custos extras escolhidos pra este orçamento (categoria + valor em R$), somados ao frete antes do PIS/COFINS e do ICMS")
+    gris_pct: float | None = _campo_gris_pct()
+    ad_valorem_pct: float | None = _campo_ad_valorem_pct()
 
 
 class OrcamentoFracionadoRequest(BaseModel):
@@ -79,6 +101,8 @@ class OrcamentoFracionadoRequest(BaseModel):
     pedagio: float = Field(0, ge=0, description="Valor estimado de pedágio da rota em R$ (preenchido automaticamente pelo Google Maps/OSRM quando disponível, editável)")
     prioridade_rota: str = Field("", description="Nome da filial de escala obrigatória usada no trajeto (preenchido automaticamente por /geo/distancia) — só para exibir na memória de cálculo, não afeta o valor do frete")
     custos_extras: list[CustoExtraIn] = Field(default_factory=list, description="Custos extras escolhidos pra este orçamento (categoria + valor em R$), somados ao frete antes do PIS/COFINS e do ICMS")
+    gris_pct: float | None = _campo_gris_pct()
+    ad_valorem_pct: float | None = _campo_ad_valorem_pct()
 
 
 class DistanciaRequest(BaseModel):

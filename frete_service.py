@@ -84,6 +84,24 @@ CATEGORIAS_CUSTO_EXTRA = ["Paletização", "Carga", "Descarga", "Entrega Adicion
 # simples sobre o frete_total, ver calcular_orcamento).
 MARGEM_LUCRO_PADRAO = 40
 
+# Markup mínimo garantido sobre custo da operação + impostos/taxas (antes
+# de PIS/COFINS, ICMS e da margem de lucro): se depois de aplicar tudo o
+# frete_total ficar abaixo de MARKUP_MINIMO vezes essa base, a diferença é
+# somada na linha de impostos/taxas pra fechar exatamente nesse piso (ver
+# calcular_orcamento/calcular_orcamento_fracionado) -- a margem de lucro em
+# si continua fixa em MARGEM_LUCRO_PADRAO% só do custo da operação; esse
+# ajuste existe pra garantir o markup final mesmo quando impostos/taxas são
+# grandes o bastante (ex: GRIS/Ad Valorem altos) pra a margem fixa sozinha
+# não bastar.
+MARKUP_MINIMO = 1.4
+
+# Nomes de taxas adicionais que podem ser digitadas por orçamento (ver
+# gris_pct/ad_valorem_pct em calcular_orcamento/calcular_orcamento_fracionado
+# e _taxas_adicionais_aplicadas) -- o % digitado substitui o % cadastrado em
+# Tabela de Preços pra essa taxa, nunca abaixo dele (o cadastrado é o piso).
+_NOME_TAXA_GRIS = "GRIS"
+_NOME_TAXA_AD_VALOREM = "Ad Valorem"
+
 
 class FreteConfigError(Exception):
     """Erro ao ler/validar os parâmetros do banco."""
@@ -1052,18 +1070,60 @@ def _custos_extras_aplicados(custos_extras: list[dict]) -> tuple[list[dict], flo
     return detalhe_custos_extras, custo_extra_total
 
 
-def _taxas_adicionais_aplicadas(p: "ParametrosFrete", valor_mercadoria: float) -> tuple[list[dict], float]:
+def _piso_taxa_customizavel(p: "ParametrosFrete", nome: str) -> float:
+    """% mínimo (piso) pra um campo de taxa adicional digitável por
+    orçamento (GRIS, Ad Valorem, ver _NOME_TAXA_GRIS/_NOME_TAXA_AD_VALOREM)
+    -- o % cadastrado em Tabela de Preços pra essa taxa (0 se não houver
+    nenhuma cadastrada com esse nome, ou se a cadastrada for do tipo
+    'fixo' em vez de 'percentual')."""
+    chave = nome.strip().lower()
+    for taxa in p.taxas_adicionais:
+        if taxa.nome.strip().lower() == chave:
+            return taxa.valor if taxa.tipo == "percentual" else 0.0
+    return 0.0
+
+
+def _taxas_adicionais_aplicadas(
+    p: "ParametrosFrete", valor_mercadoria: float,
+    gris_pct: float | None = None, ad_valorem_pct: float | None = None,
+) -> tuple[list[dict], float]:
     """Taxas adicionais cadastradas (fixas em R$ ou % do valor da
-    mercadoria) — entram sempre, sem depender de rota."""
+    mercadoria) — entram sempre, sem depender de rota. GRIS e Ad Valorem
+    são digitáveis por orçamento: quando gris_pct/ad_valorem_pct vêm
+    informados (não None — já validados contra o piso cadastrado em
+    calcular_orcamento), o % digitado substitui o % cadastrado de mesmo
+    nome; sem override, usa o cadastrado normalmente. Um override sem
+    nenhuma taxa cadastrada de mesmo nome ainda assim entra no cálculo,
+    como uma taxa avulsa desse orçamento (piso 0%, ver
+    _piso_taxa_customizavel)."""
+    overrides = {_NOME_TAXA_GRIS.lower(): gris_pct, _NOME_TAXA_AD_VALOREM.lower(): ad_valorem_pct}
     detalhe_taxas = []
     custo_taxas_adicionais = 0.0
+    aplicados = set()
     for taxa in p.taxas_adicionais:
-        valor_taxa = _valor_taxa(taxa.tipo, taxa.valor, valor_mercadoria)
+        chave = taxa.nome.strip().lower()
+        override = overrides.get(chave)
+        if override is not None:
+            valor_configurado = override
+            valor_taxa = valor_mercadoria * (override / 100)
+            aplicados.add(chave)
+        else:
+            valor_configurado = taxa.valor
+            valor_taxa = _valor_taxa(taxa.tipo, taxa.valor, valor_mercadoria)
         custo_taxas_adicionais += valor_taxa
         detalhe_taxas.append({
             "nome": taxa.nome, "tipo": taxa.tipo,
-            "valor_configurado": taxa.valor, "valor_aplicado": round(valor_taxa, 2),
+            "valor_configurado": valor_configurado, "valor_aplicado": round(valor_taxa, 2),
         })
+    for nome_exibicao, chave in ((_NOME_TAXA_GRIS, _NOME_TAXA_GRIS.lower()), (_NOME_TAXA_AD_VALOREM, _NOME_TAXA_AD_VALOREM.lower())):
+        override = overrides.get(chave)
+        if override is not None and chave not in aplicados:
+            valor_taxa = valor_mercadoria * (override / 100)
+            custo_taxas_adicionais += valor_taxa
+            detalhe_taxas.append({
+                "nome": nome_exibicao, "tipo": "percentual",
+                "valor_configurado": override, "valor_aplicado": round(valor_taxa, 2),
+            })
     return detalhe_taxas, custo_taxas_adicionais
 
 
@@ -1156,16 +1216,41 @@ def _aplicar_icms(
     return frete_total, frete_sem_icms, valor_icms, icms_aplicavel, aliquota_icms_pct
 
 
-def _aplicar_margem_lucro(frete_total: float, margem_lucro_pct: float) -> tuple[float, float, float]:
-    """Margem de lucro — markup simples aplicado por ÚLTIMO, sobre o preço
-    já com PIS/COFINS e ICMS embutidos (não sobre o custo/impostos
-    isolados): a margem é a última camada antes do preço final cobrado do
-    cliente. Devolve (frete_total_novo, frete_sem_margem_lucro,
+def _aplicar_margem_lucro(
+    frete_total: float, total_custo_operacao: float, margem_lucro_pct: float
+) -> tuple[float, float, float]:
+    """Margem de lucro — valor fixo em R$ (margem_lucro_pct% do custo da
+    operação, NÃO um markup percentual sobre impostos/taxas/PIS-COFINS/
+    ICMS) somado por ÚLTIMO, depois de PIS/COFINS e ICMS já embutidos: a
+    margem é a última camada antes do preço final cobrado do cliente, mas
+    sua base de cálculo é só o custo da operação (ver total_custo_operacao
+    em calcular_orcamento/calcular_orcamento_fracionado), não o frete_total
+    corrente. Devolve (frete_total_novo, frete_sem_margem_lucro,
     valor_margem_lucro)."""
     frete_sem_margem_lucro = frete_total
-    frete_total = frete_sem_margem_lucro * (1 + margem_lucro_pct / 100)
-    valor_margem_lucro = frete_total - frete_sem_margem_lucro
+    valor_margem_lucro = total_custo_operacao * (margem_lucro_pct / 100)
+    frete_total = frete_sem_margem_lucro + valor_margem_lucro
     return frete_total, frete_sem_margem_lucro, valor_margem_lucro
+
+
+def _aplicar_piso_markup(
+    frete_total: float, total_impostos_taxas: float, base_piso: float
+) -> tuple[float, float, float]:
+    """Garante que o frete_total final (já com PIS/COFINS, ICMS e margem
+    de lucro aplicados) seja pelo menos MARKUP_MINIMO vezes base_piso
+    (custo da operação + impostos/taxas ORIGINAIS, antes de qualquer
+    imposto ou margem, ver calcular_orcamento). Se ficar abaixo, a
+    diferença é somada direto na linha de impostos/taxas e no
+    frete_total — sem passar de novo por PIS/COFINS/ICMS (o ajuste entra
+    depois deles, não antes). Devolve (frete_total_novo,
+    total_impostos_taxas_novo, ajuste_piso_markup) — ajuste é 0 quando o
+    frete_total já bate o piso sozinho."""
+    piso = base_piso * MARKUP_MINIMO
+    ajuste_piso_markup = max(0.0, piso - frete_total)
+    if ajuste_piso_markup > 0:
+        frete_total += ajuste_piso_markup
+        total_impostos_taxas += ajuste_piso_markup
+    return frete_total, total_impostos_taxas, ajuste_piso_markup
 
 
 def calcular_orcamento(
@@ -1190,6 +1275,8 @@ def calcular_orcamento(
     distancia_retorno: float = 0,
     prioridade_rota: str | None = None,
     custos_extras: list[dict] | None = None,
+    gris_pct: float | None = None,
+    ad_valorem_pct: float | None = None,
 ) -> dict:
     if peso <= 0:
         raise FreteInputError("Peso deve ser maior que zero.")
@@ -1214,6 +1301,14 @@ def calcular_orcamento(
         raise FreteInputError("Valor de pedágio não pode ser negativo.")
     if distancia_retorno < 0:
         raise FreteInputError("Distância de retorno não pode ser negativa.")
+    if gris_pct is not None:
+        piso_gris = _piso_taxa_customizavel(parametros, _NOME_TAXA_GRIS)
+        if gris_pct < piso_gris:
+            raise FreteInputError(f"GRIS ({gris_pct}%) abaixo do mínimo cadastrado ({piso_gris}%).")
+    if ad_valorem_pct is not None:
+        piso_ad_valorem = _piso_taxa_customizavel(parametros, _NOME_TAXA_AD_VALOREM)
+        if ad_valorem_pct < piso_ad_valorem:
+            raise FreteInputError(f"Ad Valorem ({ad_valorem_pct}%) abaixo do mínimo cadastrado ({piso_ad_valorem}%).")
     custos_extras = custos_extras or []
     for custo_extra in custos_extras:
         if custo_extra.get("categoria") not in CATEGORIAS_CUSTO_EXTRA:
@@ -1274,7 +1369,7 @@ def calcular_orcamento(
     custo_retorno = v.tarifa_km_retorno * distancia_retorno
 
     detalhe_custos_extras, custo_extra_total = _custos_extras_aplicados(custos_extras)
-    detalhe_taxas, custo_taxas_adicionais = _taxas_adicionais_aplicadas(p, valor_mercadoria)
+    detalhe_taxas, custo_taxas_adicionais = _taxas_adicionais_aplicadas(p, valor_mercadoria, gris_pct, ad_valorem_pct)
     detalhe_taxas_regionais, custo_taxas_regionais = _taxas_regionais_aplicadas(
         p, cidade_origem, cidade_destino, valor_mercadoria
     )
@@ -1341,17 +1436,22 @@ def calcular_orcamento(
         + custo_retorno
     )
 
-    # PIS/COFINS, ICMS e margem de lucro — aplicados em cascata "por
-    # dentro" (gross-up) sobre o frete_total apurado até aqui, nessa ordem
-    # fixa: PIS/COFINS primeiro, ICMS depois (incide sobre o frete já com
-    # PIS/COFINS embutido), e a margem de lucro por último, como markup
-    # simples sobre o preço já com os dois impostos embutidos (ver
-    # _aplicar_pis_cofins/_aplicar_icms/_aplicar_margem_lucro).
+    # PIS/COFINS e ICMS — aplicados em cascata "por dentro" (gross-up)
+    # sobre o frete_total apurado até aqui, PIS/COFINS primeiro, ICMS
+    # depois (incide sobre o frete já com PIS/COFINS embutido). A margem
+    # de lucro entra por último, mas seu VALOR (R$) é calculado só sobre
+    # total_custo_operacao (não sobre impostos/taxas/PIS-COFINS/ICMS) e
+    # somado ao frete_total corrente (ver _aplicar_margem_lucro).
     frete_total, frete_sem_pis_cofins, valor_pis_cofins, aliquota_pis_cofins_pct = _aplicar_pis_cofins(p, frete_total)
     frete_total, frete_sem_icms, valor_icms, icms_aplicavel, aliquota_icms_pct = _aplicar_icms(
         p, frete_total, cidade_origem, cidade_destino
     )
-    frete_total, frete_sem_margem_lucro, valor_margem_lucro = _aplicar_margem_lucro(frete_total, MARGEM_LUCRO_PADRAO)
+    frete_total, frete_sem_margem_lucro, valor_margem_lucro = _aplicar_margem_lucro(
+        frete_total, total_custo_operacao, MARGEM_LUCRO_PADRAO
+    )
+    frete_total, total_impostos_taxas, ajuste_piso_markup = _aplicar_piso_markup(
+        frete_total, total_impostos_taxas, total_custo_operacao + total_impostos_taxas
+    )
 
     return {
         "entrada": {
@@ -1424,6 +1524,7 @@ def calcular_orcamento(
             "balsa_outro_veiculo": balsa_outro_veiculo or None,
             "total_custo_operacao": round(total_custo_operacao, 2),
             "total_impostos_taxas": round(total_impostos_taxas, 2),
+            "ajuste_piso_markup": round(ajuste_piso_markup, 2),
             "margem_lucro_pct": MARGEM_LUCRO_PADRAO,
             "frete_sem_margem_lucro": round(frete_sem_margem_lucro, 2),
             "valor_margem_lucro": round(valor_margem_lucro, 2),
@@ -1457,6 +1558,8 @@ def calcular_orcamento_fracionado(
     pedagio: float = 0,
     prioridade_rota: str | None = None,
     custos_extras: list[dict] | None = None,
+    gris_pct: float | None = None,
+    ad_valorem_pct: float | None = None,
 ) -> dict:
     """Frete Fracionado -- mesma logica de calcular_orcamento pra tudo que
     nao eh o frete base (categoria/transporte/SLA, taxas adicionais e
@@ -1498,6 +1601,14 @@ def calcular_orcamento_fracionado(
         raise FreteInputError("Valor da mercadoria não pode ser negativo.")
     if pedagio < 0:
         raise FreteInputError("Valor de pedágio não pode ser negativo.")
+    if gris_pct is not None:
+        piso_gris = _piso_taxa_customizavel(parametros, _NOME_TAXA_GRIS)
+        if gris_pct < piso_gris:
+            raise FreteInputError(f"GRIS ({gris_pct}%) abaixo do mínimo cadastrado ({piso_gris}%).")
+    if ad_valorem_pct is not None:
+        piso_ad_valorem = _piso_taxa_customizavel(parametros, _NOME_TAXA_AD_VALOREM)
+        if ad_valorem_pct < piso_ad_valorem:
+            raise FreteInputError(f"Ad Valorem ({ad_valorem_pct}%) abaixo do mínimo cadastrado ({piso_ad_valorem}%).")
     custos_extras = custos_extras or []
     for custo_extra in custos_extras:
         if custo_extra.get("categoria") not in CATEGORIAS_CUSTO_EXTRA:
@@ -1532,7 +1643,7 @@ def calcular_orcamento_fracionado(
     frete_ajustado = frete_base * cat.multiplicador * transp.multiplicador * s.multiplicador
 
     detalhe_custos_extras, custo_extra_total = _custos_extras_aplicados(custos_extras)
-    detalhe_taxas, custo_taxas_adicionais = _taxas_adicionais_aplicadas(p, valor_mercadoria)
+    detalhe_taxas, custo_taxas_adicionais = _taxas_adicionais_aplicadas(p, valor_mercadoria, gris_pct, ad_valorem_pct)
     detalhe_taxas_regionais, custo_taxas_regionais = _taxas_regionais_aplicadas(
         p, cidade_origem, cidade_destino, valor_mercadoria
     )
@@ -1558,14 +1669,19 @@ def calcular_orcamento_fracionado(
     )
 
     # Mesma ordem de calcular_orcamento: PIS/COFINS e ICMS incidem sobre o
-    # custo da operação + impostos e taxas, e a margem de lucro é aplicada
-    # por último, sobre o preço já com os dois impostos embutidos (ver
-    # _aplicar_pis_cofins/_aplicar_icms/_aplicar_margem_lucro).
+    # custo da operação + impostos e taxas; a margem de lucro entra por
+    # último, mas seu valor (R$) é calculado só sobre total_custo_operacao
+    # (ver _aplicar_pis_cofins/_aplicar_icms/_aplicar_margem_lucro).
     frete_total, frete_sem_pis_cofins, valor_pis_cofins, aliquota_pis_cofins_pct = _aplicar_pis_cofins(p, frete_total)
     frete_total, frete_sem_icms, valor_icms, icms_aplicavel, aliquota_icms_pct = _aplicar_icms(
         p, frete_total, cidade_origem, cidade_destino
     )
-    frete_total, frete_sem_margem_lucro, valor_margem_lucro = _aplicar_margem_lucro(frete_total, MARGEM_LUCRO_PADRAO)
+    frete_total, frete_sem_margem_lucro, valor_margem_lucro = _aplicar_margem_lucro(
+        frete_total, total_custo_operacao, MARGEM_LUCRO_PADRAO
+    )
+    frete_total, total_impostos_taxas, ajuste_piso_markup = _aplicar_piso_markup(
+        frete_total, total_impostos_taxas, total_custo_operacao + total_impostos_taxas
+    )
 
     return {
         "entrada": {
@@ -1614,6 +1730,7 @@ def calcular_orcamento_fracionado(
             "balsa_outro_veiculo": balsa_outro_veiculo or None,
             "total_custo_operacao": round(total_custo_operacao, 2),
             "total_impostos_taxas": round(total_impostos_taxas, 2),
+            "ajuste_piso_markup": round(ajuste_piso_markup, 2),
             "margem_lucro_pct": MARGEM_LUCRO_PADRAO,
             "frete_sem_margem_lucro": round(frete_sem_margem_lucro, 2),
             "valor_margem_lucro": round(valor_margem_lucro, 2),

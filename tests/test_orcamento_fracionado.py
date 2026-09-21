@@ -4,6 +4,7 @@
 e do CRUD administrativo das faixas de peso/distância que alimentam o
 frete base dele (ver frete_service.calcular_orcamento_fracionado)."""
 
+import pytest
 from conftest import _login
 
 
@@ -57,6 +58,31 @@ def test_orcamento_fracionado_ignora_margem_lucro_pct_enviado_no_payload(client)
     r = client.post("/orcamento/fracionado", json=_payload(margem_lucro_pct=30))
     assert r.status_code == 200, r.text
     assert r.json()["calculos_intermediarios"]["margem_lucro_pct"] == 40
+
+
+def test_orcamento_fracionado_gris_pct_digitado_substitui_o_cadastrado(client):
+    r = client.post("/orcamento/fracionado", json=_payload(gris_pct=5.0))
+    assert r.status_code == 200, r.text
+    gris = next(t for t in r.json()["calculos_intermediarios"]["taxas_adicionais"] if t["nome"] == "GRIS")
+    assert gris["valor_configurado"] == pytest.approx(5.0)
+
+
+def test_orcamento_fracionado_gris_pct_abaixo_do_cadastrado_da_422(client):
+    r = client.post("/orcamento/fracionado", json=_payload(gris_pct=0.1))
+    assert r.status_code == 422
+    assert "GRIS" in r.json()["detail"]
+
+
+def test_orcamento_fracionado_piso_markup_minimo_ajusta_impostos_e_taxas(client):
+    # Mesmo mecanismo de test_orcamento_piso_markup_minimo_ajusta_impostos_e_taxas
+    # em test_main_api.py, aqui pro Fracionado.
+    r = client.post("/orcamento/fracionado", json=_payload(valor_mercadoria=100000, ad_valorem_pct=50.0))
+    assert r.status_code == 200, r.text
+    calc = r.json()["calculos_intermediarios"]
+    assert calc["ajuste_piso_markup"] > 0
+    base_piso = calc["total_custo_operacao"] + calc["total_impostos_taxas"] - calc["ajuste_piso_markup"]
+    piso = round(base_piso * 1.4, 2)
+    assert r.json()["resultado"]["frete_total"] == pytest.approx(piso, abs=0.05)
 
 
 def test_orcamento_fracionado_pis_cofins_configurado_acima_de_100_da_500(client):
