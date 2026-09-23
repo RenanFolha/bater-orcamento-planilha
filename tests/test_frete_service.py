@@ -1283,6 +1283,14 @@ def test_calcular_orcamento_nao_cobra_tarifa_de_estrada_na_travessia_de_balsa(pa
     assert calc["distancia_faturavel_km"] == 0
     assert calc["custo_km"] == pytest.approx(0.0)
     assert calc["custo_balsa"] == pytest.approx(7110.58)
+    # Balsa é custo de transporte de verdade (a travessia é parte do
+    # trajeto), não um "imposto" -- entra em total_custo_operacao, não em
+    # total_impostos_taxas (que fica só com a taxa adicional de GRIS, 1%
+    # de 1000 = 10). A margem de lucro (40%) incide por cima, então também
+    # cresce com a balsa: 40% de 7110,58 = 2844,23.
+    assert calc["total_custo_operacao"] == pytest.approx(7110.58)
+    assert calc["custo_taxas_adicionais"] == pytest.approx(10.0)
+    assert calc["valor_margem_lucro"] == pytest.approx(2844.23, abs=0.01)
 
 
 def test_calcular_orcamento_cobra_so_a_perna_rodoviaria_quando_ha_escala_por_balsa(parametros):

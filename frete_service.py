@@ -1438,16 +1438,18 @@ def calcular_orcamento(
 
     # Separa o frete_total (pré-impostos e pré-margem) em dois grupos pra
     # exibição: custo da operação (transporte em si — frete ajustado,
-    # coleta, entrega, pedágio, manutenção, retorno, custos extras) e
-    # impostos e taxas (taxas adicionais/regionais e taxa de balsa — tudo
-    # que já é chamado de "taxa" no cadastro). PIS/COFINS, ICMS e a margem
-    # de lucro ficam de fora daqui: são aplicados em cascata por cima
-    # desse total, ver mais abaixo.
+    # coleta, entrega, pedágio, manutenção, retorno, custos extras e a
+    # taxa de balsa, que é custo de transporte de verdade — a travessia é
+    # parte do trajeto, não um tributo) e impostos e taxas (taxas
+    # adicionais/regionais, cadastradas como "taxa" mas que incidem sobre
+    # o valor da mercadoria, não sobre o transporte em si). PIS/COFINS,
+    # ICMS e a margem de lucro ficam de fora daqui: são aplicados em
+    # cascata por cima desse total, ver mais abaixo.
     total_custo_operacao = (
         frete_ajustado + custo_coleta + custo_entrega_terceirizada
-        + custo_extra_total + pedagio + custo_manutencao + custo_retorno
+        + custo_extra_total + pedagio + custo_manutencao + custo_retorno + custo_balsa
     )
-    total_impostos_taxas = custo_taxas_adicionais + custo_taxas_regionais + custo_balsa
+    total_impostos_taxas = custo_taxas_adicionais + custo_taxas_regionais
 
     frete_total = (
         frete_ajustado
@@ -1688,12 +1690,13 @@ def calcular_orcamento_fracionado(
     )
 
     # Mesma separação de calcular_orcamento: custo da operação (frete
-    # ajustado, pedágio, custos extras) x impostos e taxas (taxas
-    # adicionais/regionais e balsa) -- PIS/COFINS, ICMS e margem de lucro
-    # ficam de fora (aplicados em cascata por cima, margem por último, ver
-    # abaixo).
-    total_custo_operacao = frete_ajustado + custo_extra_total + pedagio
-    total_impostos_taxas = custo_taxas_adicionais + custo_taxas_regionais + custo_balsa
+    # ajustado, pedágio, custos extras e a taxa de balsa, custo de
+    # transporte de verdade) x impostos e taxas (taxas adicionais/
+    # regionais, que incidem sobre o valor da mercadoria) -- PIS/COFINS,
+    # ICMS e margem de lucro ficam de fora (aplicados em cascata por cima,
+    # margem por último, ver abaixo).
+    total_custo_operacao = frete_ajustado + custo_extra_total + pedagio + custo_balsa
+    total_impostos_taxas = custo_taxas_adicionais + custo_taxas_regionais
 
     frete_total = (
         frete_ajustado

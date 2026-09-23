@@ -55,8 +55,9 @@ const MEMORIA_CALCULO_CAMPOS = [
   {chave: 'valor_tonelada_excedente', rotulo: 'Valor por tonelada excedente', tipo: 'brl'},
   {chave: 'custo_peso_excedente', rotulo: 'Custo do peso excedente', tipo: 'brl'},
   // Só presentes em orçamentos Fracionado (ver
-  // frete_service.calcular_orcamento_fracionado) -- ficam "—" nos
-  // orçamentos de Carreta Fechada, que não têm esses campos.
+  // frete_service.calcular_orcamento_fracionado) -- a linha some por
+  // completo nos orçamentos de Carreta Fechada, que não têm esses campos
+  // (ver renderizarMemoriaCalculo).
   {chave: 'faixa_peso_de', rotulo: '[Fracionado] Faixa de peso — de (kg)', tipo: 'kg'},
   {chave: 'faixa_peso_ate', rotulo: '[Fracionado] Faixa de peso — até (kg)', tipo: 'kg'},
   {chave: 'tarifa_base_peso', rotulo: '[Fracionado] Tarifa base da faixa de peso', tipo: 'brl'},
@@ -92,6 +93,9 @@ const MEMORIA_CALCULO_CAMPOS = [
   {header: 'Custo da operação'},
   {chave: 'custos_extras', rotulo: 'Custos extras aplicados', tipo: 'lista_custo_extra'},
   {chave: 'custo_extra_total', rotulo: 'Total de custos extras', tipo: 'brl'},
+  {chave: 'taxa_balsa', rotulo: 'Taxa de balsa aplicada', tipo: 'balsa'},
+  {chave: 'balsa_outro_veiculo', rotulo: 'Taxa de balsa cadastrada só p/ outro veículo', tipo: 'lista_veiculos'},
+  {chave: 'custo_balsa', rotulo: 'Custo de balsa', tipo: 'brl'},
   {chave: 'total_custo_operacao', rotulo: 'Total do custo da operação', tipo: 'brl'},
 
   {header: 'Impostos e taxas'},
@@ -99,9 +103,6 @@ const MEMORIA_CALCULO_CAMPOS = [
   {chave: 'custo_taxas_adicionais', rotulo: 'Total de taxas adicionais', tipo: 'brl'},
   {chave: 'taxas_regionais', rotulo: 'Taxa fluvial (RCA) aplicada', tipo: 'lista_taxa_regional'},
   {chave: 'custo_taxas_regionais', rotulo: 'Total de taxa fluvial (RCA)', tipo: 'brl'},
-  {chave: 'taxa_balsa', rotulo: 'Taxa de balsa aplicada', tipo: 'balsa'},
-  {chave: 'balsa_outro_veiculo', rotulo: 'Taxa de balsa cadastrada só p/ outro veículo', tipo: 'lista_veiculos'},
-  {chave: 'custo_balsa', rotulo: 'Custo de balsa', tipo: 'brl'},
   {chave: 'total_impostos_taxas', rotulo: 'Total de impostos e taxas', tipo: 'brl'},
 
   {header: 'PIS/COFINS'},
@@ -178,6 +179,12 @@ function renderizarMemoriaCalculo(data, containerId = 'bloco-memoria-calculo', c
     if(item.header){
       return `<div style="margin:12px 0 4px;font-size:10.5px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-dim);">${esc(item.header)}</div>`;
     }
+    // Campos exclusivos de um tipo de orçamento (ex: "[Fracionado] ..." só
+    // existe no resultado de calcular_orcamento_fracionado, custo_km só no
+    // de calcular_orcamento) nem entram como chave no outro tipo -- pula a
+    // linha inteira em vez de mostrar "—", pra não poluir a memória de
+    // cálculo com campos que não fazem sentido pro orçamento em questão.
+    if(!item.calculado && fonte[item.chave] === undefined) return '';
     const bruto = item.calculado ? item.calculado(fonte) : fonte[item.chave];
     const valor = _formatarValorMemoria(bruto, item.tipo);
     return `<div class="line"><span>${esc(item.rotulo)}</span><span>${esc(valor)}</span></div>`;
@@ -1213,13 +1220,42 @@ form.addEventListener('submit', async (ev) => {
       linhaTaxaBalsa.style.display = 'none';
     }
 
+    // GRIS e Ad Valorem (ver gris_pct/ad_valorem_pct) ganham linha própria
+    // em Impostos e taxas, em vez de ficarem só somados dentro de "Taxas
+    // adicionais" -- as outras taxas cadastradas (se houver) continuam
+    // juntas ali, sem repetir GRIS/Ad Valorem duas vezes na tela.
+    const taxasAdicionaisLista = calc.taxas_adicionais || [];
+    const taxaGris = taxasAdicionaisLista.find(t => t.nome.trim().toLowerCase() === 'gris');
+    const taxaAdValorem = taxasAdicionaisLista.find(t => t.nome.trim().toLowerCase() === 'ad valorem');
+    const outrasTaxasAdicionais = taxasAdicionaisLista.filter(t => {
+      const chave = t.nome.trim().toLowerCase();
+      return chave !== 'gris' && chave !== 'ad valorem';
+    });
+
+    const linhaGris = document.getElementById('linha-gris');
+    if(taxaGris && taxaGris.valor_aplicado > 0){
+      document.getElementById('d-gris').textContent = `${fmtBRL(taxaGris.valor_aplicado)} (${taxaGris.valor_configurado}%)`;
+      linhaGris.style.display = 'flex';
+    }else{
+      linhaGris.style.display = 'none';
+    }
+
+    const linhaAdValorem = document.getElementById('linha-ad-valorem');
+    if(taxaAdValorem && taxaAdValorem.valor_aplicado > 0){
+      document.getElementById('d-ad-valorem').textContent = `${fmtBRL(taxaAdValorem.valor_aplicado)} (${taxaAdValorem.valor_configurado}%)`;
+      linhaAdValorem.style.display = 'flex';
+    }else{
+      linhaAdValorem.style.display = 'none';
+    }
+
+    const custoOutrasTaxasAdicionais = outrasTaxasAdicionais.reduce((soma, t) => soma + t.valor_aplicado, 0);
     const linhaTaxas = document.getElementById('linha-taxas');
     const blocoDetalheTaxas = document.getElementById('bloco-detalhe-taxas');
-    if(calc.custo_taxas_adicionais > 0){
-      document.getElementById('d-taxas').textContent = fmtBRL(calc.custo_taxas_adicionais);
+    if(custoOutrasTaxasAdicionais > 0){
+      document.getElementById('d-taxas').textContent = fmtBRL(custoOutrasTaxasAdicionais);
       linhaTaxas.style.display = 'flex';
       const listaDetalhe = document.getElementById('lista-detalhe-taxas');
-      listaDetalhe.innerHTML = calc.taxas_adicionais.map(t => {
+      listaDetalhe.innerHTML = outrasTaxasAdicionais.map(t => {
         const rotulo = t.tipo === 'percentual' ? `${esc(t.nome)} (${t.valor_configurado}%)` : esc(t.nome);
         return `<div class="line"><span>${rotulo}</span><span>${fmtBRL(t.valor_aplicado)}</span></div>`;
       }).join('');
@@ -1709,12 +1745,33 @@ document.getElementById('frac-form-frete').addEventListener('submit', async (ev)
       linhaTaxaBalsa.style.display = 'flex';
     }else{ linhaTaxaBalsa.style.display = 'none'; }
 
+    const taxasAdicionaisLista = calc.taxas_adicionais || [];
+    const taxaGris = taxasAdicionaisLista.find(t => t.nome.trim().toLowerCase() === 'gris');
+    const taxaAdValorem = taxasAdicionaisLista.find(t => t.nome.trim().toLowerCase() === 'ad valorem');
+    const outrasTaxasAdicionais = taxasAdicionaisLista.filter(t => {
+      const chave = t.nome.trim().toLowerCase();
+      return chave !== 'gris' && chave !== 'ad valorem';
+    });
+
+    const linhaGris = document.getElementById('frac-linha-gris');
+    if(taxaGris && taxaGris.valor_aplicado > 0){
+      document.getElementById('frac-d-gris').textContent = `${fmtBRL(taxaGris.valor_aplicado)} (${taxaGris.valor_configurado}%)`;
+      linhaGris.style.display = 'flex';
+    }else{ linhaGris.style.display = 'none'; }
+
+    const linhaAdValorem = document.getElementById('frac-linha-ad-valorem');
+    if(taxaAdValorem && taxaAdValorem.valor_aplicado > 0){
+      document.getElementById('frac-d-ad-valorem').textContent = `${fmtBRL(taxaAdValorem.valor_aplicado)} (${taxaAdValorem.valor_configurado}%)`;
+      linhaAdValorem.style.display = 'flex';
+    }else{ linhaAdValorem.style.display = 'none'; }
+
+    const custoOutrasTaxasAdicionais = outrasTaxasAdicionais.reduce((soma, t) => soma + t.valor_aplicado, 0);
     const linhaTaxas = document.getElementById('frac-linha-taxas');
     const blocoDetalheTaxas = document.getElementById('frac-bloco-detalhe-taxas');
-    if(calc.custo_taxas_adicionais > 0){
-      document.getElementById('frac-d-taxas').textContent = fmtBRL(calc.custo_taxas_adicionais);
+    if(custoOutrasTaxasAdicionais > 0){
+      document.getElementById('frac-d-taxas').textContent = fmtBRL(custoOutrasTaxasAdicionais);
       linhaTaxas.style.display = 'flex';
-      document.getElementById('frac-lista-detalhe-taxas').innerHTML = calc.taxas_adicionais.map(t => {
+      document.getElementById('frac-lista-detalhe-taxas').innerHTML = outrasTaxasAdicionais.map(t => {
         const rotulo = t.tipo === 'percentual' ? `${esc(t.nome)} (${t.valor_configurado}%)` : esc(t.nome);
         return `<div class="line"><span>${rotulo}</span><span>${fmtBRL(t.valor_aplicado)}</span></div>`;
       }).join('');
