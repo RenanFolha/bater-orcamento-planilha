@@ -110,13 +110,6 @@ const MEMORIA_CALCULO_CAMPOS = [
   {chave: 'frete_sem_pis_cofins', rotulo: 'Frete sem PIS/COFINS', tipo: 'brl'},
   {chave: 'valor_pis_cofins', rotulo: 'Valor do PIS/COFINS (gross-up)', tipo: 'brl'},
 
-  {header: 'ICMS'},
-  {chave: 'uf_origem_icms', rotulo: 'UF de origem', tipo: 'texto'},
-  {chave: 'uf_destino_icms', rotulo: 'UF de destino', tipo: 'texto'},
-  {chave: 'aliquota_icms_pct', rotulo: 'Alíquota de ICMS', tipo: 'pct'},
-  {chave: 'frete_sem_icms', rotulo: 'Frete sem ICMS', tipo: 'brl'},
-  {chave: 'valor_icms', rotulo: 'Valor do ICMS (gross-up)', tipo: 'brl'},
-
   {header: 'Margem de lucro'},
   {chave: 'margem_lucro_pct', rotulo: 'Margem de lucro', tipo: 'pct'},
   {
@@ -126,8 +119,15 @@ const MEMORIA_CALCULO_CAMPOS = [
     // ao formato já usado pra multiplicador_categoria/transporte/sla.
     calculado: (fonte) => 1 + (fonte.margem_lucro_pct ?? 0) / 100,
   },
-  {chave: 'frete_sem_margem_lucro', rotulo: 'Frete sem margem de lucro (já com impostos)', tipo: 'brl'},
+  {chave: 'frete_sem_margem_lucro', rotulo: 'Frete sem margem de lucro (já com PIS/COFINS)', tipo: 'brl'},
   {chave: 'valor_margem_lucro', rotulo: 'Valor da margem de lucro', tipo: 'brl'},
+
+  {header: 'ICMS'},
+  {chave: 'uf_origem_icms', rotulo: 'UF de origem', tipo: 'texto'},
+  {chave: 'uf_destino_icms', rotulo: 'UF de destino', tipo: 'texto'},
+  {chave: 'aliquota_icms_pct', rotulo: 'Alíquota de ICMS', tipo: 'pct'},
+  {chave: 'frete_sem_icms', rotulo: 'Frete sem ICMS (já com margem de lucro)', tipo: 'brl'},
+  {chave: 'valor_icms', rotulo: 'Valor do ICMS (% simples somado por fora, não gross-up)', tipo: 'brl'},
   {chave: 'ajuste_piso_markup', rotulo: 'Ajuste pro markup mínimo de 1,4x', tipo: 'brl'},
 
   {header: 'Resultado'},
@@ -1307,7 +1307,7 @@ form.addEventListener('submit', async (ev) => {
     const linhaIcms = document.getElementById('linha-icms');
     if(calc.valor_icms > 0){
       document.getElementById('d-icms').textContent = fmtBRL(calc.valor_icms);
-      linhaIcms.title = `${calc.uf_origem_icms} → ${calc.uf_destino_icms} (${calc.aliquota_icms_pct}%, aplicado por dentro sobre ${fmtBRL(calc.frete_sem_icms)})`;
+      linhaIcms.title = `${calc.uf_origem_icms} → ${calc.uf_destino_icms} (${calc.aliquota_icms_pct}% somado por fora sobre ${fmtBRL(calc.frete_sem_icms)}, já com a margem de lucro embutida)`;
       linhaIcms.style.display = 'flex';
     }else{
       linhaIcms.style.display = 'none';
@@ -1315,13 +1315,13 @@ form.addEventListener('submit', async (ev) => {
 
     // Subtotais agrupados (ver frete_service.calcular_orcamento): custo da
     // operação (transporte em si) x impostos e taxas, depois PIS/COFINS e
-    // ICMS por cima dessa soma, e a margem de lucro só entra por último —
-    // markup sobre o preço já com os dois impostos embutidos, não sobre o
-    // custo isolado.
+    // a margem de lucro por cima dessa soma, e o ICMS entra por último —
+    // % simples sobre o preço já com a margem embutida, não sobre um
+    // custo intermediário antes do lucro.
     document.getElementById('d-total-operacao').textContent = fmtBRL(calc.total_custo_operacao);
     document.getElementById('d-total-impostos-taxas').textContent = fmtBRL(calc.total_impostos_taxas);
     document.getElementById('d-operacao-mais-impostos').textContent = fmtBRL(calc.frete_sem_pis_cofins);
-    document.getElementById('d-total-antes-margem').textContent = fmtBRL(calc.frete_sem_margem_lucro);
+    document.getElementById('d-total-antes-icms').textContent = fmtBRL(calc.frete_sem_icms);
 
     document.getElementById('d-total').textContent = fmtBRL(result.frete_total);
 
@@ -1817,14 +1817,14 @@ document.getElementById('frac-form-frete').addEventListener('submit', async (ev)
     const linhaIcms = document.getElementById('frac-linha-icms');
     if(calc.valor_icms > 0){
       document.getElementById('frac-d-icms').textContent = fmtBRL(calc.valor_icms);
-      linhaIcms.title = `${calc.uf_origem_icms} → ${calc.uf_destino_icms} (${calc.aliquota_icms_pct}%, aplicado por dentro sobre ${fmtBRL(calc.frete_sem_icms)})`;
+      linhaIcms.title = `${calc.uf_origem_icms} → ${calc.uf_destino_icms} (${calc.aliquota_icms_pct}% somado por fora sobre ${fmtBRL(calc.frete_sem_icms)}, já com a margem de lucro embutida)`;
       linhaIcms.style.display = 'flex';
     }else{ linhaIcms.style.display = 'none'; }
 
     document.getElementById('frac-d-total-operacao').textContent = fmtBRL(calc.total_custo_operacao);
     document.getElementById('frac-d-total-impostos-taxas').textContent = fmtBRL(calc.total_impostos_taxas);
     document.getElementById('frac-d-operacao-mais-impostos').textContent = fmtBRL(calc.frete_sem_pis_cofins);
-    document.getElementById('frac-d-total-antes-margem').textContent = fmtBRL(calc.frete_sem_margem_lucro);
+    document.getElementById('frac-d-total-antes-icms').textContent = fmtBRL(calc.frete_sem_icms);
 
     document.getElementById('frac-d-total').textContent = fmtBRL(result.frete_total);
 

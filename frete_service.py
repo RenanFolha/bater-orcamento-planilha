@@ -1211,24 +1211,20 @@ def _aplicar_pis_cofins(p: "ParametrosFrete", frete_total: float) -> tuple[float
 def _aplicar_icms(
     p: "ParametrosFrete", frete_total: float, cidade_origem: str | None, cidade_destino: str | None,
 ) -> tuple[float, float, float, "AliquotaIcms | None", float]:
-    """ICMS "por dentro" (gross-up): o frete_total acima (já com PIS/COFINS
-    embutido) ainda não tem o ICMS embutido, então achamos a alíquota da
-    rota (UF origem -> UF destino, ver aliquota_icms_aplicavel) e
-    recalculamos o frete de modo que ele já saia com o imposto incluso
-    (frete_com_icms * (1 - aliquota/100) = frete_sem_icms) — diferente de
-    um simples acréscimo percentual "por fora". Devolve (frete_total_novo,
-    frete_sem_icms, valor_icms, icms_aplicavel, aliquota_icms_pct)."""
+    """ICMS sobre o frete total: um acréscimo percentual simples (não
+    gross-up "por dentro" como o PIS/COFINS) somado por último, depois da
+    margem de lucro já embutida em frete_total — a alíquota da rota (UF
+    origem -> UF destino, ver aliquota_icms_aplicavel) incide sobre o
+    valor total já cobrado do cliente, não sobre um custo intermediário
+    antes da margem. Devolve (frete_total_novo, frete_sem_icms, valor_icms,
+    icms_aplicavel, aliquota_icms_pct)."""
     frete_sem_icms = frete_total
     valor_icms = 0.0
     icms_aplicavel = aliquota_icms_aplicavel(p, cidade_origem, cidade_destino)
     aliquota_icms_pct = icms_aplicavel.aliquota if icms_aplicavel else 0.0
     if aliquota_icms_pct > 0:
-        if aliquota_icms_pct >= 100:
-            raise FreteConfigError(
-                f"Alíquota de ICMS cadastrada ({aliquota_icms_pct}%) inválida — deve ser menor que 100%."
-            )
-        frete_total = frete_sem_icms / (1 - aliquota_icms_pct / 100)
-        valor_icms = frete_total - frete_sem_icms
+        valor_icms = frete_sem_icms * (aliquota_icms_pct / 100)
+        frete_total = frete_sem_icms + valor_icms
     return frete_total, frete_sem_icms, valor_icms, icms_aplicavel, aliquota_icms_pct
 
 
@@ -1464,18 +1460,20 @@ def calcular_orcamento(
         + custo_retorno
     )
 
-    # PIS/COFINS e ICMS — aplicados em cascata "por dentro" (gross-up)
-    # sobre o frete_total apurado até aqui, PIS/COFINS primeiro, ICMS
-    # depois (incide sobre o frete já com PIS/COFINS embutido). A margem
-    # de lucro entra por último, mas seu VALOR (R$) é calculado só sobre
-    # total_custo_operacao (não sobre impostos/taxas/PIS-COFINS/ICMS) e
-    # somado ao frete_total corrente (ver _aplicar_margem_lucro).
+    # PIS/COFINS "por dentro" (gross-up) sobre o frete_total apurado até
+    # aqui. A margem de lucro entra em seguida — seu VALOR (R$) é
+    # calculado só sobre total_custo_operacao (não sobre impostos/taxas/
+    # PIS-COFINS), somado ao frete_total corrente (ver
+    # _aplicar_margem_lucro). O ICMS é o último imposto, um % simples
+    # (não gross-up) sobre o frete total JÁ COM a margem embutida — a
+    # alíquota incide sobre o valor total cobrado do cliente, não sobre
+    # um custo intermediário antes do lucro (ver _aplicar_icms).
     frete_total, frete_sem_pis_cofins, valor_pis_cofins, aliquota_pis_cofins_pct = _aplicar_pis_cofins(p, frete_total)
-    frete_total, frete_sem_icms, valor_icms, icms_aplicavel, aliquota_icms_pct = _aplicar_icms(
-        p, frete_total, cidade_origem, cidade_destino
-    )
     frete_total, frete_sem_margem_lucro, valor_margem_lucro = _aplicar_margem_lucro(
         frete_total, total_custo_operacao, MARGEM_LUCRO_PADRAO
+    )
+    frete_total, frete_sem_icms, valor_icms, icms_aplicavel, aliquota_icms_pct = _aplicar_icms(
+        p, frete_total, cidade_origem, cidade_destino
     )
     frete_total, total_impostos_taxas, ajuste_piso_markup = _aplicar_piso_markup(
         frete_total, total_impostos_taxas, total_custo_operacao + total_impostos_taxas
@@ -1707,16 +1705,17 @@ def calcular_orcamento_fracionado(
         + pedagio
     )
 
-    # Mesma ordem de calcular_orcamento: PIS/COFINS e ICMS incidem sobre o
-    # custo da operação + impostos e taxas; a margem de lucro entra por
-    # último, mas seu valor (R$) é calculado só sobre total_custo_operacao
-    # (ver _aplicar_pis_cofins/_aplicar_icms/_aplicar_margem_lucro).
+    # Mesma ordem de calcular_orcamento: PIS/COFINS "por dentro" sobre o
+    # custo da operação + impostos e taxas, a margem de lucro em seguida
+    # (valor calculado só sobre total_custo_operacao), e o ICMS por
+    # último — % simples sobre o frete total já com a margem embutida
+    # (ver _aplicar_pis_cofins/_aplicar_margem_lucro/_aplicar_icms).
     frete_total, frete_sem_pis_cofins, valor_pis_cofins, aliquota_pis_cofins_pct = _aplicar_pis_cofins(p, frete_total)
-    frete_total, frete_sem_icms, valor_icms, icms_aplicavel, aliquota_icms_pct = _aplicar_icms(
-        p, frete_total, cidade_origem, cidade_destino
-    )
     frete_total, frete_sem_margem_lucro, valor_margem_lucro = _aplicar_margem_lucro(
         frete_total, total_custo_operacao, MARGEM_LUCRO_PADRAO
+    )
+    frete_total, frete_sem_icms, valor_icms, icms_aplicavel, aliquota_icms_pct = _aplicar_icms(
+        p, frete_total, cidade_origem, cidade_destino
     )
     frete_total, total_impostos_taxas, ajuste_piso_markup = _aplicar_piso_markup(
         frete_total, total_impostos_taxas, total_custo_operacao + total_impostos_taxas
