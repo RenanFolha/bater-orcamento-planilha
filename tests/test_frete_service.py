@@ -533,6 +533,23 @@ def test_ad_valorem_digitado_negativo_gera_erro(parametros):
         )
 
 
+def test_gris_cadastrado_como_fixo_bloqueia_o_campo_digitavel(parametros):
+    # GRIS cadastrado em R$ fixo (não % do valor da mercadoria) -- um %
+    # digitado no orçamento não tem como garantir que o resultado nunca
+    # fique abaixo desse valor fixo (bases diferentes), então a
+    # substituição é bloqueada por completo, não só limitada por um piso.
+    parametros.taxas_adicionais = [
+        t for t in parametros.taxas_adicionais if t.nome.strip().lower() != "gris"
+    ]
+    parametros.taxas_adicionais.append(fs.TaxaAdicional(nome="GRIS", tipo="fixo", valor=50.0))
+    with pytest.raises(fs.FreteInputError, match="GRIS.*fixo"):
+        fs.calcular_orcamento(
+            peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+            categoria="Geral", transporte="Rodoviário", sla="Padrão",
+            gris_pct=100.0,  # mesmo um valor alto -- ainda bloqueado, tipo errado
+        )
+
+
 def test_gris_e_ad_valorem_nao_informados_usa_cadastrado_sem_mudanca(parametros):
     # gris_pct/ad_valorem_pct=None (padrão) -- comportamento idêntico a
     # antes dessa funcionalidade existir.

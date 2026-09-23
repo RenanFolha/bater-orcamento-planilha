@@ -1074,13 +1074,29 @@ def _piso_taxa_customizavel(p: "ParametrosFrete", nome: str) -> float:
     """% mínimo (piso) pra um campo de taxa adicional digitável por
     orçamento (GRIS, Ad Valorem, ver _NOME_TAXA_GRIS/_NOME_TAXA_AD_VALOREM)
     -- o % cadastrado em Tabela de Preços pra essa taxa (0 se não houver
-    nenhuma cadastrada com esse nome, ou se a cadastrada for do tipo
-    'fixo' em vez de 'percentual')."""
+    nenhuma cadastrada com esse nome). Não chame pra uma taxa cadastrada
+    como 'fixo' (ver _taxa_customizavel_e_tipo_fixo primeiro) -- % e R$
+    fixo não são comparáveis, então esse piso não faz sentido nesse caso."""
     chave = nome.strip().lower()
     for taxa in p.taxas_adicionais:
         if taxa.nome.strip().lower() == chave:
-            return taxa.valor if taxa.tipo == "percentual" else 0.0
+            return taxa.valor
     return 0.0
+
+
+def _taxa_customizavel_e_tipo_fixo(p: "ParametrosFrete", nome: str) -> bool:
+    """True se já existe uma taxa cadastrada com esse nome (GRIS, Ad
+    Valorem) do tipo 'fixo' (R$, não %) — nesse caso o campo digitável por
+    orçamento (sempre um %, ver gris_pct/ad_valorem_pct) não tem como
+    garantir que o resultado nunca fique abaixo do valor cadastrado (bases
+    diferentes: % do valor da mercadoria vs. R$ fixo independente dele),
+    então a substituição é bloqueada — só é permitida quando a taxa
+    cadastrada é 'percentual' ou quando não há nenhuma com esse nome."""
+    chave = nome.strip().lower()
+    for taxa in p.taxas_adicionais:
+        if taxa.nome.strip().lower() == chave:
+            return taxa.tipo != "percentual"
+    return False
 
 
 def _taxas_adicionais_aplicadas(
@@ -1302,10 +1318,20 @@ def calcular_orcamento(
     if distancia_retorno < 0:
         raise FreteInputError("Distância de retorno não pode ser negativa.")
     if gris_pct is not None:
+        if _taxa_customizavel_e_tipo_fixo(parametros, _NOME_TAXA_GRIS):
+            raise FreteInputError(
+                "GRIS está cadastrado como valor fixo em Tabela de Preços — não é possível substituir por "
+                "um % digitado nesse orçamento."
+            )
         piso_gris = _piso_taxa_customizavel(parametros, _NOME_TAXA_GRIS)
         if gris_pct < piso_gris:
             raise FreteInputError(f"GRIS ({gris_pct}%) abaixo do mínimo cadastrado ({piso_gris}%).")
     if ad_valorem_pct is not None:
+        if _taxa_customizavel_e_tipo_fixo(parametros, _NOME_TAXA_AD_VALOREM):
+            raise FreteInputError(
+                "Ad Valorem está cadastrado como valor fixo em Tabela de Preços — não é possível substituir "
+                "por um % digitado nesse orçamento."
+            )
         piso_ad_valorem = _piso_taxa_customizavel(parametros, _NOME_TAXA_AD_VALOREM)
         if ad_valorem_pct < piso_ad_valorem:
             raise FreteInputError(f"Ad Valorem ({ad_valorem_pct}%) abaixo do mínimo cadastrado ({piso_ad_valorem}%).")
@@ -1602,10 +1628,20 @@ def calcular_orcamento_fracionado(
     if pedagio < 0:
         raise FreteInputError("Valor de pedágio não pode ser negativo.")
     if gris_pct is not None:
+        if _taxa_customizavel_e_tipo_fixo(parametros, _NOME_TAXA_GRIS):
+            raise FreteInputError(
+                "GRIS está cadastrado como valor fixo em Tabela de Preços — não é possível substituir por "
+                "um % digitado nesse orçamento."
+            )
         piso_gris = _piso_taxa_customizavel(parametros, _NOME_TAXA_GRIS)
         if gris_pct < piso_gris:
             raise FreteInputError(f"GRIS ({gris_pct}%) abaixo do mínimo cadastrado ({piso_gris}%).")
     if ad_valorem_pct is not None:
+        if _taxa_customizavel_e_tipo_fixo(parametros, _NOME_TAXA_AD_VALOREM):
+            raise FreteInputError(
+                "Ad Valorem está cadastrado como valor fixo em Tabela de Preços — não é possível substituir "
+                "por um % digitado nesse orçamento."
+            )
         piso_ad_valorem = _piso_taxa_customizavel(parametros, _NOME_TAXA_AD_VALOREM)
         if ad_valorem_pct < piso_ad_valorem:
             raise FreteInputError(f"Ad Valorem ({ad_valorem_pct}%) abaixo do mínimo cadastrado ({piso_ad_valorem}%).")
