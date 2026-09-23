@@ -89,9 +89,12 @@ const MEMORIA_CALCULO_CAMPOS = [
   {chave: 'distancia_retorno_km', rotulo: 'Distância de retorno vazio', tipo: 'km'},
   {chave: 'custo_retorno', rotulo: 'Custo de retorno vazio', tipo: 'brl'},
 
-  {header: 'Taxas'},
+  {header: 'Custo da operação'},
   {chave: 'custos_extras', rotulo: 'Custos extras aplicados', tipo: 'lista_custo_extra'},
   {chave: 'custo_extra_total', rotulo: 'Total de custos extras', tipo: 'brl'},
+  {chave: 'total_custo_operacao', rotulo: 'Total do custo da operação', tipo: 'brl'},
+
+  {header: 'Impostos e taxas'},
   {chave: 'taxas_adicionais', rotulo: 'Taxas adicionais aplicadas', tipo: 'lista_taxa'},
   {chave: 'custo_taxas_adicionais', rotulo: 'Total de taxas adicionais', tipo: 'brl'},
   {chave: 'taxas_regionais', rotulo: 'Taxa fluvial (RCA) aplicada', tipo: 'lista_taxa_regional'},
@@ -99,7 +102,6 @@ const MEMORIA_CALCULO_CAMPOS = [
   {chave: 'taxa_balsa', rotulo: 'Taxa de balsa aplicada', tipo: 'balsa'},
   {chave: 'balsa_outro_veiculo', rotulo: 'Taxa de balsa cadastrada só p/ outro veículo', tipo: 'lista_veiculos'},
   {chave: 'custo_balsa', rotulo: 'Custo de balsa', tipo: 'brl'},
-  {chave: 'total_custo_operacao', rotulo: 'Total do custo da operação', tipo: 'brl'},
   {chave: 'total_impostos_taxas', rotulo: 'Total de impostos e taxas', tipo: 'brl'},
 
   {header: 'PIS/COFINS'},
@@ -279,8 +281,16 @@ async function carregarTaxasCustomizaveis(){
 }
 
 function preencherCamposTaxasCustomizaveis(idGris, idAdValorem){
-  document.getElementById(idGris).value = taxasCustomizaveisCache.gris;
-  document.getElementById(idAdValorem).value = taxasCustomizaveisCache.adValorem;
+  const campoGris = document.getElementById(idGris);
+  const campoAdValorem = document.getElementById(idAdValorem);
+  // min = % cadastrado -- trava no navegador pra não deixar digitar um
+  // valor abaixo do cadastrado (a API também rejeita, ver
+  // fs._piso_taxa_customizavel/calcular_orcamento; isso aqui só evita a
+  // viagem até o servidor pra descobrir).
+  campoGris.min = taxasCustomizaveisCache.gris;
+  campoGris.value = taxasCustomizaveisCache.gris;
+  campoAdValorem.min = taxasCustomizaveisCache.adValorem;
+  campoAdValorem.value = taxasCustomizaveisCache.adValorem;
 }
 
 async function inicializarFormulario(){
