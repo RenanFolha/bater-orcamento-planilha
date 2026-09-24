@@ -93,9 +93,10 @@ const MEMORIA_CALCULO_CAMPOS = [
   {header: 'Custo da operação'},
   {chave: 'custos_extras', rotulo: 'Custos extras aplicados', tipo: 'lista_custo_extra'},
   {chave: 'custo_extra_total', rotulo: 'Total de custos extras', tipo: 'brl'},
-  {chave: 'taxa_balsa', rotulo: 'Taxa de balsa aplicada', tipo: 'balsa'},
+  {chave: 'taxa_balsa', rotulo: 'Taxa de balsa aplicada (ida)', tipo: 'balsa'},
+  {chave: 'taxa_balsa_retorno', rotulo: 'Taxa de balsa aplicada (retorno)', tipo: 'balsa'},
   {chave: 'balsa_outro_veiculo', rotulo: 'Taxa de balsa cadastrada só p/ outro veículo', tipo: 'lista_veiculos'},
-  {chave: 'custo_balsa', rotulo: 'Custo de balsa', tipo: 'brl'},
+  {chave: 'custo_balsa', rotulo: 'Custo de balsa (ida + retorno)', tipo: 'brl'},
   {chave: 'total_custo_operacao', rotulo: 'Total do custo da operação', tipo: 'brl'},
 
   {header: 'Impostos e taxas'},
@@ -1029,6 +1030,7 @@ form.addEventListener('submit', async (ev) => {
     distancia: parseFloat(document.getElementById('distancia').value),
     distancia_coleta: parseFloat(distanciaColetaInput.value) || 0,
     distancia_retorno: parseFloat(distanciaRetornoInput.value) || 0,
+    filial_retorno: destinoRetornoWrap.style.display !== 'none' ? destinoRetornoFilialSel.value : '',
     pedagio: valorMoedaParaNumero(pedagioInput.value),
     cidade_coleta: cidadeColetaResolvida,
     cidade_origem: cidadeOrigemResolvida,
@@ -1212,9 +1214,16 @@ form.addEventListener('submit', async (ev) => {
     }
 
     const linhaTaxaBalsa = document.getElementById('linha-taxa-balsa');
-    if(calc.custo_balsa > 0 && calc.taxa_balsa){
+    if(calc.custo_balsa > 0 && (calc.taxa_balsa || calc.taxa_balsa_retorno)){
       document.getElementById('d-taxa-balsa').textContent = fmtBRL(calc.custo_balsa);
-      linhaTaxaBalsa.title = `${calc.taxa_balsa.cidade_origem} → ${calc.taxa_balsa.cidade_destino} (${calc.taxa_balsa.veiculo})`;
+      // Balsa é cobrada em cada travessia (ida e volta são taxas
+      // cadastradas independentes, ver frete_service.calcular_orcamento)
+      // -- quando o retorno vazio também cruza balsa, o tooltip mostra
+      // os dois trechos, não só o da ida.
+      const trechos = [];
+      if(calc.taxa_balsa) trechos.push(`${calc.taxa_balsa.cidade_origem} → ${calc.taxa_balsa.cidade_destino} (${calc.taxa_balsa.veiculo})`);
+      if(calc.taxa_balsa_retorno) trechos.push(`retorno: ${calc.taxa_balsa_retorno.cidade_origem} → ${calc.taxa_balsa_retorno.cidade_destino} (${calc.taxa_balsa_retorno.veiculo})`);
+      linhaTaxaBalsa.title = trechos.join(' + ');
       linhaTaxaBalsa.style.display = 'flex';
     }else{
       linhaTaxaBalsa.style.display = 'none';

@@ -213,6 +213,45 @@ def test_manutencao_incide_tambem_sobre_retorno_vazio(parametros):
     assert calc["custo_retorno"] == pytest.approx(20.0)  # só o retorno: 40km * 0.5
 
 
+def test_retorno_que_cruza_balsa_cadastrada_cobra_taxa_de_balsa_em_vez_de_km(parametros):
+    # Taxa de balsa cadastrada pra volta (Manaus -> Belem) além da de ida
+    # (Belem -> Manaus, cadastrada em outro teste) -- a balsa é cobrada
+    # sempre que a rota passa por ela, ida OU volta (taxas direcionais
+    # independentes, ver _taxa_balsa_aplicavel). O retorno vazio, nesse
+    # caso, não roda km de estrada -- só a taxa de balsa é cobrada.
+    parametros.taxas_balsa = [
+        fs.TaxaBalsa(cidade_origem="Manaus", cidade_destino="Belém", veiculo="VUC", tipo="fixo", valor=500.0),
+    ]
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        cidade_origem="São Paulo, SP, Brasil", cidade_destino="Manaus, Amazonas, Brasil",
+        distancia_retorno=2096, filial_retorno="Belém",
+    )
+    calc = resultado["calculos_intermediarios"]
+    assert calc["custo_retorno"] == pytest.approx(0.0)  # não cobra km, só a balsa
+    assert calc["distancia_manutencao_km"] == 100  # só a ida, sem o retorno de balsa
+    assert calc["taxa_balsa_retorno"]["cidade_origem"] == "Manaus"
+    assert calc["taxa_balsa_retorno"]["cidade_destino"] == "Belém"
+    assert calc["custo_balsa"] == pytest.approx(500.0)  # só a volta (sem taxa cadastrada pra ida aqui)
+
+
+def test_retorno_sem_taxa_de_balsa_cadastrada_continua_cobrando_por_km(parametros):
+    # Mesmo com balsa na ida, sem uma taxa cadastrada especificamente pra
+    # essa direção de retorno (destino -> filial), o retorno continua
+    # cobrando por km normalmente -- só troca de comportamento quando bate
+    # uma taxa cadastrada.
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        distancia_retorno=40, filial_retorno="Filial Sem Balsa Cadastrada",
+    )
+    calc = resultado["calculos_intermediarios"]
+    assert calc["taxa_balsa_retorno"] is None
+    assert calc["custo_retorno"] == pytest.approx(20.0)  # 40km * 0.5 (tarifa_km_retorno do VUC)
+    assert calc["distancia_manutencao_km"] == 140
+
+
 def test_manutencao_incide_sobre_coleta_com_frota_propria(parametros):
     resultado = fs.calcular_orcamento(
         peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,

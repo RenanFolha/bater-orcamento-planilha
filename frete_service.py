@@ -1285,6 +1285,7 @@ def calcular_orcamento(
     valor_entrega_terceirizada: float = 0,
     pedagio: float = 0,
     distancia_retorno: float = 0,
+    filial_retorno: str | None = None,
     prioridade_rota: str | None = None,
     custos_extras: list[dict] | None = None,
     gris_pct: float | None = None,
@@ -1376,6 +1377,28 @@ def calcular_orcamento(
     frete_base = custo_km + custo_peso_excedente
     frete_ajustado = frete_base * cat.multiplicador * transp.multiplicador * s.multiplicador
 
+    detalhe_custos_extras, custo_extra_total = _custos_extras_aplicados(custos_extras)
+    detalhe_taxas, custo_taxas_adicionais = _taxas_adicionais_aplicadas(p, valor_mercadoria, gris_pct, ad_valorem_pct)
+    detalhe_taxas_regionais, custo_taxas_regionais = _taxas_regionais_aplicadas(
+        p, cidade_origem, cidade_destino, valor_mercadoria
+    )
+    custo_balsa, detalhe_balsa, balsa_outro_veiculo = _taxa_balsa_aplicada(
+        p, cidade_origem, cidade_destino, v.nome, valor_mercadoria
+    )
+    # Retorno vazio (destino -> filial de retorno) é uma travessia
+    # independente da ida: taxa de balsa é direcional (ver
+    # _taxa_balsa_aplicavel), então precisa da própria checagem, não
+    # reaproveita detalhe_balsa acima. Quando bate uma taxa cadastrada
+    # pra esse sentido, cobra ela — a balsa é cobrada sempre que a rota
+    # passa por ela, ida ou volta — e o trecho já não roda por estrada
+    # (ver distancia_retorno_faturavel abaixo).
+    custo_balsa_retorno, detalhe_balsa_retorno = 0.0, None
+    if distancia_retorno > 0 and filial_retorno:
+        custo_balsa_retorno, detalhe_balsa_retorno, _ = _taxa_balsa_aplicada(
+            p, cidade_destino, filial_retorno, v.nome, valor_mercadoria
+        )
+        custo_balsa += custo_balsa_retorno
+
     # Custo de manutenção (R$/km do veículo, sobre toda distância que a
     # frota própria realmente roda — ida com carga + coleta no cliente
     # (quando não é terceirizada) + volta vazia — já que o desgaste do
@@ -1385,19 +1408,16 @@ def calcular_orcamento(
     # do retorno vazio (R$/km, só sobre a distância entre o destino e a
     # filial mais próxima) — custos operacionais do veículo, não do frete
     # em si, então não entram nos multiplicadores de
-    # categoria/transporte/SLA.
+    # categoria/transporte/SLA. Quando o retorno cruza um corredor de
+    # balsa cadastrado (detalhe_balsa_retorno acima), não roda esse
+    # trecho de estrada — só a taxa de balsa é cobrada, mesma lógica da
+    # ida (ver distancia_faturavel).
     distancia_coleta_propria = 0 if coleta_terceirizada else distancia_coleta
-    custo_manutencao = v.tarifa_km_manutencao * (distancia_faturavel + distancia_coleta_propria + distancia_retorno)
-    custo_retorno = v.tarifa_km_retorno * distancia_retorno
-
-    detalhe_custos_extras, custo_extra_total = _custos_extras_aplicados(custos_extras)
-    detalhe_taxas, custo_taxas_adicionais = _taxas_adicionais_aplicadas(p, valor_mercadoria, gris_pct, ad_valorem_pct)
-    detalhe_taxas_regionais, custo_taxas_regionais = _taxas_regionais_aplicadas(
-        p, cidade_origem, cidade_destino, valor_mercadoria
+    distancia_retorno_faturavel = 0.0 if detalhe_balsa_retorno else distancia_retorno
+    custo_manutencao = v.tarifa_km_manutencao * (
+        distancia_faturavel + distancia_coleta_propria + distancia_retorno_faturavel
     )
-    custo_balsa, detalhe_balsa, balsa_outro_veiculo = _taxa_balsa_aplicada(
-        p, cidade_origem, cidade_destino, v.nome, valor_mercadoria
-    )
+    custo_retorno = v.tarifa_km_retorno * distancia_retorno_faturavel
 
     custo_coleta = 0.0
     coleta_fixa_aplicada = False
@@ -1533,7 +1553,9 @@ def calcular_orcamento(
             "entrega_terceirizada": entrega_terceirizada,
             "transportadora_entrega_nome": transportadora_entrega_nome if entrega_terceirizada else None,
             "pedagio": round(pedagio, 2),
-            "distancia_manutencao_km": round(distancia_faturavel + distancia_coleta_propria + distancia_retorno),
+            "distancia_manutencao_km": round(
+                distancia_faturavel + distancia_coleta_propria + distancia_retorno_faturavel
+            ),
             "custo_manutencao": round(custo_manutencao, 2),
             "tarifa_km_manutencao": v.tarifa_km_manutencao,
             "custo_retorno": round(custo_retorno, 2),
@@ -1546,6 +1568,7 @@ def calcular_orcamento(
             "taxas_regionais": detalhe_taxas_regionais,
             "custo_taxas_regionais": round(custo_taxas_regionais, 2),
             "taxa_balsa": detalhe_balsa,
+            "taxa_balsa_retorno": detalhe_balsa_retorno,
             "custo_balsa": round(custo_balsa, 2),
             "balsa_outro_veiculo": balsa_outro_veiculo or None,
             "total_custo_operacao": round(total_custo_operacao, 2),

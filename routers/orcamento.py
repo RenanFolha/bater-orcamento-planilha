@@ -33,6 +33,7 @@ def orcamento(payload: OrcamentoRequest):
             valor_entrega_terceirizada=payload.valor_entrega_terceirizada,
             pedagio=payload.pedagio,
             distancia_retorno=payload.distancia_retorno,
+            filial_retorno=payload.filial_retorno or None,
             prioridade_rota=payload.prioridade_rota or None,
             custos_extras=[c.model_dump() for c in payload.custos_extras],
             gris_pct=payload.gris_pct,
