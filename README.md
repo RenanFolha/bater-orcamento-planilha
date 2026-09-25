@@ -185,8 +185,11 @@ Em cima disso somam-se:
   coleta é terceirizada.
 - **Entrega terceirizada** — valor combinado com a transportadora,
   quando a entrega final não é feita pela frota própria.
-- **Pedágio** — na ordem de prioridade: (1) catálogo de praças cadastrado
-  (ver abaixo), (2) estimativa do Google Maps, (3) digitado manualmente.
+- **Pedágio** — quando há catálogo de praças cadastrado pra rota + eixos
+  do veículo (ver abaixo), usa esse valor (pré-preenchido a partir das
+  praças, editável). Sem praça cadastrada, ignora qualquer estimativa do
+  Google Maps ou valor digitado e aplica automaticamente 4% sobre o
+  `frete_ajustado` (`fs.PEDAGIO_PCT_FALLBACK`).
 - **Manutenção e retorno vazio** — `tarifa_km_manutencao × (distância +
   distância_coleta + distância_retorno)` (sobre toda distância que a
   frota própria roda: ida com carga, coleta no cliente — quando não é
@@ -233,10 +236,20 @@ ele atravessa:
 Quando `/geo/distancia` já sabe o veículo (peso/paletes/transporte
 informados) e existe um corredor cadastrado pra aquela rota, o pedágio
 calculado a partir do catálogo **sobrepõe** a estimativa do Google Maps
-— é mais preciso, porque vem do preço real da concessionária pro
-veículo escolhido, não de uma estimativa genérica. Sem corredor
-cadastrado, cai de volta pra estimativa do Google (ou fica em branco,
-editável manualmente, sem `GOOGLE_MAPS_API_KEY`).
+no formulário — é mais preciso, porque vem do preço real da
+concessionária pro veículo escolhido, não de uma estimativa genérica.
+
+Esse valor pré-preenchido é só a sugestão exibida no formulário: quem
+decide de fato é `calcular_orcamento`/`calcular_orcamento_fracionado`,
+que refazem a checagem do catálogo (`pedagio_rota_aplicavel`) no momento
+do cálculo. Se existe corredor cadastrado, usam o valor informado
+(vindo do catálogo, editável). **Se não existe corredor cadastrado pra
+aquela rota + eixos do veículo, ignoram qualquer valor informado
+(estimativa do Google Maps ou digitado manualmente) e aplicam
+automaticamente 4% sobre o `frete_ajustado`** (`fs.PEDAGIO_PCT_FALLBACK`,
+ver `fs._pedagio_aplicado`) — a memória de cálculo mostra
+`pedagio_estimado_pct` preenchido nesse caso, e o rótulo da linha de
+Pedágio na tela indica "(estimado, 4% do frete)".
 
 ## Como funciona o frete com filial/retirada/entrega
 
@@ -335,8 +348,11 @@ da requisição:
 - `pedagio`: valor do pedágio da rota (preenchido automaticamente por
   `/geo/distancia` — catálogo de praças cadastrado quando existir um
   corredor pra rota, senão a estimativa do Google Maps quando
-  `GOOGLE_MAPS_API_KEY` está configurada — ver seção "Pedágio: catálogo
-  de praças por número de eixos"; sempre editável na tela).
+  `GOOGLE_MAPS_API_KEY` está configurada; editável na tela). Só é de
+  fato usado quando existe corredor cadastrado — sem ele,
+  `calcular_orcamento` ignora esse valor e aplica 4% do `frete_ajustado`
+  automaticamente (ver seção "Pedágio: catálogo de praças por número de
+  eixos").
 - `distancia_retorno`: distância (km) do retorno vazio do veículo, do
   destino até a filial mais próxima — só quando a entrega é feita direto
   ao cliente pela frota própria. Cobrada pela `tarifa_km_retorno` do

@@ -83,6 +83,8 @@ const MEMORIA_CALCULO_CAMPOS = [
 
   {header: 'Pedágio, manutenção e retorno vazio'},
   {chave: 'pedagio', rotulo: 'Pedágio', tipo: 'brl'},
+  {chave: 'pedagio_estimado_pct', rotulo: 'Pedágio estimado (sem praça cadastrada)', tipo: 'pct'},
+  {chave: 'pedagio_pracas', rotulo: 'Praças de pedágio aplicadas', tipo: 'lista_veiculos'},
   {chave: 'tarifa_km_manutencao', rotulo: 'Tarifa de manutenção por km', tipo: 'brl'},
   {chave: 'distancia_manutencao_km', rotulo: 'Distância considerada na manutenção (ida + coleta própria + retorno)', tipo: 'km'},
   {chave: 'custo_manutencao', rotulo: 'Custo de manutenção', tipo: 'brl'},
@@ -1181,6 +1183,8 @@ form.addEventListener('submit', async (ev) => {
 
     const linhaPedagio = document.getElementById('linha-pedagio');
     if(calc.pedagio > 0){
+      linhaPedagio.querySelector('span').textContent = calc.pedagio_estimado_pct
+        ? `Pedágio (estimado, ${calc.pedagio_estimado_pct}% do frete)` : 'Pedágio';
       document.getElementById('d-pedagio').textContent = fmtBRL(calc.pedagio);
       linhaPedagio.style.display = 'flex';
     }else{
@@ -1737,6 +1741,8 @@ document.getElementById('frac-form-frete').addEventListener('submit', async (ev)
 
     const linhaPedagio = document.getElementById('frac-linha-pedagio');
     if(calc.pedagio > 0){
+      linhaPedagio.querySelector('span').textContent = calc.pedagio_estimado_pct
+        ? `Pedágio (estimado, ${calc.pedagio_estimado_pct}% do frete)` : 'Pedágio';
       document.getElementById('frac-d-pedagio').textContent = fmtBRL(calc.pedagio);
       linhaPedagio.style.display = 'flex';
     }else{ linhaPedagio.style.display = 'none'; }

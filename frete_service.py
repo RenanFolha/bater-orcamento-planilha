@@ -95,6 +95,12 @@ MARGEM_LUCRO_PADRAO = 40
 # não bastar.
 MARKUP_MINIMO = 1.4
 
+# Pedágio: quando não há praça cadastrada pro corredor da rota + eixos do
+# veículo (ver pedagio_rota_aplicavel), aplica esse % sobre o frete_ajustado
+# como estimativa padrão em vez de confiar só na estimativa genérica do
+# Google Maps ou deixar em R$ 0 (ver _pedagio_aplicado).
+PEDAGIO_PCT_FALLBACK = 4.0
+
 # Nomes de taxas adicionais que podem ser digitadas por orçamento (ver
 # gris_pct/ad_valorem_pct em calcular_orcamento/calcular_orcamento_fracionado
 # e _taxas_adicionais_aplicadas) -- o % digitado substitui o % cadastrado em
@@ -1188,6 +1194,24 @@ def _taxa_balsa_aplicada(
     return custo_balsa, detalhe_balsa, balsa_outro_veiculo
 
 
+def _pedagio_aplicado(
+    p: "ParametrosFrete", cidade_origem: str | None, cidade_destino: str | None,
+    numero_eixos: int, frete_ajustado: float, pedagio_informado: float,
+) -> tuple[float, bool, list[str] | None]:
+    """Valor de pedágio a cobrar: quando há praça cadastrada pro corredor
+    da rota + eixos do veículo (ver pedagio_rota_aplicavel), usa o valor
+    informado (pré-preenchido na busca de distância a partir dessas
+    praças, editável). Sem praça cadastrada, ignora o valor informado
+    (estimativa genérica do Google Maps, ou manual) e aplica
+    PEDAGIO_PCT_FALLBACK% sobre o frete_ajustado. Devolve (pedagio,
+    veio_de_estimativa_pct, praças usadas quando veio de cadastro)."""
+    achado = pedagio_rota_aplicavel(p, cidade_origem, cidade_destino, numero_eixos)
+    if achado is not None:
+        _total, pracas_usadas = achado
+        return pedagio_informado, False, pracas_usadas
+    return round(frete_ajustado * PEDAGIO_PCT_FALLBACK / 100, 2), True, None
+
+
 def _aplicar_pis_cofins(p: "ParametrosFrete", frete_total: float) -> tuple[float, float, float, float]:
     """PIS/COFINS "por dentro" (gross-up) sobre o frete_total apurado até
     aqui, com alíquota federal única (não varia por UF, ver
@@ -1377,6 +1401,10 @@ def calcular_orcamento(
     frete_base = custo_km + custo_peso_excedente
     frete_ajustado = frete_base * cat.multiplicador * transp.multiplicador * s.multiplicador
 
+    pedagio, pedagio_estimado_pct, pedagio_pracas = _pedagio_aplicado(
+        p, cidade_origem, cidade_destino, v.numero_eixos, frete_ajustado, pedagio
+    )
+
     detalhe_custos_extras, custo_extra_total = _custos_extras_aplicados(custos_extras)
     detalhe_taxas, custo_taxas_adicionais = _taxas_adicionais_aplicadas(p, valor_mercadoria, gris_pct, ad_valorem_pct)
     detalhe_taxas_regionais, custo_taxas_regionais = _taxas_regionais_aplicadas(
@@ -1553,6 +1581,8 @@ def calcular_orcamento(
             "entrega_terceirizada": entrega_terceirizada,
             "transportadora_entrega_nome": transportadora_entrega_nome if entrega_terceirizada else None,
             "pedagio": round(pedagio, 2),
+            "pedagio_estimado_pct": PEDAGIO_PCT_FALLBACK if pedagio_estimado_pct else None,
+            "pedagio_pracas": pedagio_pracas,
             "distancia_manutencao_km": round(
                 distancia_faturavel + distancia_coleta_propria + distancia_retorno_faturavel
             ),
@@ -1701,6 +1731,10 @@ def calcular_orcamento_fracionado(
     frete_base = custo_base_peso + custo_base_distancia
     frete_ajustado = frete_base * cat.multiplicador * transp.multiplicador * s.multiplicador
 
+    pedagio, pedagio_estimado_pct, pedagio_pracas = _pedagio_aplicado(
+        p, cidade_origem, cidade_destino, v.numero_eixos, frete_ajustado, pedagio
+    )
+
     detalhe_custos_extras, custo_extra_total = _custos_extras_aplicados(custos_extras)
     detalhe_taxas, custo_taxas_adicionais = _taxas_adicionais_aplicadas(p, valor_mercadoria, gris_pct, ad_valorem_pct)
     detalhe_taxas_regionais, custo_taxas_regionais = _taxas_regionais_aplicadas(
@@ -1780,6 +1814,8 @@ def calcular_orcamento_fracionado(
             "multiplicador_sla": s.multiplicador,
             "frete_ajustado": round(frete_ajustado, 2),
             "pedagio": round(pedagio, 2),
+            "pedagio_estimado_pct": PEDAGIO_PCT_FALLBACK if pedagio_estimado_pct else None,
+            "pedagio_pracas": pedagio_pracas,
             "custos_extras": detalhe_custos_extras or None,
             "custo_extra_total": round(custo_extra_total, 2),
             "taxas_adicionais": detalhe_taxas,

@@ -78,11 +78,17 @@ def test_calculo_basico_sem_coleta(parametros):
     assert calc["frete_ajustado"] == pytest.approx(200.0)
     assert calc["custo_manutencao"] == pytest.approx(10.0)
     assert calc["custo_taxas_adicionais"] == pytest.approx(10.0)
-    # custo da operação=210 (frete_ajustado=200 + custo_manutencao=10, SEM
-    # a taxa adicional) + impostos/taxas=10 + margem=40% de 210=84 -> 304,
-    # mas o piso de markup mínimo (1.4x de custo+taxas=220 -> 308) exige
-    # mais 4 de ajuste (ver test_piso_markup_minimo_ajusta_taxas_pra_bater_1_4x)
-    assert resultado["resultado"]["frete_total"] == pytest.approx(308.0)
+    # sem praça de pedágio cadastrada (veículos de teste não têm
+    # numero_eixos) -> cai no fallback de 4% do frete_ajustado (200 * 0.04
+    # = 8, ver fs.PEDAGIO_PCT_FALLBACK/_pedagio_aplicado)
+    assert calc["pedagio"] == pytest.approx(8.0)
+    assert calc["pedagio_estimado_pct"] == pytest.approx(4.0)
+    # custo da operação=218 (frete_ajustado=200 + custo_manutencao=10 +
+    # pedagio=8, SEM a taxa adicional) + impostos/taxas=10 + margem=40% de
+    # 218=87,2 -> 315,2, mas o piso de markup mínimo (1.4x de custo+taxas=
+    # 228 -> 319,2) exige mais 4 de ajuste (ver
+    # test_piso_markup_minimo_ajusta_taxas_pra_bater_1_4x)
+    assert resultado["resultado"]["frete_total"] == pytest.approx(319.2)
     assert calc["faixa_km_aplicada"] is False
     assert calc["tarifa_km_veiculo"] == pytest.approx(2.0)  # tarifa_km fixa do VUC, sem faixa cadastrada
 
@@ -104,7 +110,7 @@ def test_rota_obrigatoria_aparece_na_memoria_de_calculo(parametros):
         prioridade_rota="Belem",
     )
     assert resultado["entrada"]["rota_obrigatoria"] == "Belem"
-    assert resultado["resultado"]["frete_total"] == pytest.approx(308.0)  # ver test_calculo_basico_sem_coleta
+    assert resultado["resultado"]["frete_total"] == pytest.approx(319.2)  # ver test_calculo_basico_sem_coleta
 
 
 def test_peso_dentro_da_faixa_do_veiculo_nao_gera_excedente(parametros):
@@ -457,17 +463,19 @@ def test_margem_lucro_e_40_por_cento_so_do_custo_da_operacao(parametros):
         categoria="Geral", transporte="Rodoviário", sla="Padrão",
     )
     calc = resultado["calculos_intermediarios"]
-    # custo da operação = frete_ajustado=200 + custo_manutencao=10 = 210
-    # (a taxa adicional de 10 é "impostos e taxas", fora da base da margem)
-    assert calc["total_custo_operacao"] == pytest.approx(210.0)
-    # frete antes da margem = custo da operação (210) + impostos/taxas (10) = 220
-    assert calc["frete_sem_margem_lucro"] == pytest.approx(220.0)
-    assert calc["valor_margem_lucro"] == pytest.approx(84.0)  # 210 * 0.40, não 220 * 0.40
-    # 220 + 84 = 304, mas o piso de markup mínimo (1.4x de 220 = 308) ainda
-    # exige mais 4 de ajuste na linha de taxas (ver
+    # custo da operação = frete_ajustado=200 + custo_manutencao=10 +
+    # pedagio=8 (fallback de 4% sem praça cadastrada, ver
+    # test_calculo_basico_sem_coleta) = 218 (a taxa adicional de 10 é
+    # "impostos e taxas", fora da base da margem)
+    assert calc["total_custo_operacao"] == pytest.approx(218.0)
+    # frete antes da margem = custo da operação (218) + impostos/taxas (10) = 228
+    assert calc["frete_sem_margem_lucro"] == pytest.approx(228.0)
+    assert calc["valor_margem_lucro"] == pytest.approx(87.2)  # 218 * 0.40, não 228 * 0.40
+    # 228 + 87,2 = 315,2, mas o piso de markup mínimo (1.4x de 228 = 319,2)
+    # ainda exige mais 4 de ajuste na linha de taxas (ver
     # test_piso_markup_minimo_ajusta_taxas_pra_bater_1_4x)
     assert calc["ajuste_piso_markup"] == pytest.approx(4.0)
-    assert resultado["resultado"]["frete_total"] == pytest.approx(308.0)
+    assert resultado["resultado"]["frete_total"] == pytest.approx(319.2)
 
 
 def test_margem_lucro_padrao_e_40_por_cento(parametros):
@@ -498,13 +506,17 @@ def test_piso_markup_minimo_ajusta_taxas_pra_bater_1_4x(parametros):
         categoria="Geral", transporte="Rodoviário", sla="Padrão",
     )
     calc = resultado["calculos_intermediarios"]
-    assert calc["total_custo_operacao"] == pytest.approx(210.0)
+    # custo da operação = 210 + pedagio=8 (fallback de 4% sem praça
+    # cadastrada, ver test_calculo_basico_sem_coleta) = 218
+    assert calc["total_custo_operacao"] == pytest.approx(218.0)
     # impostos/taxas calculado = 10 (GRIS) + 2000 (Seguro Extra) = 2010;
-    # piso = (210 + 2010) * 1.4 = 3108; margem fixa (84) só chega em 2304
-    # (210+2010+84) -- faltam 804, somados na linha de taxas (2010 -> 2814)
+    # piso = (218 + 2010) * 1.4 = 3119,2; margem fixa (218*0.40=87,2) só
+    # chega em 2315,2 (218+2010+87,2) -- faltam 804, somados na linha de
+    # taxas (2010 -> 2814, o ajuste não muda com o pedágio: depende só das
+    # taxas cadastradas, 0.4 * 2010 = 804)
     assert calc["ajuste_piso_markup"] == pytest.approx(804.0)
     assert calc["total_impostos_taxas"] == pytest.approx(2814.0)
-    assert resultado["resultado"]["frete_total"] == pytest.approx(3108.0)
+    assert resultado["resultado"]["frete_total"] == pytest.approx(3119.2)
 
 
 def test_piso_markup_minimo_nao_ajusta_quando_ja_bate_sozinho(parametros):
@@ -829,10 +841,11 @@ def test_aliquota_icms_aplica_percentual_simples_sobre_frete_com_margem(parametr
     # ICMS não é mais gross-up "por dentro" -- é um % simples somado por
     # fora, calculado sobre o frete total JÁ COM a margem de lucro
     # embutida (a alíquota incide sobre o valor total cobrado do
-    # cliente). Sem PIS/COFINS aqui: custo da operação + impostos/taxas =
-    # 220; margem (40% de 210, só do custo da operação) = 84; frete antes
-    # do ICMS = 220 + 84 = 304; ICMS 12% de 304 = 36,48; frete total =
-    # 304 + 36,48 = 340,48.
+    # cliente). Sem PIS/COFINS aqui: custo da operação (210 + pedagio=8
+    # de fallback, ver test_calculo_basico_sem_coleta) + impostos/taxas =
+    # 228; margem (40% de 218, só do custo da operação) = 87,2; frete
+    # antes do ICMS = 228 + 87,2 = 315,2; ICMS 12% de 315,2 = 37,824;
+    # frete total = 315,2 + 37,824 = 353,024.
     parametros.aliquotas_icms.append(fs.AliquotaIcms(estado_origem="SP", estado_destino="RJ", aliquota=12.0))
     resultado = fs.calcular_orcamento(
         peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
@@ -841,10 +854,10 @@ def test_aliquota_icms_aplica_percentual_simples_sobre_frete_com_margem(parametr
     )
     calc = resultado["calculos_intermediarios"]
     assert calc["aliquota_icms_pct"] == pytest.approx(12.0)
-    assert calc["valor_margem_lucro"] == pytest.approx(84.0, abs=0.01)  # 210 * 0.40
-    assert calc["frete_sem_icms"] == pytest.approx(304.0, abs=0.01)  # já com a margem
-    assert calc["valor_icms"] == pytest.approx(36.48, abs=0.01)  # 12% de 304, não gross-up
-    assert resultado["resultado"]["frete_total"] == pytest.approx(340.48, abs=0.01)
+    assert calc["valor_margem_lucro"] == pytest.approx(87.2, abs=0.01)  # 218 * 0.40
+    assert calc["frete_sem_icms"] == pytest.approx(315.2, abs=0.01)  # já com a margem
+    assert calc["valor_icms"] == pytest.approx(37.82, abs=0.01)  # 12% de 315,2, não gross-up
+    assert resultado["resultado"]["frete_total"] == pytest.approx(353.02, abs=0.01)
 
 
 def test_aliquota_icms_resolve_uf_da_filial_quando_origem_e_so_o_nome(parametros):
@@ -900,13 +913,14 @@ def test_icms_aliquota_de_100_por_cento_nao_gera_erro(parametros):
 
 
 def test_pis_cofins_aplica_gross_up_no_frete_total(parametros):
-    # Mesmo raciocínio do gross-up de ICMS: o frete sem imposto (220 de
-    # custo da operação + impostos e taxas, ainda sem margem de lucro)
-    # precisa continuar sendo 90,75% do frete com PIS/COFINS quando a
-    # alíquota é 9,25% -- 220 / (1 - 0,0925), não um acréscimo simples
-    # "por fora". A margem de lucro (40% padrão) entra só depois, mas seu
-    # valor em R$ é calculado só sobre o custo da operação (210), não
-    # sobre esse valor já com o imposto embutido.
+    # Mesmo raciocínio do gross-up de ICMS: o frete sem imposto (228 de
+    # custo da operação -- 210 + pedagio=8 de fallback, ver
+    # test_calculo_basico_sem_coleta -- + impostos e taxas, ainda sem
+    # margem de lucro) precisa continuar sendo 90,75% do frete com
+    # PIS/COFINS quando a alíquota é 9,25% -- 228 / (1 - 0,0925), não um
+    # acréscimo simples "por fora". A margem de lucro (40% padrão) entra
+    # só depois, mas seu valor em R$ é calculado só sobre o custo da
+    # operação (218), não sobre esse valor já com o imposto embutido.
     parametros.aliquota_pis_cofins = 9.25
     resultado = fs.calcular_orcamento(
         peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
@@ -914,13 +928,13 @@ def test_pis_cofins_aplica_gross_up_no_frete_total(parametros):
         cidade_origem="São Paulo, SP, Brasil", cidade_destino="Curitiba, PR, Brasil",
     )
     calc = resultado["calculos_intermediarios"]
-    esperado = 220.0 / (1 - 0.0925)  # == 220 / 0.9075
-    assert calc["frete_sem_pis_cofins"] == pytest.approx(220.0)
+    esperado = 228.0 / (1 - 0.0925)  # == 228 / 0.9075
+    assert calc["frete_sem_pis_cofins"] == pytest.approx(228.0)
     assert calc["aliquota_pis_cofins_pct"] == pytest.approx(9.25)
-    assert calc["valor_pis_cofins"] == pytest.approx(esperado - 220.0, abs=0.01)
+    assert calc["valor_pis_cofins"] == pytest.approx(esperado - 228.0, abs=0.01)
     assert calc["frete_sem_margem_lucro"] == pytest.approx(esperado, abs=0.01)
-    assert calc["valor_margem_lucro"] == pytest.approx(84.0, abs=0.01)  # 210 * 0.40
-    assert resultado["resultado"]["frete_total"] == pytest.approx(esperado + 84.0, abs=0.01)
+    assert calc["valor_margem_lucro"] == pytest.approx(87.2, abs=0.01)  # 218 * 0.40
+    assert resultado["resultado"]["frete_total"] == pytest.approx(esperado + 87.2, abs=0.01)
 
 
 def test_pis_cofins_aliquota_maior_ou_igual_a_100_gera_erro_de_configuracao(parametros):
@@ -935,10 +949,11 @@ def test_pis_cofins_aliquota_maior_ou_igual_a_100_gera_erro_de_configuracao(para
 def test_pis_cofins_depois_margem_depois_icms_nessa_ordem(parametros):
     # Ordem fixa: PIS/COFINS primeiro (gross-up "por dentro" sobre o
     # custo da operação + impostos e taxas), a margem de lucro em
-    # seguida (valor calculado só sobre o custo da operação, 210 * 0.40 =
-    # 84), e o ICMS por último -- % simples somado por fora sobre o
-    # frete total já com a margem embutida, não sobre o custo
-    # intermediário antes do lucro.
+    # seguida (valor calculado só sobre o custo da operação, 218 * 0.40 =
+    # 87,2 -- 210 + pedagio=8 de fallback, ver
+    # test_calculo_basico_sem_coleta), e o ICMS por último -- % simples
+    # somado por fora sobre o frete total já com a margem embutida, não
+    # sobre o custo intermediário antes do lucro.
     parametros.aliquota_pis_cofins = 9.25
     parametros.aliquotas_icms.append(fs.AliquotaIcms(estado_origem="SP", estado_destino="RJ", aliquota=12.0))
     resultado = fs.calcular_orcamento(
@@ -947,12 +962,12 @@ def test_pis_cofins_depois_margem_depois_icms_nessa_ordem(parametros):
         cidade_origem="São Paulo, SP, Brasil", cidade_destino="Rio de Janeiro, RJ, Brasil",
     )
     calc = resultado["calculos_intermediarios"]
-    frete_com_pis_cofins = 220.0 / (1 - 0.0925)
-    frete_com_margem = frete_com_pis_cofins + 84.0  # margem = 210 * 0.40
+    frete_com_pis_cofins = 228.0 / (1 - 0.0925)
+    frete_com_margem = frete_com_pis_cofins + 87.2  # margem = 218 * 0.40
     icms_esperado = frete_com_margem * 0.12
-    assert calc["frete_sem_pis_cofins"] == pytest.approx(220.0)
+    assert calc["frete_sem_pis_cofins"] == pytest.approx(228.0)
     assert calc["frete_sem_margem_lucro"] == pytest.approx(frete_com_pis_cofins, abs=0.01)
-    assert calc["valor_margem_lucro"] == pytest.approx(84.0, abs=0.01)
+    assert calc["valor_margem_lucro"] == pytest.approx(87.2, abs=0.01)
     assert calc["frete_sem_icms"] == pytest.approx(frete_com_margem, abs=0.01)
     assert calc["valor_icms"] == pytest.approx(icms_esperado, abs=0.01)
     assert resultado["resultado"]["frete_total"] == pytest.approx(frete_com_margem + icms_esperado, abs=0.01)
@@ -967,7 +982,7 @@ def test_sem_aliquota_pis_cofins_frete_total_fica_igual(parametros):
     calc = resultado["calculos_intermediarios"]
     assert calc["aliquota_pis_cofins_pct"] == pytest.approx(0.0)
     assert calc["valor_pis_cofins"] == pytest.approx(0.0)
-    assert resultado["resultado"]["frete_total"] == pytest.approx(308.0)  # ver test_calculo_basico_sem_coleta
+    assert resultado["resultado"]["frete_total"] == pytest.approx(319.2)  # ver test_calculo_basico_sem_coleta
 
 
 def test_sem_aliquota_cadastrada_frete_total_fica_igual(parametros):
@@ -979,7 +994,7 @@ def test_sem_aliquota_cadastrada_frete_total_fica_igual(parametros):
     calc = resultado["calculos_intermediarios"]
     assert calc["aliquota_icms_pct"] == pytest.approx(0.0)
     assert calc["valor_icms"] == pytest.approx(0.0)
-    assert resultado["resultado"]["frete_total"] == pytest.approx(308.0)  # ver test_calculo_basico_sem_coleta
+    assert resultado["resultado"]["frete_total"] == pytest.approx(319.2)  # ver test_calculo_basico_sem_coleta
 
 
 def test_coleta_fixa_avisa_outro_veiculo_quando_nao_bate(parametros):
@@ -1246,6 +1261,42 @@ def test_pedagio_rota_sem_numero_de_eixos_retorna_none(parametros):
     parametros.pedagios_rota = [fs.PedagioRota("Curitiba", "Florianópolis", 1)]
     achado = fs.pedagio_rota_aplicavel(parametros, "Curitiba, PR, Brasil", "Florianópolis, SC, Brasil", 0)
     assert achado is None
+
+
+def test_pedagio_aplicado_usa_valor_informado_quando_ha_praca_cadastrada(parametros):
+    # Com praça cadastrada pro corredor + eixos do veículo, o pedágio
+    # informado (pré-preenchido na busca de distância a partir dessa
+    # praça, editável) prevalece -- não entra o fallback de 4%.
+    parametros.veiculos["vuc"].numero_eixos = 2
+    parametros.pracas_pedagio = {1: fs.PracaPedagio(1, "Praça 5", "BR-101", "ViaSul", {2: 50.0})}
+    parametros.pedagios_rota = [fs.PedagioRota("São Paulo", "Curitiba", 1)]
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        cidade_origem="São Paulo, SP, Brasil", cidade_destino="Curitiba, PR, Brasil",
+        pedagio=99.0,
+    )
+    calc = resultado["calculos_intermediarios"]
+    assert calc["pedagio"] == pytest.approx(99.0)
+    assert calc["pedagio_estimado_pct"] is None
+    assert calc["pedagio_pracas"] == ["Praça 5"]
+
+
+def test_pedagio_aplicado_cai_no_fallback_de_4_por_cento_sem_praca_cadastrada(parametros):
+    # Sem corredor de pedágio cadastrado pra rota, ignora o valor
+    # informado (estimativa genérica do Google Maps, ou manual) e aplica
+    # PEDAGIO_PCT_FALLBACK (4%) sobre o frete_ajustado.
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        cidade_origem="São Paulo, SP, Brasil", cidade_destino="Curitiba, PR, Brasil",
+        pedagio=99.0,
+    )
+    calc = resultado["calculos_intermediarios"]
+    assert calc["frete_ajustado"] == pytest.approx(200.0)
+    assert calc["pedagio"] == pytest.approx(8.0)  # 200 * 4%
+    assert calc["pedagio_estimado_pct"] == pytest.approx(4.0)
+    assert calc["pedagio_pracas"] is None
 
 
 def test_distancia_fixa_sem_corredor_cadastrado_retorna_none(parametros):
