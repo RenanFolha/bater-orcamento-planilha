@@ -160,7 +160,7 @@ class _LinhaDict(dict):
 
 def _montar_linha(descricao, valores) -> _LinhaDict:
     colunas = [c[0] for c in descricao]
-    return _LinhaDict(zip(colunas, valores))
+    return _LinhaDict(zip(colunas, valores, strict=True))
 
 
 class _CursorAdaptado:
