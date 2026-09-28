@@ -263,8 +263,10 @@ O formulário tem dois seletores independentes:
   cliente" (digita o endereço de entrega).
 
 O botão "Calcular distância" resolve tudo isso automaticamente e
-preenche os campos de distância — que continuam editáveis manualmente
-se você preferir digitar os números direto.
+preenche os campos de distância. Os campos de km (distância do frete e
+distância de coleta) são somente leitura — só o cálculo automático
+preenche esses valores; se os endereços informados não puderem ser
+resolvidos, o orçamento não é gerado.
 
 ### Coleta: preço fixo por rota + veículo, ou faixa por km
 

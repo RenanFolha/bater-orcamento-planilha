@@ -296,6 +296,8 @@
     transition:border-color .15s ease, box-shadow .15s ease;
   }
   .field input:focus, .field select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(28,198,240,0.22);}
+  .field input[readonly]{background:var(--panel);color:var(--text-dim);cursor:not-allowed;}
+  .field input[readonly]:focus{box-shadow:none;}
   .row2{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0 16px;}
   .row2-enderecos{grid-template-columns:1fr 1fr;}
   .row2-palete-principal{grid-template-columns:1fr 1fr 1fr 70px;}

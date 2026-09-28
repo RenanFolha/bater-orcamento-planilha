@@ -766,7 +766,7 @@ let prioridadeRotaResolvida = '';
 // "precisa recalcular" faz o navegador bloquear o submit sozinho (antes
 // do JS rodar) com a mensagem nativa de campo obrigatório. Por isso o
 // estado fica só nessa variável; o campo mantém o último número visível
-// (ainda que desatualizado) até um novo cálculo ou edição manual.
+// (ainda que desatualizado) até um novo cálculo.
 let rotaValida = false;
 
 // Rota calculada fica obsoleta assim que o usuário muda origem, destino
@@ -789,10 +789,6 @@ origemFilialSel.addEventListener('change', invalidarRotaCalculada);
 destinoFilialSel.addEventListener('change', invalidarRotaCalculada);
 document.getElementById('origem-endereco-input').addEventListener('input', invalidarRotaCalculada);
 document.getElementById('destino-endereco-input').addEventListener('input', invalidarRotaCalculada);
-// Edição manual do campo de distância conta como "sei o valor, não
-// precisa recalcular" -- não força uma nova consulta de geocodificação
-// por cima do que a pessoa acabou de digitar.
-distanciaInput.addEventListener('input', () => { rotaValida = true; });
 
 // Extraído do listener de clique do botão "Calcular distância" pra
 // poder ser chamado também no submit de "Calcular frete", sem exigir
@@ -960,13 +956,13 @@ async function calcularDistanciaEEndereco(){
       : '';
 
     geoStatus.classList.add('ok');
-    geoStatus.textContent = `${mensagemColeta}Distância do frete: ${data2.distancia_km} km (≈ ${tempoTexto}).${mensagemPrioridade}${mensagemPedagio} Campos preenchidos — edite se precisar.`;
+    geoStatus.textContent = `${mensagemColeta}Distância do frete: ${data2.distancia_km} km (≈ ${tempoTexto}).${mensagemPrioridade}${mensagemPedagio}`;
     rotaValida = true;
     return true;
 
   }catch(err){
     geoStatus.classList.add('err');
-    geoStatus.textContent = `${err.message} Você pode digitar as distâncias manualmente nos campos abaixo.`;
+    geoStatus.textContent = err.message;
     return false;
   }finally{
     btnGeo.disabled = false;
@@ -992,7 +988,7 @@ form.addEventListener('submit', async (ev) => {
   if(!rotaValida){
     const ok = await calcularDistanciaEEndereco();
     if(!ok){
-      errorBox.textContent = 'Não foi possível calcular a distância automaticamente. Confira os endereços informados (ou preencha a distância manualmente) e clique em "Calcular frete" de novo.';
+      errorBox.textContent = 'Não foi possível calcular a distância automaticamente. Confira os endereços informados e clique em "Calcular frete" de novo.';
       errorBox.classList.add('show');
       return;
     }
@@ -1543,7 +1539,6 @@ function fracInvalidarRotaCalculada(){
 document.getElementById('frac-origem-filial').addEventListener('change', fracInvalidarRotaCalculada);
 document.getElementById('frac-destino-filial').addEventListener('change', fracInvalidarRotaCalculada);
 document.getElementById('frac-veiculo').addEventListener('change', fracInvalidarRotaCalculada);
-fracDistanciaInput.addEventListener('input', () => { fracRotaValida = true; });
 
 async function fracCalcularDistancia(){
   fracGeoStatus.className = 'geo-status';
@@ -1597,12 +1592,12 @@ async function fracCalcularDistancia(){
 
     const mensagemPrioridade = data.prioridade_rota ? ` Rota via ${data.prioridade_rota} (prioridade de rota).` : '';
     fracGeoStatus.classList.add('ok');
-    fracGeoStatus.textContent = `Distância: ${data.distancia_km} km (≈ ${tempoTexto}).${mensagemPrioridade}${mensagemPedagio} Campos preenchidos — edite se precisar.`;
+    fracGeoStatus.textContent = `Distância: ${data.distancia_km} km (≈ ${tempoTexto}).${mensagemPrioridade}${mensagemPedagio}`;
     fracRotaValida = true;
     return true;
   }catch(err){
     fracGeoStatus.classList.add('err');
-    fracGeoStatus.textContent = `${err.message} Você pode digitar a distância manualmente no campo abaixo.`;
+    fracGeoStatus.textContent = err.message;
     return false;
   }finally{
     fracBtnGeo.disabled = false;
@@ -1675,7 +1670,7 @@ document.getElementById('frac-form-frete').addEventListener('submit', async (ev)
   if(!fracRotaValida){
     const ok = await fracCalcularDistancia();
     if(!ok){
-      errorBoxFrac.textContent = 'Não foi possível calcular a distância automaticamente. Confira as filiais escolhidas (ou preencha a distância manualmente) e clique em "Calcular frete" de novo.';
+      errorBoxFrac.textContent = 'Não foi possível calcular a distância automaticamente. Confira as filiais escolhidas e clique em "Calcular frete" de novo.';
       errorBoxFrac.classList.add('show');
       return;
     }
