@@ -2262,6 +2262,31 @@ def atualizar_pedagio_historico(
         )
 
 
+def atualizar_recalculo_historico(
+    id_: int, frete_total: float, dados_json: str,
+    frete_total_antigo: float, alterado_por: str = "",
+):
+    """Usado pra recalcular um orçamento já salvo com os parâmetros ATUAIS
+    da Tabela de Preços (ex: depois de um reajuste que deve valer
+    retroativamente pros orçamentos já cotados) -- sobrescreve
+    frete_total e o dados_json inteiro (diferente de
+    atualizar_pedagio_historico, que só ajusta o campo pedágio dentro do
+    snapshot) e registra em orcamentos_historico_alteracoes pra manter
+    rastro de quem/quando recalculou."""
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE orcamentos_historico SET frete_total=?, dados_json=? WHERE id=?",
+            (frete_total, dados_json, id_),
+        )
+        conn.execute(
+            """INSERT INTO orcamentos_historico_alteracoes
+               (historico_id, campo, valor_antigo, valor_novo, alterado_por, alterado_em)
+               VALUES (?,?,?,?,?,?)""",
+            (id_, "recalculo_precos", frete_total_antigo, frete_total, alterado_por,
+             datetime.now().isoformat(timespec="seconds")),
+        )
+
+
 def listar_alteracoes_historico(historico_id: int) -> list[dict]:
     """Histórico de edições feitas num orçamento salvo (ver
     atualizar_pedagio_historico) — usado pra mostrar no detalhe do
