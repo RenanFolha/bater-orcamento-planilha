@@ -297,6 +297,13 @@ class AliquotaPisCofinsIn(BaseModel):
     observacao: str = ""
 
 
+class TaxaDiariaVeiculoIn(BaseModel):
+    uf: str = Field(..., min_length=2, max_length=2, description="Sigla da UF (ex: 'AM') — sem curinga, uma linha por estado")
+    valor_carreta: float = Field(..., ge=0, description="Valor da diária da carreta (R$)")
+    valor_cavalo: float = Field(..., ge=0, description="Valor da diária do cavalo mecânico (R$)")
+    observacao: str = ""
+
+
 class PracaPedagioIn(BaseModel):
     nome: str = Field(..., min_length=1, description="Nome da praça de pedágio (ex: 'Praça 5 - km 123')")
     rodovia: str = Field(..., min_length=1, description="Rodovia onde fica a praça (ex: 'BR-101')")

@@ -27,6 +27,7 @@ from schemas import (
     SlaIn,
     TaxaAdicionalIn,
     TaxaBalsaIn,
+    TaxaDiariaVeiculoIn,
     TaxaRegionalIn,
     TransportadoraTerceirizadaIn,
     TransporteIn,
@@ -274,6 +275,32 @@ def admin_atualizar_pis_cofins(payload: AliquotaPisCofinsIn, usuario: dict = Dep
     db.atualizar_aliquota_pis_cofins(payload.aliquota, payload.observacao)
     fs.carregar_parametros()
     return db.obter_aliquota_pis_cofins()
+
+
+@router.get("/taxas-diaria-veiculo")
+def admin_listar_taxas_diaria_veiculo(usuario: dict = Depends(exigir_admin)):
+    return db.listar_taxas_diaria_veiculo_admin()
+
+
+@router.post("/taxas-diaria-veiculo")
+def admin_criar_taxa_diaria_veiculo(payload: TaxaDiariaVeiculoIn, usuario: dict = Depends(exigir_admin)):
+    return admin_criar(
+        db.inserir_taxa_diaria_veiculo, payload,
+        f"Já existe uma diária de carreta/cavalo cadastrada pra UF '{payload.uf}'.",
+    )
+
+
+@router.put("/taxas-diaria-veiculo/{id_}")
+def admin_atualizar_taxa_diaria_veiculo(id_: int, payload: TaxaDiariaVeiculoIn, usuario: dict = Depends(exigir_admin)):
+    return admin_atualizar(
+        db.atualizar_taxa_diaria_veiculo, id_, payload,
+        f"Já existe uma diária de carreta/cavalo cadastrada pra UF '{payload.uf}'.",
+    )
+
+
+@router.delete("/taxas-diaria-veiculo/{id_}")
+def admin_excluir_taxa_diaria_veiculo(id_: int, usuario: dict = Depends(exigir_admin)):
+    return admin_excluir(db.excluir_taxa_diaria_veiculo, id_)
 
 
 @router.get("/pracas-pedagio")

@@ -223,6 +223,20 @@ CREATE TABLE IF NOT EXISTS taxas_balsa (
     UNIQUE(cidade_origem, cidade_destino, veiculo)
 );
 
+CREATE TABLE IF NOT EXISTS taxas_diaria_veiculo (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- Diária de carreta + cavalo cobrada UMA VEZ por orçamento quando há
+    -- retirada OU entrega no cliente com frota própria (não terceirizada)
+    -- numa UF cadastrada aqui — ex: parada em Manaus/AM pra embarque em
+    -- balsa. UF (sigla) é a chave, sem curinga "*" (diferente das outras
+    -- tabelas de taxa): cada estado com diária só pode ter uma linha (ver
+    -- frete_service._diaria_veiculo_aplicada).
+    uf TEXT NOT NULL UNIQUE,
+    valor_carreta REAL NOT NULL,
+    valor_cavalo REAL NOT NULL,
+    observacao TEXT DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS prioridades_rota (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     -- Regra de roteirização: quando a rota bate estado_origem (UF) ->
@@ -244,9 +258,10 @@ CREATE TABLE IF NOT EXISTS prioridades_rota (
 CREATE TABLE IF NOT EXISTS aliquotas_icms (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     -- Matriz de alíquotas de ICMS por UF de origem -> UF de destino,
-    -- aplicada "por dentro" (gross-up) sobre o frete_total já calculado:
-    -- frete_com_icms = frete_total / (1 - aliquota/100) (ver
-    -- frete_service.aliquota_icms_aplicavel e calcular_orcamento).
+    -- aplicada como um acréscimo percentual simples sobre o frete_total já
+    -- calculado (com a margem de lucro embutida), somado por último, depois
+    -- do PIS/COFINS: frete_com_icms = frete_total + frete_total * (aliquota/100)
+    -- (ver frete_service.aliquota_icms_aplicavel e _aplicar_icms).
     -- estado_origem e estado_destino aceitam "*" como curinga (mesmo
     -- mecanismo de taxas_balsa/prioridades_rota) -- quando mais de uma
     -- linha bate na mesma rota, vence a mais específica.
@@ -535,6 +550,12 @@ def _seed_se_vazio(conn: sqlite3.Connection):
         conn.execute(
             "INSERT INTO aliquota_pis_cofins (id, aliquota, observacao) VALUES (1, ?, ?)",
             (9.25, "Regime não-cumulativo (PIS 1,65% + COFINS 7,6%) — ajuste conforme o regime tributário da empresa"),
+        )
+
+    if conn.execute("SELECT COUNT(*) FROM taxas_diaria_veiculo").fetchone()[0] == 0:
+        conn.execute(
+            "INSERT INTO taxas_diaria_veiculo (uf, valor_carreta, valor_cavalo, observacao) VALUES (?,?,?,?)",
+            ("AM", 220.00, 819.00, "Diária cobrada uma vez por orçamento quando há retirada ou entrega no cliente com frota própria em Manaus/AM"),
         )
 
 
@@ -957,6 +978,14 @@ CREATE TABLE taxas_balsa (
     valor REAL NOT NULL,
     observacao TEXT DEFAULT '',
     UNIQUE(cidade_origem, cidade_destino, veiculo)
+);
+
+CREATE TABLE taxas_diaria_veiculo (
+    id {PK},
+    uf VARCHAR(10) NOT NULL UNIQUE,
+    valor_carreta REAL NOT NULL,
+    valor_cavalo REAL NOT NULL,
+    observacao TEXT DEFAULT ''
 );
 
 CREATE TABLE prioridades_rota (
@@ -1862,6 +1891,41 @@ def atualizar_aliquota_pis_cofins(aliquota: float, observacao: str = ""):
             "UPDATE aliquota_pis_cofins SET aliquota=?, observacao=? WHERE id = 1",
             (aliquota, observacao),
         )
+
+
+def listar_taxas_diaria_veiculo_admin() -> list[dict]:
+    with get_connection() as conn:
+        return [dict(r) for r in conn.execute("SELECT * FROM taxas_diaria_veiculo ORDER BY uf")]
+
+
+def _taxa_diaria_veiculo_duplicada(conn: sqlite3.Connection, uf: str, ignorar_id: int | None = None) -> bool:
+    return _existe_duplicata(conn, "taxas_diaria_veiculo", {"uf": uf.strip()}, ignorar_id=ignorar_id)
+
+
+def inserir_taxa_diaria_veiculo(uf: str, valor_carreta: float, valor_cavalo: float, observacao: str = ""):
+    with get_connection() as conn:
+        if _taxa_diaria_veiculo_duplicada(conn, uf):
+            raise db_conexao.ConflitoIntegridade(f"já existe uma diária de carreta/cavalo cadastrada pra UF '{uf}'")
+        cur = conn.execute(
+            "INSERT INTO taxas_diaria_veiculo (uf, valor_carreta, valor_cavalo, observacao) VALUES (?,?,?,?)",
+            (uf.strip().upper(), valor_carreta, valor_cavalo, observacao),
+        )
+        return cur.lastrowid
+
+
+def atualizar_taxa_diaria_veiculo(id_, uf: str, valor_carreta: float, valor_cavalo: float, observacao: str = ""):
+    with get_connection() as conn:
+        if _taxa_diaria_veiculo_duplicada(conn, uf, ignorar_id=id_):
+            raise db_conexao.ConflitoIntegridade(f"já existe uma diária de carreta/cavalo cadastrada pra UF '{uf}'")
+        conn.execute(
+            "UPDATE taxas_diaria_veiculo SET uf=?, valor_carreta=?, valor_cavalo=?, observacao=? WHERE id=?",
+            (uf.strip().upper(), valor_carreta, valor_cavalo, observacao, id_),
+        )
+
+
+def excluir_taxa_diaria_veiculo(id_):
+    with get_connection() as conn:
+        conn.execute("DELETE FROM taxas_diaria_veiculo WHERE id=?", (id_,))
 
 
 EIXOS_PEDAGIO = list(range(2, 10))  # números de eixos suportados nas praças de pedágio (2 a 9)

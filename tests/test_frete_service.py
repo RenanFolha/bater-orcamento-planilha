@@ -281,6 +281,82 @@ def test_manutencao_nao_incide_sobre_coleta_terceirizada(parametros):
     assert calc["custo_manutencao"] == pytest.approx(10.0)
 
 
+def test_diaria_veiculo_aplicada_na_retirada_no_cliente_em_am(parametros):
+    parametros.taxas_diaria_veiculo = [fs.TaxaDiariaVeiculo(uf="AM", valor_carreta=220.0, valor_cavalo=819.0)]
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        distancia_coleta=20, cidade_coleta="Manaus, Amazonas, Brasil", cidade_origem="SP",
+    )
+    calc = resultado["calculos_intermediarios"]
+    assert calc["custo_diaria_veiculo"] == pytest.approx(1039.0)
+    assert calc["diaria_veiculo"] == {"uf": "AM", "valor_carreta": 220.0, "valor_cavalo": 819.0}
+
+
+def test_diaria_veiculo_aplicada_na_entrega_no_cliente_em_am(parametros):
+    parametros.taxas_diaria_veiculo = [fs.TaxaDiariaVeiculo(uf="AM", valor_carreta=220.0, valor_cavalo=819.0)]
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        cidade_origem="São Paulo, SP, Brasil", cidade_destino="Manaus, Amazonas, Brasil",
+    )
+    calc = resultado["calculos_intermediarios"]
+    assert calc["custo_diaria_veiculo"] == pytest.approx(1039.0)
+
+
+def test_diaria_veiculo_nao_dobra_quando_retirada_e_entrega_batem_no_am(parametros):
+    parametros.taxas_diaria_veiculo = [fs.TaxaDiariaVeiculo(uf="AM", valor_carreta=220.0, valor_cavalo=819.0)]
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        distancia_coleta=20, cidade_coleta="Manaus, Amazonas, Brasil", cidade_origem="Manaus, Amazonas, Brasil",
+        cidade_destino="Manaus, Amazonas, Brasil",
+    )
+    calc = resultado["calculos_intermediarios"]
+    # mesma carreta/cavalo parados, não duas -- cobra só uma vez mesmo com
+    # coleta E entrega batendo na mesma UF.
+    assert calc["custo_diaria_veiculo"] == pytest.approx(1039.0)
+
+
+def test_diaria_veiculo_nao_aplica_quando_coleta_e_entrega_terceirizadas(parametros):
+    parametros.taxas_diaria_veiculo = [fs.TaxaDiariaVeiculo(uf="AM", valor_carreta=220.0, valor_cavalo=819.0)]
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        distancia_coleta=20, cidade_coleta="Manaus, Amazonas, Brasil", cidade_origem="SP",
+        coleta_terceirizada=True, valor_coleta_terceirizada=50,
+        cidade_destino="Manaus, Amazonas, Brasil", entrega_terceirizada=True, valor_entrega_terceirizada=80,
+    )
+    calc = resultado["calculos_intermediarios"]
+    # frota própria não chegou a ir no cliente em nenhuma das duas pontas
+    # -- quem rodou foi a transportadora contratada.
+    assert calc["custo_diaria_veiculo"] == pytest.approx(0.0)
+    assert calc["diaria_veiculo"] is None
+
+
+def test_diaria_veiculo_nao_aplica_fora_da_uf_cadastrada(parametros):
+    parametros.taxas_diaria_veiculo = [fs.TaxaDiariaVeiculo(uf="AM", valor_carreta=220.0, valor_cavalo=819.0)]
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        cidade_origem="São Paulo, SP, Brasil", cidade_destino="Rio de Janeiro, RJ, Brasil",
+    )
+    calc = resultado["calculos_intermediarios"]
+    assert calc["custo_diaria_veiculo"] == pytest.approx(0.0)
+
+
+def test_diaria_veiculo_nao_aplica_sem_tabela_cadastrada(parametros):
+    # parametros.taxas_diaria_veiculo fica [] (default do fixture) -- sem
+    # nenhuma UF cadastrada, a diária nunca é cobrada, mesmo em Manaus.
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        cidade_origem="São Paulo, SP, Brasil", cidade_destino="Manaus, Amazonas, Brasil",
+    )
+    calc = resultado["calculos_intermediarios"]
+    assert calc["custo_diaria_veiculo"] == pytest.approx(0.0)
+
+
 @pytest.mark.parametrize("campo,valor,mensagem", [
     ("peso", 0, "Peso deve ser maior que zero"),
     ("distancia", 0, "Distância deve ser maior que zero"),

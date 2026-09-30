@@ -99,6 +99,8 @@ const MEMORIA_CALCULO_CAMPOS = [
   {chave: 'taxa_balsa_retorno', rotulo: 'Taxa de balsa aplicada (retorno)', tipo: 'balsa'},
   {chave: 'balsa_outro_veiculo', rotulo: 'Taxa de balsa cadastrada só p/ outro veículo', tipo: 'lista_veiculos'},
   {chave: 'custo_balsa', rotulo: 'Custo de balsa (ida + retorno)', tipo: 'brl'},
+  {chave: 'diaria_veiculo', rotulo: 'Diária de carreta/cavalo aplicada', tipo: 'diaria_veiculo'},
+  {chave: 'custo_diaria_veiculo', rotulo: 'Custo de diária de carreta e cavalo', tipo: 'brl'},
   {chave: 'total_custo_operacao', rotulo: 'Total do custo da operação', tipo: 'brl'},
 
   {header: 'Taxas'},
@@ -160,6 +162,10 @@ function _formatarValorMemoria(v, tipo){
     case 'balsa':
       return v
         ? `${v.cidade_origem} → ${v.cidade_destino} (${v.veiculo}, ${v.tipo === 'percentual' ? v.valor_configurado + '%' : fmtBRL(v.valor_configurado)}) = ${fmtBRL(v.valor_aplicado)}`
+        : 'não aplicada';
+    case 'diaria_veiculo':
+      return v
+        ? `${v.uf}: carreta ${fmtBRL(v.valor_carreta)} + cavalo ${fmtBRL(v.valor_cavalo)}`
         : 'não aplicada';
     case 'lista_veiculos':
       return (v && v.length) ? v.join(', ') : '—';
@@ -1227,6 +1233,16 @@ form.addEventListener('submit', async (ev) => {
       linhaTaxaBalsa.style.display = 'flex';
     }else{
       linhaTaxaBalsa.style.display = 'none';
+    }
+
+    const linhaDiariaVeiculo = document.getElementById('linha-diaria-veiculo');
+    if(calc.custo_diaria_veiculo > 0 && calc.diaria_veiculo){
+      document.getElementById('d-diaria-veiculo').textContent = fmtBRL(calc.custo_diaria_veiculo);
+      linhaDiariaVeiculo.title =
+        `${calc.diaria_veiculo.uf}: carreta ${fmtBRL(calc.diaria_veiculo.valor_carreta)} + cavalo ${fmtBRL(calc.diaria_veiculo.valor_cavalo)}`;
+      linhaDiariaVeiculo.style.display = 'flex';
+    }else{
+      linhaDiariaVeiculo.style.display = 'none';
     }
 
     // GRIS e Ad Valorem (ver gris_pct/ad_valorem_pct) ganham linha própria
@@ -3538,6 +3554,17 @@ async function carregarTabelaPrecos(){
         {campo: 'estado_origem', label: 'UF de origem (ou "*")', tipo: 'select', opcoes: ['*', ...UFS_BRASIL]},
         {campo: 'estado_destino', label: 'UF de destino (ou "*")', tipo: 'select', opcoes: ['*', ...UFS_BRASIL]},
         {campo: 'aliquota', label: 'Alíquota (%)', tipo: 'number', step: '0.01'},
+        {campo: 'observacao', label: 'Observação', tipo: 'text'},
+      ],
+    }),
+
+    criarEditorTabela({
+      containerId: 'precos-taxas-diaria-veiculo', endpoint: 'taxas-diaria-veiculo',
+      titulo: 'Diária de Carreta e Cavalo por UF — cobrada uma vez quando há retirada OU entrega no cliente com frota própria nesse estado',
+      colunas: [
+        {campo: 'uf', label: 'UF', tipo: 'select', opcoes: UFS_BRASIL},
+        {campo: 'valor_carreta', label: 'Diária da carreta (R$)', tipo: 'moeda'},
+        {campo: 'valor_cavalo', label: 'Diária do cavalo (R$)', tipo: 'moeda'},
         {campo: 'observacao', label: 'Observação', tipo: 'text'},
       ],
     }),

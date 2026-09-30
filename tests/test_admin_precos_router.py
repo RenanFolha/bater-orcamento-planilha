@@ -179,6 +179,29 @@ def test_admin_pis_cofins_get_e_put(client):
     assert client.get("/admin/pis-cofins").json()["aliquota"] == 9.25
 
 
+def test_admin_taxas_diaria_veiculo_crud(client):
+    _login(client)
+
+    # Banco novo já nasce com a diária do AM semeada (ver
+    # frete_db._seed_se_vazio) -- usa outra UF pra não esbarrar em 409.
+    payload = {"uf": "PA", "valor_carreta": 100.0, "valor_cavalo": 300.0}
+    r = client.post("/admin/taxas-diaria-veiculo", json=payload)
+    assert r.status_code == 200, r.text
+    taxa_id = r.json()["id"]
+
+    r = client.get("/admin/taxas-diaria-veiculo")
+    assert any(t["id"] == taxa_id and t["uf"] == "PA" for t in r.json())
+
+    r = client.post("/admin/taxas-diaria-veiculo", json=payload)
+    assert r.status_code == 409
+
+    r = client.put(f"/admin/taxas-diaria-veiculo/{taxa_id}", json={**payload, "valor_carreta": 150.0})
+    assert r.status_code == 200, r.text
+
+    r = client.delete(f"/admin/taxas-diaria-veiculo/{taxa_id}")
+    assert r.status_code == 200
+
+
 def test_admin_transportadoras_terceirizadas_crud(client):
     _login(client)
 

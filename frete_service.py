@@ -261,6 +261,13 @@ class AliquotaIcms:
     aliquota: float  # % aplicada "por dentro" (gross-up) sobre o frete_total
 
 
+@dataclass
+class TaxaDiariaVeiculo:
+    uf: str  # sigla da UF, sem curinga "*" (ver _diaria_veiculo_aplicada)
+    valor_carreta: float
+    valor_cavalo: float
+
+
 class ParametrosFrete:
     """Mantém em memória os parâmetros lidos do banco."""
 
@@ -277,6 +284,7 @@ class ParametrosFrete:
         self.distancias_fixas: list[DistanciaFixa] = []
         self.aliquotas_icms: list[AliquotaIcms] = []
         self.aliquota_pis_cofins: float = 0.0
+        self.taxas_diaria_veiculo: list[TaxaDiariaVeiculo] = []
         self.coleta_cidades_fixas: list[ColetaCidadeFixa] = []
         self.faixas_coleta: list[FaixaDistancia] = []
         # Frete Fracionado (ver calcular_orcamento_fracionado): faixas por
@@ -352,6 +360,10 @@ class ParametrosFrete:
                 "SELECT aliquota FROM aliquota_pis_cofins WHERE id = 1"
             ).fetchone()
             self.aliquota_pis_cofins = linha_pis_cofins["aliquota"] if linha_pis_cofins else 0.0
+            self.taxas_diaria_veiculo = [
+                TaxaDiariaVeiculo(r["uf"], r["valor_carreta"], r["valor_cavalo"])
+                for r in conn.execute("SELECT * FROM taxas_diaria_veiculo")
+            ]
             self.coleta_cidades_fixas = [
                 ColetaCidadeFixa(r["filial_origem"], r["cidade_destino"], r["veiculo"], r["valor_fixo"])
                 for r in conn.execute("SELECT * FROM coleta_cidades_fixas ORDER BY id")
@@ -870,6 +882,49 @@ def _uf_de_origem_ou_destino(p: "ParametrosFrete", texto: str | None) -> str:
         return uf
     ultimo_segmento = texto.rsplit(",", 1)[-1].strip().lower()
     return ultimo_segmento.upper() if ultimo_segmento in _UFS_BR_SIGLAS else ""
+
+
+def _diaria_veiculo_aplicada(
+    p: "ParametrosFrete",
+    cidade_coleta: str | None,
+    cidade_destino: str | None,
+    distancia_coleta: float,
+    coleta_terceirizada: bool,
+    entrega_terceirizada: bool,
+) -> tuple[float, dict | None]:
+    """Diária de carreta + cavalo (ver taxas_diaria_veiculo) cobrada UMA
+    ÚNICA VEZ por orçamento quando há retirada no cliente (coleta própria,
+    não terceirizada) OU entrega no cliente (frota própria, não
+    terceirizada) numa UF com diária cadastrada — mesmo que ambas batam ao
+    mesmo tempo na mesma UF, não dobra o valor (é a mesma carreta/cavalo
+    parados, não duas). Retirada e entrega são checadas cada uma na sua
+    própria UF (não precisam ser a mesma) — a primeira UF cadastrada que
+    bater entre as duas é usada."""
+    if not p.taxas_diaria_veiculo:
+        return 0.0, None
+    retirada_no_cliente = not coleta_terceirizada and (distancia_coleta > 0 or bool(cidade_coleta))
+    entrega_no_cliente = not entrega_terceirizada
+
+    ufs_candidatas = []
+    if retirada_no_cliente and cidade_coleta:
+        uf = _uf_de_origem_ou_destino(p, cidade_coleta)
+        if uf:
+            ufs_candidatas.append(uf)
+    if entrega_no_cliente and cidade_destino:
+        uf = _uf_de_origem_ou_destino(p, cidade_destino)
+        if uf:
+            ufs_candidatas.append(uf)
+
+    ufs_normalizadas = {db.normalizar_texto(uf) for uf in ufs_candidatas}
+    for t in p.taxas_diaria_veiculo:
+        if db.normalizar_texto(t.uf) in ufs_normalizadas:
+            valor = t.valor_carreta + t.valor_cavalo
+            return valor, {
+                "uf": t.uf,
+                "valor_carreta": t.valor_carreta,
+                "valor_cavalo": t.valor_cavalo,
+            }
+    return 0.0, None
 
 
 def aliquota_icms_aplicavel(
@@ -1480,18 +1535,24 @@ def calcular_orcamento(
 
     custo_entrega_terceirizada = valor_entrega_terceirizada if entrega_terceirizada else 0.0
 
+    custo_diaria_veiculo, detalhe_diaria_veiculo = _diaria_veiculo_aplicada(
+        p, cidade_coleta, cidade_destino, distancia_coleta, coleta_terceirizada, entrega_terceirizada
+    )
+
     # Separa o frete_total (pré-impostos e pré-margem) em dois grupos pra
     # exibição: custo da operação (transporte em si — frete ajustado,
-    # coleta, entrega, pedágio, manutenção, retorno, custos extras e a
-    # taxa de balsa, que é custo de transporte de verdade — a travessia é
-    # parte do trajeto, não um tributo) e impostos e taxas (taxas
-    # adicionais/regionais, cadastradas como "taxa" mas que incidem sobre
-    # o valor da mercadoria, não sobre o transporte em si). PIS/COFINS,
-    # ICMS e a margem de lucro ficam de fora daqui: são aplicados em
-    # cascata por cima desse total, ver mais abaixo.
+    # coleta, entrega, pedágio, manutenção, retorno, custos extras, a
+    # taxa de balsa e a diária de carreta/cavalo, que são custo de
+    # transporte de verdade — a travessia e a parada do veículo são parte
+    # do trajeto, não um tributo) e impostos e taxas (taxas adicionais/
+    # regionais, cadastradas como "taxa" mas que incidem sobre o valor da
+    # mercadoria, não sobre o transporte em si). PIS/COFINS, ICMS e a
+    # margem de lucro ficam de fora daqui: são aplicados em cascata por
+    # cima desse total, ver mais abaixo.
     total_custo_operacao = (
         frete_ajustado + custo_coleta + custo_entrega_terceirizada
         + custo_extra_total + pedagio + custo_manutencao + custo_retorno + custo_balsa
+        + custo_diaria_veiculo
     )
     total_impostos_taxas = custo_taxas_adicionais + custo_taxas_regionais
 
@@ -1502,6 +1563,7 @@ def calcular_orcamento(
         + custo_taxas_adicionais
         + custo_taxas_regionais
         + custo_balsa
+        + custo_diaria_veiculo
         + custo_extra_total
         + pedagio
         + custo_manutencao
@@ -1601,6 +1663,8 @@ def calcular_orcamento(
             "taxa_balsa_retorno": detalhe_balsa_retorno,
             "custo_balsa": round(custo_balsa, 2),
             "balsa_outro_veiculo": balsa_outro_veiculo or None,
+            "diaria_veiculo": detalhe_diaria_veiculo,
+            "custo_diaria_veiculo": round(custo_diaria_veiculo, 2),
             "total_custo_operacao": round(total_custo_operacao, 2),
             "total_impostos_taxas": round(total_impostos_taxas, 2),
             "ajuste_piso_markup": round(ajuste_piso_markup, 2),
