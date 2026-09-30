@@ -101,7 +101,7 @@ const MEMORIA_CALCULO_CAMPOS = [
   {chave: 'custo_balsa', rotulo: 'Custo de balsa (ida + retorno)', tipo: 'brl'},
   {chave: 'total_custo_operacao', rotulo: 'Total do custo da operação', tipo: 'brl'},
 
-  {header: 'Impostos e taxas'},
+  {header: 'Taxas'},
   {chave: 'taxas_adicionais', rotulo: 'Taxas adicionais aplicadas', tipo: 'lista_taxa'},
   {chave: 'custo_taxas_adicionais', rotulo: 'Total de taxas adicionais', tipo: 'brl'},
   {chave: 'taxas_regionais', rotulo: 'Taxa fluvial (RCA) aplicada', tipo: 'lista_taxa_regional'},
