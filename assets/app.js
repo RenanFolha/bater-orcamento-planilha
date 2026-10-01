@@ -309,6 +309,52 @@ function preencherCamposTaxasCustomizaveis(idGris, idAdValorem){
   campoAdValorem.value = taxasCustomizaveisCache.adValorem;
 }
 
+// Lucro em cima do % cadastrado em Tabela de Preços: GRIS/Ad Valorem são
+// digitáveis por orçamento (ver acima) -- qualquer % digitado ACIMA do
+// cadastrado (o piso/custo real, ver fs._piso_taxa_customizavel) não é
+// custo, é margem extra dessa cotação específica. Mostra isso ao vivo
+// embaixo de cada campo, sempre que o % digitado ou o valor da
+// mercadoria mudar (ambos entram na conta: lucro = valor_mercadoria *
+// (% digitado - % cadastrado) / 100).
+function atualizarLucroTaxaCustomizavel(idInput, idHint, idValorMercadoria, pisoCadastrado){
+  const input = document.getElementById(idInput);
+  const hint = document.getElementById(idHint);
+  if(!input || !hint) return;
+  const pctDigitado = parseFloat(input.value);
+  const valorMercadoria = valorMoedaParaNumero(document.getElementById(idValorMercadoria).value);
+  if(isNaN(pctDigitado) || valorMercadoria <= 0){
+    hint.textContent = '';
+    return;
+  }
+  const pisoFmt = pisoCadastrado.toLocaleString('pt-BR', {maximumFractionDigits: 4});
+  const diferencaPct = pctDigitado - pisoCadastrado;
+  if(diferencaPct <= 0.0001){
+    hint.style.color = 'var(--text-dim)';
+    hint.textContent = `Sem lucro extra — igual ao cadastrado (${pisoFmt}%).`;
+  }else{
+    const lucro = valorMercadoria * diferencaPct / 100;
+    const diferencaFmt = diferencaPct.toLocaleString('pt-BR', {maximumFractionDigits: 4});
+    hint.style.color = 'var(--ok)';
+    hint.textContent = `Lucro acima da tabela: ${fmtBRL(lucro)} (+${diferencaFmt} pontos sobre o cadastrado, ${pisoFmt}%).`;
+  }
+}
+
+function atualizarLucrosTaxasCustomizaveis(prefixo){
+  atualizarLucroTaxaCustomizavel(
+    `${prefixo}gris_pct`, `${prefixo}gris_pct-lucro`, `${prefixo}valor_mercadoria`, taxasCustomizaveisCache.gris,
+  );
+  atualizarLucroTaxaCustomizavel(
+    `${prefixo}ad_valorem_pct`, `${prefixo}ad_valorem_pct-lucro`, `${prefixo}valor_mercadoria`, taxasCustomizaveisCache.adValorem,
+  );
+}
+
+for(const prefixo of ['', 'frac-']){
+  for(const campo of ['gris_pct', 'ad_valorem_pct', 'valor_mercadoria']){
+    const el = document.getElementById(`${prefixo}${campo}`);
+    if(el) el.addEventListener('input', () => atualizarLucrosTaxasCustomizaveis(prefixo));
+  }
+}
+
 async function inicializarFormulario(){
   let carregouParametros = false;
   btn.disabled = true;
@@ -326,6 +372,7 @@ async function inicializarFormulario(){
     carregouParametros = true;
     statusTag.textContent = 'Aguardando';
     preencherCamposTaxasCustomizaveis('gris_pct', 'ad_valorem_pct');
+    atualizarLucrosTaxasCustomizaveis('');
     // "Geral" é a categoria padrão (multiplicador 1.00, sem cuidado
     // especial) -- pré-seleciona pra cobrir o caso comum sem exigir que a
     // pessoa escolha toda vez.
@@ -1525,6 +1572,7 @@ async function fracInicializarFormulario(){
     // taxasCustomizaveisCache também já foi carregado pelo formulário
     // principal (ver carregarTaxasCustomizaveis em inicializarFormulario).
     preencherCamposTaxasCustomizaveis('frac-gris_pct', 'frac-ad_valorem_pct');
+    atualizarLucrosTaxasCustomizaveis('frac-');
     const categoriaSel = document.getElementById('frac-categoria');
     if([...categoriaSel.options].some(o => o.value === 'Geral')) categoriaSel.value = 'Geral';
     fracAtualizarCubagem();
