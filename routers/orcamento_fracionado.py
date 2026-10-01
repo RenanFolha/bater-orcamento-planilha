@@ -13,26 +13,35 @@ from schemas import OrcamentoFracionadoRequest
 router = APIRouter(tags=["Orçamento Fracionado"])
 
 
+def montar_resultado(payload: OrcamentoFracionadoRequest) -> dict:
+    """Chama fs.calcular_orcamento_fracionado a partir de um
+    OrcamentoFracionadoRequest -- usada tanto pela rota abaixo quanto por
+    routers/historico.py (PUT /historico/{id}/recalcular), que reaplica o
+    mesmo payload já salvo contra os parâmetros ATUAIS da Tabela de
+    Preços."""
+    return fs.calcular_orcamento_fracionado(
+        peso=payload.peso,
+        paletes=[p.model_dump() for p in payload.paletes],
+        distancia=payload.distancia,
+        valor_mercadoria=payload.valor_mercadoria,
+        categoria=payload.categoria,
+        transporte=payload.transporte,
+        sla=payload.sla,
+        veiculo=payload.veiculo,
+        cidade_origem=payload.cidade_origem or None,
+        cidade_destino=payload.cidade_destino or None,
+        pedagio=payload.pedagio,
+        prioridade_rota=payload.prioridade_rota or None,
+        custos_extras=[c.model_dump() for c in payload.custos_extras],
+        gris_pct=payload.gris_pct,
+        ad_valorem_pct=payload.ad_valorem_pct,
+    )
+
+
 @router.post("/orcamento/fracionado")
 def orcamento_fracionado(payload: OrcamentoFracionadoRequest):
     try:
-        return fs.calcular_orcamento_fracionado(
-            peso=payload.peso,
-            paletes=[p.model_dump() for p in payload.paletes],
-            distancia=payload.distancia,
-            valor_mercadoria=payload.valor_mercadoria,
-            categoria=payload.categoria,
-            transporte=payload.transporte,
-            sla=payload.sla,
-            veiculo=payload.veiculo,
-            cidade_origem=payload.cidade_origem or None,
-            cidade_destino=payload.cidade_destino or None,
-            pedagio=payload.pedagio,
-            prioridade_rota=payload.prioridade_rota or None,
-            custos_extras=[c.model_dump() for c in payload.custos_extras],
-            gris_pct=payload.gris_pct,
-            ad_valorem_pct=payload.ad_valorem_pct,
-        )
+        return montar_resultado(payload)
     except fs.FreteInputError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
     except fs.FreteConfigError as e:

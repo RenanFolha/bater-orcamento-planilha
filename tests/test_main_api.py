@@ -560,6 +560,183 @@ def test_historico_atualizar_pedagio_soh_pode_ser_feito_pelo_dono_ou_admin(clien
     assert r.status_code == 200
 
 
+def test_historico_recalcular_aplica_precos_atuais(client):
+    # Orçamento normal (veículo escolhido pelo peso): salva no histórico
+    # com os preços de quando foi cotado, muda a alíquota de PIS/COFINS
+    # depois (simula um reajuste retroativo -- ex: a mudança na fórmula do
+    # pedágio) e confere que o recálculo bate exatamente com uma nova
+    # cotação do mesmo payload contra os preços atuais.
+    import frete_db as db
+    import frete_service as fs
+
+    _login(client)
+    payload = _orcamento_payload()
+    resultado1 = client.post("/orcamento", json=payload).json()
+    r = client.post("/historico", json={
+        "cliente": "Cliente Recalculo", "responsavel": "Admin",
+        "frete_total": resultado1["resultado"]["frete_total"],
+        "dados": {"payload": payload, "resultado": resultado1},
+    })
+    assert r.status_code == 200, r.text
+    codigo = r.json()["codigo"]
+    hist_id = next(h["id"] for h in client.get("/historico").json() if h["codigo"] == codigo)
+
+    # Banco seedado já vem com 9,25% (ver frete_db._seed_dados_iniciais) --
+    # usa um valor bem diferente pra garantir que o frete_total realmente muda.
+    db.atualizar_aliquota_pis_cofins(20.0, "teste: reajuste retroativo")
+    fs.carregar_parametros()
+    try:
+        resultado_esperado = client.post("/orcamento", json=payload).json()
+        assert resultado_esperado["resultado"]["frete_total"] != pytest.approx(
+            resultado1["resultado"]["frete_total"]
+        )
+
+        r = client.put(f"/historico/{hist_id}/recalcular")
+        assert r.status_code == 200, r.text
+        assert r.json()["frete_total_antigo"] == pytest.approx(resultado1["resultado"]["frete_total"])
+        assert r.json()["frete_total"] == pytest.approx(resultado_esperado["resultado"]["frete_total"])
+
+        detalhe = client.get(f"/historico/{codigo}").json()
+        assert detalhe["frete_total"] == pytest.approx(resultado_esperado["resultado"]["frete_total"])
+        assert detalhe["dados"]["resultado"] == resultado_esperado
+        assert detalhe["dados"]["payload"] == payload  # payload original não muda, só o resultado
+    finally:
+        db.atualizar_aliquota_pis_cofins(9.25, "")
+        fs.carregar_parametros()
+
+
+def test_historico_recalcular_fracionado_aplica_precos_atuais(client):
+    import frete_db as db
+    import frete_service as fs
+
+    _login(client)
+    payload = dict(
+        peso=80, paletes=[{"comprimento": 100, "largura": 100, "altura": 100}],
+        distancia=350, valor_mercadoria=1200, categoria="Geral",
+        transporte="Rodoviário", sla="Padrão", veiculo="Caminhonete",
+    )
+    resultado1 = client.post("/orcamento/fracionado", json=payload).json()
+    r = client.post("/historico", json={
+        "cliente": "Cliente Recalculo Frac", "responsavel": "Admin",
+        "frete_total": resultado1["resultado"]["frete_total"],
+        "dados": {"payload": payload, "resultado": resultado1},
+    })
+    assert r.status_code == 200, r.text
+    codigo = r.json()["codigo"]
+    hist_id = next(h["id"] for h in client.get("/historico").json() if h["codigo"] == codigo)
+
+    # Banco seedado já vem com 9,25% (ver frete_db._seed_dados_iniciais) --
+    # usa um valor bem diferente pra garantir que o frete_total realmente muda.
+    db.atualizar_aliquota_pis_cofins(20.0, "teste: reajuste retroativo")
+    fs.carregar_parametros()
+    try:
+        resultado_esperado = client.post("/orcamento/fracionado", json=payload).json()
+        r = client.put(f"/historico/{hist_id}/recalcular")
+        assert r.status_code == 200, r.text
+        assert r.json()["frete_total"] == pytest.approx(resultado_esperado["resultado"]["frete_total"])
+    finally:
+        db.atualizar_aliquota_pis_cofins(9.25, "")
+        fs.carregar_parametros()
+
+
+def test_historico_recalcular_tolera_campos_opcionais_nulos_de_registros_antigos(client):
+    # Registros salvos antes de o front sempre mandar string vazia pra
+    # campos opcionais (ex: prioridade_rota) podem ter None no payload --
+    # OrcamentoRequest não aceita None nesses campos (schema espera str),
+    # então o recálculo precisa descartar esses campos antes de validar
+    # (cai no valor padrão), não devolver 422 por um detalhe de como o
+    # front salvou naquela época.
+    _login(client)
+    payload = _orcamento_payload()
+    resultado1 = client.post("/orcamento", json=payload).json()
+    payload_salvo = dict(payload, prioridade_rota=None, cidade_coleta=None)
+    r = client.post("/historico", json={
+        "cliente": "Cliente Antigo", "responsavel": "Admin",
+        "frete_total": resultado1["resultado"]["frete_total"],
+        "dados": {"payload": payload_salvo, "resultado": resultado1},
+    })
+    assert r.status_code == 200, r.text
+    hist_id = next(h["id"] for h in client.get("/historico").json() if h["codigo"] == r.json()["codigo"])
+
+    r = client.put(f"/historico/{hist_id}/recalcular")
+    assert r.status_code == 200, r.text
+    assert r.json()["frete_total"] == pytest.approx(resultado1["resultado"]["frete_total"])
+
+
+def test_historico_recalcular_registra_alteracao(client):
+    _login(client)
+    payload = _orcamento_payload()
+    resultado1 = client.post("/orcamento", json=payload).json()
+    r = client.post("/historico", json={
+        "cliente": "Cliente Recalculo", "responsavel": "Admin",
+        "frete_total": resultado1["resultado"]["frete_total"],
+        "dados": {"payload": payload, "resultado": resultado1},
+    })
+    codigo = r.json()["codigo"]
+    hist_id = next(h["id"] for h in client.get("/historico").json() if h["codigo"] == codigo)
+
+    r = client.put(f"/historico/{hist_id}/recalcular")
+    assert r.status_code == 200, r.text
+
+    detalhe = client.get(f"/historico/{codigo}").json()
+    assert len(detalhe["alteracoes"]) == 1
+    alteracao = detalhe["alteracoes"][0]
+    assert alteracao["campo"] == "recalculo_precos"
+    assert alteracao["valor_antigo"] == pytest.approx(resultado1["resultado"]["frete_total"])
+    assert alteracao["alterado_por"] == "admin"
+    assert alteracao["alterado_em"]
+
+
+def test_historico_recalcular_404_quando_nao_existe(client):
+    _login(client)
+    r = client.put("/historico/99999/recalcular")
+    assert r.status_code == 404
+
+
+def test_historico_recalcular_soh_pode_ser_feito_pelo_dono_ou_admin(client):
+    _login(client)
+    client.post("/admin/usuarios", json={
+        "nome": "Comum", "username": "comum", "senha": "senha1234", "role": "usuario",
+    })
+    payload = _orcamento_payload()
+    resultado1 = client.post("/orcamento", json=payload).json()
+    r = client.post("/historico", json={
+        "cliente": "Cliente Recalculo", "responsavel": "Admin",
+        "frete_total": resultado1["resultado"]["frete_total"],
+        "dados": {"payload": payload, "resultado": resultado1},
+    })
+    hist_id = next(h["id"] for h in client.get("/historico").json() if h["codigo"] == r.json()["codigo"])
+
+    client.post("/auth/logout")
+    _login(client, username="comum", senha="senha1234")
+    r = client.put(f"/historico/{hist_id}/recalcular")
+    assert r.status_code == 403
+
+    client.post("/auth/logout")
+    _login(client)
+    r = client.put(f"/historico/{hist_id}/recalcular")
+    assert r.status_code == 200
+
+
+def test_historico_recalcular_sem_payload_original_da_422(client):
+    # Registros antigos (salvos antes de dados.payload existir, ou
+    # montados manualmente sem esse campo) não têm como ser reprocessados
+    # por calcular_orcamento -- erro claro em vez de KeyError.
+    _login(client)
+    r = client.post("/historico", json={"cliente": "Cliente Sem Payload", "responsavel": "Admin"})
+    hist_id = next(h["id"] for h in client.get("/historico").json() if h["codigo"] == r.json()["codigo"])
+
+    r = client.put(f"/historico/{hist_id}/recalcular")
+    assert r.status_code == 422
+
+
+def test_historico_recalcular_payload_invalido_da_422(client):
+    _login(client)
+    codigo, hist_id = _salvar_historico_com_pedagio(client, pedagio=10.0, frete_total=100.0)
+    r = client.put(f"/historico/{hist_id}/recalcular")
+    assert r.status_code == 422
+
+
 def test_admin_taxas_balsa_crud(client):
     _login(client)
     veiculo = client.get("/parametros/veiculos").json()[0]["nome"]

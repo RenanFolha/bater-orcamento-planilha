@@ -96,9 +96,10 @@ MARGEM_LUCRO_PADRAO = 40
 MARKUP_MINIMO = 1.4
 
 # Pedágio: quando não há praça cadastrada pro corredor da rota + eixos do
-# veículo (ver pedagio_rota_aplicavel), aplica esse % sobre o frete_ajustado
-# como estimativa padrão em vez de confiar só na estimativa genérica do
-# Google Maps ou deixar em R$ 0 (ver _pedagio_aplicado).
+# veículo (ver pedagio_rota_aplicavel), aplica esse % sobre frete + custos
+# operacionais + taxas + PIS/COFINS + ICMS previstos (sem margem, ver
+# _pedagio_aplicado) como estimativa padrão em vez de confiar só na
+# estimativa genérica do Google Maps ou deixar em R$ 0.
 PEDAGIO_PCT_FALLBACK = 4.0
 
 # Nomes de taxas adicionais que podem ser digitadas por orçamento (ver
@@ -1251,20 +1252,29 @@ def _taxa_balsa_aplicada(
 
 def _pedagio_aplicado(
     p: "ParametrosFrete", cidade_origem: str | None, cidade_destino: str | None,
-    numero_eixos: int, frete_ajustado: float, pedagio_informado: float,
+    numero_eixos: int, base_sem_pedagio: float, pedagio_informado: float,
 ) -> tuple[float, bool, list[str] | None]:
     """Valor de pedágio a cobrar: quando há praça cadastrada pro corredor
     da rota + eixos do veículo (ver pedagio_rota_aplicavel), usa o valor
     informado (pré-preenchido na busca de distância a partir dessas
     praças, editável). Sem praça cadastrada, ignora o valor informado
     (estimativa genérica do Google Maps, ou manual) e aplica
-    PEDAGIO_PCT_FALLBACK% sobre o frete_ajustado. Devolve (pedagio,
-    veio_de_estimativa_pct, praças usadas quando veio de cadastro)."""
+    PEDAGIO_PCT_FALLBACK% sobre frete + custos operacionais + taxas (
+    base_sem_pedagio, já soma tudo isso -- ver calcular_orcamento/
+    calcular_orcamento_fracionado) COM PIS/COFINS e ICMS previstos por
+    cima (sem margem, que só entra depois do pedágio já somado ao custo da
+    operação). Essa é só uma pré-visualização de impostos pra dimensionar
+    o pedágio -- ele entra no fluxo normal em seguida e volta a ser
+    tributado de verdade (PIS/COFINS -> margem -> ICMS) junto com os
+    demais custos. Devolve (pedagio, veio_de_estimativa_pct, praças
+    usadas quando veio de cadastro)."""
     achado = pedagio_rota_aplicavel(p, cidade_origem, cidade_destino, numero_eixos)
     if achado is not None:
         _total, pracas_usadas = achado
         return pedagio_informado, False, pracas_usadas
-    return round(frete_ajustado * PEDAGIO_PCT_FALLBACK / 100, 2), True, None
+    base_com_impostos, *_ = _aplicar_pis_cofins(p, base_sem_pedagio)
+    base_com_impostos, *_ = _aplicar_icms(p, base_com_impostos, cidade_origem, cidade_destino)
+    return round(base_com_impostos * PEDAGIO_PCT_FALLBACK / 100, 2), True, None
 
 
 def _aplicar_pis_cofins(p: "ParametrosFrete", frete_total: float) -> tuple[float, float, float, float]:
@@ -1456,10 +1466,6 @@ def calcular_orcamento(
     frete_base = custo_km + custo_peso_excedente
     frete_ajustado = frete_base * cat.multiplicador * transp.multiplicador * s.multiplicador
 
-    pedagio, pedagio_estimado_pct, pedagio_pracas = _pedagio_aplicado(
-        p, cidade_origem, cidade_destino, v.numero_eixos, frete_ajustado, pedagio
-    )
-
     detalhe_custos_extras, custo_extra_total = _custos_extras_aplicados(custos_extras)
     detalhe_taxas, custo_taxas_adicionais = _taxas_adicionais_aplicadas(p, valor_mercadoria, gris_pct, ad_valorem_pct)
     detalhe_taxas_regionais, custo_taxas_regionais = _taxas_regionais_aplicadas(
@@ -1537,6 +1543,19 @@ def calcular_orcamento(
 
     custo_diaria_veiculo, detalhe_diaria_veiculo = _diaria_veiculo_aplicada(
         p, cidade_coleta, cidade_destino, distancia_coleta, coleta_terceirizada, entrega_terceirizada
+    )
+
+    # Pedágio calculado por último entre os custos: quando cai no fallback
+    # de estimativa (sem praça cadastrada), a % incide sobre frete + todos
+    # os custos operacionais + taxas já apurados acima (ver
+    # _pedagio_aplicado) -- por isso precisa vir depois deles.
+    base_sem_pedagio = (
+        frete_ajustado + custo_coleta + custo_entrega_terceirizada + custo_extra_total
+        + custo_manutencao + custo_retorno + custo_balsa + custo_diaria_veiculo
+        + custo_taxas_adicionais + custo_taxas_regionais
+    )
+    pedagio, pedagio_estimado_pct, pedagio_pracas = _pedagio_aplicado(
+        p, cidade_origem, cidade_destino, v.numero_eixos, base_sem_pedagio, pedagio
     )
 
     # Separa o frete_total (pré-impostos e pré-margem) em dois grupos pra
@@ -1795,10 +1814,6 @@ def calcular_orcamento_fracionado(
     frete_base = custo_base_peso + custo_base_distancia
     frete_ajustado = frete_base * cat.multiplicador * transp.multiplicador * s.multiplicador
 
-    pedagio, pedagio_estimado_pct, pedagio_pracas = _pedagio_aplicado(
-        p, cidade_origem, cidade_destino, v.numero_eixos, frete_ajustado, pedagio
-    )
-
     detalhe_custos_extras, custo_extra_total = _custos_extras_aplicados(custos_extras)
     detalhe_taxas, custo_taxas_adicionais = _taxas_adicionais_aplicadas(p, valor_mercadoria, gris_pct, ad_valorem_pct)
     detalhe_taxas_regionais, custo_taxas_regionais = _taxas_regionais_aplicadas(
@@ -1806,6 +1821,14 @@ def calcular_orcamento_fracionado(
     )
     custo_balsa, detalhe_balsa, balsa_outro_veiculo = _taxa_balsa_aplicada(
         p, cidade_origem, cidade_destino, v.nome, valor_mercadoria
+    )
+
+    # Pedágio calculado depois dos demais custos: no fallback de
+    # estimativa (sem praça cadastrada), a % incide sobre frete + custos
+    # operacionais + taxas já apurados acima (ver _pedagio_aplicado).
+    base_sem_pedagio = frete_ajustado + custo_extra_total + custo_balsa + custo_taxas_adicionais + custo_taxas_regionais
+    pedagio, pedagio_estimado_pct, pedagio_pracas = _pedagio_aplicado(
+        p, cidade_origem, cidade_destino, v.numero_eixos, base_sem_pedagio, pedagio
     )
 
     # Mesma separação de calcular_orcamento: custo da operação (frete

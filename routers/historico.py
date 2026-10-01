@@ -5,11 +5,20 @@
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Response
+from pydantic import ValidationError
 
 import export_service as export
 import frete_db as db
+import frete_service as fs
 from deps import exigir_login
-from schemas import AtualizarPedagioHistoricoRequest, HistoricoSalvarRequest
+from routers.orcamento import montar_resultado as montar_resultado_veiculo_por_peso
+from routers.orcamento_fracionado import montar_resultado as montar_resultado_fracionado
+from schemas import (
+    AtualizarPedagioHistoricoRequest,
+    HistoricoSalvarRequest,
+    OrcamentoFracionadoRequest,
+    OrcamentoRequest,
+)
 
 router = APIRouter(prefix="/historico", tags=["Histórico"])
 
@@ -125,6 +134,63 @@ def atualizar_pedagio(id_: int, payload: AtualizarPedagioHistoricoRequest, usuar
         pedagio_antigo=pedagio_antigo, pedagio_novo=novo_pedagio, alterado_por=usuario["username"],
     )
     return {"status": "ok", "pedagio": novo_pedagio, "frete_total": frete_total_novo}
+
+
+@router.put("/{id_}/recalcular")
+def recalcular_historico(id_: int, usuario: dict = Depends(exigir_login)):
+    """Recalcula um orçamento já salvo com os parâmetros ATUAIS da Tabela
+    de Preços (ex: depois de um reajuste que deve valer retroativamente
+    pros orçamentos já cotados, como a mudança na fórmula do pedágio) --
+    reaplica o payload original salvo (dados.payload) contra
+    calcular_orcamento/calcular_orcamento_fracionado (mesma função usada
+    por POST /orcamento[/fracionado], ver routers/orcamento.py e
+    routers/orcamento_fracionado.py) e sobrescreve frete_total e o
+    snapshot inteiro (dados.resultado) -- diferente de PUT /{id}/pedagio,
+    que só ajusta o campo pedágio dentro do snapshot sem reprocessar o
+    resto. Distingue orçamento normal (veículo escolhido pelo peso) de
+    Fracionado pela presença do campo "veiculo" no payload salvo -- só
+    existe no Fracionado (ver schemas.OrcamentoFracionadoRequest)."""
+    registro = db.buscar_orcamento_historico_por_id(id_)
+    if not registro:
+        raise HTTPException(status_code=404, detail="Orçamento não encontrado no histórico.")
+    _exigir_dono_ou_admin(registro, usuario, "recalculá-lo")
+
+    dados = json.loads(registro["dados_json"] or "{}")
+    payload_salvo = dados.get("payload")
+    if not isinstance(payload_salvo, dict):
+        raise HTTPException(
+            status_code=422,
+            detail="Esse orçamento não tem os dados originais da cotação salvos (registro antigo) "
+                   "-- não é possível recalcular automaticamente.",
+        )
+    # Registros antigos podem ter campos opcionais salvos como null (ex:
+    # prioridade_rota antes de um fallback pra string vazia existir no
+    # front) -- o schema atual não aceita None nesses campos. Remove
+    # antes de validar pra cair no valor padrão do campo, em vez de 422
+    # por um detalhe de como o front salvou naquela época.
+    payload_salvo = {k: v for k, v in payload_salvo.items() if v is not None}
+
+    try:
+        if "veiculo" in payload_salvo:
+            resultado = montar_resultado_fracionado(OrcamentoFracionadoRequest(**payload_salvo))
+        else:
+            resultado = montar_resultado_veiculo_por_peso(OrcamentoRequest(**payload_salvo))
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=f"Dados originais da cotação inválidos: {e}") from e
+    except fs.FreteInputError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except fs.FreteConfigError as e:
+        raise HTTPException(status_code=500, detail=f"Erro de configuração: {e}") from e
+
+    frete_total_antigo = registro["frete_total"]
+    frete_total_novo = resultado["resultado"]["frete_total"]
+    dados["resultado"] = resultado
+
+    db.atualizar_recalculo_historico(
+        id_, frete_total_novo, json.dumps(dados, ensure_ascii=False),
+        frete_total_antigo=frete_total_antigo, alterado_por=usuario["username"],
+    )
+    return {"status": "ok", "frete_total_antigo": frete_total_antigo, "frete_total": frete_total_novo}
 
 
 @router.get("/{codigo}/planilha")

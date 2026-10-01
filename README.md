@@ -188,8 +188,9 @@ Em cima disso somam-se:
 - **Pedágio** — quando há catálogo de praças cadastrado pra rota + eixos
   do veículo (ver abaixo), usa esse valor (pré-preenchido a partir das
   praças, editável). Sem praça cadastrada, ignora qualquer estimativa do
-  Google Maps ou valor digitado e aplica automaticamente 4% sobre o
-  `frete_ajustado` (`fs.PEDAGIO_PCT_FALLBACK`).
+  Google Maps ou valor digitado e aplica automaticamente 4% sobre frete +
+  custos operacionais + taxas, com PIS/COFINS e ICMS previstos por cima
+  (sem margem — `fs.PEDAGIO_PCT_FALLBACK`).
 - **Manutenção e retorno vazio** — `tarifa_km_manutencao × (distância +
   distância_coleta + distância_retorno)` (sobre toda distância que a
   frota própria roda: ida com carga, coleta no cliente — quando não é
@@ -246,8 +247,10 @@ do cálculo. Se existe corredor cadastrado, usam o valor informado
 (vindo do catálogo, editável). **Se não existe corredor cadastrado pra
 aquela rota + eixos do veículo, ignoram qualquer valor informado
 (estimativa do Google Maps ou digitado manualmente) e aplicam
-automaticamente 4% sobre o `frete_ajustado`** (`fs.PEDAGIO_PCT_FALLBACK`,
-ver `fs._pedagio_aplicado`) — a memória de cálculo mostra
+automaticamente 4% sobre frete + custos operacionais + taxas — com
+PIS/COFINS e ICMS previstos por cima (sem margem, que só entra depois do
+pedágio já somado ao custo da operação)** (`fs.PEDAGIO_PCT_FALLBACK`, ver
+`fs._pedagio_aplicado`) — a memória de cálculo mostra
 `pedagio_estimado_pct` preenchido nesse caso, e o rótulo da linha de
 Pedágio na tela indica "(estimado, 4% do frete)".
 
@@ -352,9 +355,9 @@ da requisição:
   corredor pra rota, senão a estimativa do Google Maps quando
   `GOOGLE_MAPS_API_KEY` está configurada; editável na tela). Só é de
   fato usado quando existe corredor cadastrado — sem ele,
-  `calcular_orcamento` ignora esse valor e aplica 4% do `frete_ajustado`
-  automaticamente (ver seção "Pedágio: catálogo de praças por número de
-  eixos").
+  `calcular_orcamento` ignora esse valor e aplica 4% sobre frete + custos
+  operacionais + taxas (com impostos previstos por cima) automaticamente
+  (ver seção "Pedágio: catálogo de praças por número de eixos").
 - `distancia_retorno`: distância (km) do retorno vazio do veículo, do
   destino até a filial mais próxima — só quando a entrega é feita direto
   ao cliente pela frota própria. Cobrada pela `tarifa_km_retorno` do
