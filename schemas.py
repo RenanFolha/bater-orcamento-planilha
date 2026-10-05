@@ -293,7 +293,7 @@ class AliquotaIcmsIn(BaseModel):
 
 
 class AliquotaPisCofinsIn(BaseModel):
-    aliquota: float = Field(..., ge=0, lt=100, description="Alíquota federal única de PIS/COFINS em % — aplicada 'por dentro' (gross-up) sobre o frete, antes do ICMS")
+    aliquota: float = Field(..., ge=0, lt=100, description="Alíquota federal única de PIS/COFINS em % — percentual simples somado sobre o frete, antes da margem e do ICMS")
     observacao: str = ""
 
 

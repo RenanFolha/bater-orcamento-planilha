@@ -58,23 +58,44 @@ def test_orcamento_categoria_invalida_da_422(client):
     assert r.status_code == 422
 
 
-def test_orcamento_pis_cofins_configurado_acima_de_100_da_500(client):
-    # PUT /admin/pis-cofins não deixa cadastrar >= 100% (schema tem
+def test_orcamento_icms_configurado_acima_de_100_da_500(client):
+    # PUT /admin/aliquotas-icms não deixa cadastrar >= 100% (schema tem
     # lt=100), mas o banco pode ter sido editado direto por fora da API
     # (ex: DB Browser, ver README) -- fs.calcular_orcamento ainda precisa
     # rejeitar isso com um erro claro de configuração (FreteConfigError
-    # -> 500), não um cálculo com divisão por número negativo.
+    # -> 500), já que ICMS é gross-up "por dentro" (ver _aplicar_icms) e
+    # uma alíquota de 100% causaria divisão por zero. Cadastra (ou
+    # atualiza, se já existir -- o seed padrão só tem "SP -> *" genérica,
+    # não "SP -> RJ" específica) a linha específica SP->RJ, que vence a
+    # genérica por especificidade (ver aliquota_icms_aplicavel).
     import frete_db as db
     import frete_service as fs
 
-    db.atualizar_aliquota_pis_cofins(150.0, "teste: aliquota invalida")
+    existente = next(
+        (a for a in db.listar_aliquotas_icms_admin() if a["estado_origem"] == "SP" and a["estado_destino"] == "RJ"),
+        None,
+    )
+    if existente:
+        aliquota_original = existente["aliquota"]
+        db.atualizar_aliquota_icms(existente["id"], "SP", "RJ", 150.0, "teste: aliquota invalida")
+        id_criado = None
+    else:
+        id_criado = db.inserir_aliquota_icms("SP", "RJ", 150.0, "teste: aliquota invalida")
     fs.carregar_parametros()
     try:
-        r = client.post("/orcamento", json=_orcamento_payload())
+        r = client.post(
+            "/orcamento",
+            json=_orcamento_payload(
+                cidade_origem="São Paulo, SP, Brasil", cidade_destino="Rio de Janeiro, RJ, Brasil"
+            ),
+        )
         assert r.status_code == 500
         assert "config" in r.json()["detail"].lower()
     finally:
-        db.atualizar_aliquota_pis_cofins(0.0, "")
+        if existente:
+            db.atualizar_aliquota_icms(existente["id"], "SP", "RJ", aliquota_original, existente["observacao"])
+        else:
+            db.excluir_aliquota_icms(id_criado)
         fs.carregar_parametros()
 
 

@@ -32,6 +32,44 @@ def test_orcamento_fracionado_e_publico_sem_login(client):
     assert data["entrada"]["veiculo"] == "Caminhonete"
 
 
+def test_orcamento_fracionado_icms_configurado_acima_de_100_da_500(client):
+    # Mesmo raciocínio de test_orcamento_icms_configurado_acima_de_100_da_500
+    # em test_main_api.py (ICMS é gross-up "por dentro" -- FreteConfigError
+    # -> 500, ver routers/orcamento_fracionado.py) -- o Fracionado tem sua
+    # própria cópia do try/except, então precisa do próprio teste pra cobrir.
+    # Cadastra (ou atualiza, se já existir -- o seed padrão só tem
+    # "SP -> *" genérica, não "SP -> RJ" específica) a linha específica
+    # SP->RJ, que vence a genérica por especificidade (ver
+    # aliquota_icms_aplicavel).
+    import frete_db as db
+    import frete_service as fs
+
+    existente = next(
+        (a for a in db.listar_aliquotas_icms_admin() if a["estado_origem"] == "SP" and a["estado_destino"] == "RJ"),
+        None,
+    )
+    if existente:
+        aliquota_original = existente["aliquota"]
+        db.atualizar_aliquota_icms(existente["id"], "SP", "RJ", 150.0, "teste: aliquota invalida")
+        id_criado = None
+    else:
+        id_criado = db.inserir_aliquota_icms("SP", "RJ", 150.0, "teste: aliquota invalida")
+    fs.carregar_parametros()
+    try:
+        r = client.post(
+            "/orcamento/fracionado",
+            json=_payload(cidade_origem="São Paulo, SP, Brasil", cidade_destino="Rio de Janeiro, RJ, Brasil"),
+        )
+        assert r.status_code == 500
+        assert "config" in r.json()["detail"].lower()
+    finally:
+        if existente:
+            db.atualizar_aliquota_icms(existente["id"], "SP", "RJ", aliquota_original, existente["observacao"])
+        else:
+            db.excluir_aliquota_icms(id_criado)
+        fs.carregar_parametros()
+
+
 def test_orcamento_fracionado_usa_faixa_de_peso_e_distancia_nao_veiculo(client):
     r = client.post("/orcamento/fracionado", json=_payload())
     assert r.status_code == 200, r.text
@@ -83,25 +121,6 @@ def test_orcamento_fracionado_piso_markup_minimo_ajusta_impostos_e_taxas(client)
     base_piso = calc["total_custo_operacao"] + calc["total_impostos_taxas"] - calc["ajuste_piso_markup"]
     piso = round(base_piso * 1.4, 2)
     assert r.json()["resultado"]["frete_total"] == pytest.approx(piso, abs=0.05)
-
-
-def test_orcamento_fracionado_pis_cofins_configurado_acima_de_100_da_500(client):
-    # Mesmo raciocínio de test_orcamento_pis_cofins_configurado_acima_de_100_da_500
-    # em test_main_api.py (FreteConfigError -> 500, ver
-    # routers/orcamento_fracionado.py) -- o Fracionado tem sua própria
-    # cópia do try/except, então precisa do próprio teste pra cobrir.
-    import frete_db as db
-    import frete_service as fs
-
-    db.atualizar_aliquota_pis_cofins(150.0, "teste: aliquota invalida")
-    fs.carregar_parametros()
-    try:
-        r = client.post("/orcamento/fracionado", json=_payload())
-        assert r.status_code == 500
-        assert "config" in r.json()["detail"].lower()
-    finally:
-        db.atualizar_aliquota_pis_cofins(0.0, "")
-        fs.carregar_parametros()
 
 
 def test_admin_faixas_peso_fracionado_exige_login(client):

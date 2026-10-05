@@ -102,6 +102,17 @@ MARKUP_MINIMO = 1.4
 # estimativa genérica do Google Maps ou deixar em R$ 0.
 PEDAGIO_PCT_FALLBACK = 4.0
 
+# Acréscimo fixo (R$) somado ao custo tabelado de lotação por destino
+# antes da margem de lucro, quando a rota está cadastrada em
+# custos_lotacao_destino (ver _custo_lotacao_destino_aplicavel) --
+# replicado da fórmula da planilha legada (COTAÇÃO SSONIC 2026, aba
+# Base Geral, coluna FRETE), onde esse valor aparece fixo em toda linha
+# de lotação/fracionado independente de peso ou rota; a origem exata
+# desse valor (taxa de documentação? seguro mínimo?) não está
+# documentada na planilha, mas é necessário pra bater o frete_base
+# exatamente com os dados históricos.
+TAXA_FIXA_LOTACAO_TABELA = 33.1
+
 # Nomes de taxas adicionais que podem ser digitadas por orçamento (ver
 # gris_pct/ad_valorem_pct em calcular_orcamento/calcular_orcamento_fracionado
 # e _taxas_adicionais_aplicadas) -- o % digitado substitui o % cadastrado em
@@ -285,6 +296,7 @@ class ParametrosFrete:
         self.distancias_fixas: list[DistanciaFixa] = []
         self.aliquotas_icms: list[AliquotaIcms] = []
         self.aliquota_pis_cofins: float = 0.0
+        self.custos_lotacao_destino: dict[tuple[str, str, str], float] = {}
         self.taxas_diaria_veiculo: list[TaxaDiariaVeiculo] = []
         self.coleta_cidades_fixas: list[ColetaCidadeFixa] = []
         self.faixas_coleta: list[FaixaDistancia] = []
@@ -361,6 +373,10 @@ class ParametrosFrete:
                 "SELECT aliquota FROM aliquota_pis_cofins WHERE id = 1"
             ).fetchone()
             self.aliquota_pis_cofins = linha_pis_cofins["aliquota"] if linha_pis_cofins else 0.0
+            self.custos_lotacao_destino = {
+                (r["origem_tabela"], r["uf_destino"], r["cidade_destino_norm"]): r["custo_total"]
+                for r in conn.execute("SELECT * FROM custos_lotacao_destino")
+            }
             self.taxas_diaria_veiculo = [
                 TaxaDiariaVeiculo(r["uf"], r["valor_carreta"], r["valor_cavalo"])
                 for r in conn.execute("SELECT * FROM taxas_diaria_veiculo")
@@ -1049,6 +1065,34 @@ def distancia_balsa_km(
     return fixa.distancia_km if fixa else 0.0
 
 
+def _custo_lotacao_destino_aplicavel(
+    p: "ParametrosFrete", cidade_origem: str | None, cidade_destino: str | None,
+) -> float | None:
+    """Custo operacional (R$) pré-tabelado pra uma rota de lotação (FTL)
+    fechada, porta-a-porta, cadastrado em custos_lotacao_destino por
+    origem (UF, ver _uf_de_origem_ou_destino) e cidade/UF de destino --
+    mesma lógica da planilha legada (tabela de custo por rota, não por
+    km rodado). Devolve None quando a UF de origem não tem nenhuma rota
+    cadastrada ainda, ou quando a cidade/UF de destino dessa origem não
+    está na tabela -- nesses casos calcular_orcamento cai no fallback de
+    tarifa_km*distância normal."""
+    if not p.custos_lotacao_destino:
+        return None
+    origem_tabela = _uf_de_origem_ou_destino(p, cidade_origem)
+    if not origem_tabela:
+        return None
+    cidade_dest = _cidade_da_retirada(cidade_destino) if cidade_destino else None
+    # cidade_e_uf exige 3+ segmentos (formato completo do geocodificador,
+    # ver seu docstring) -- pro formato curto "Cidade, UF" (2 segmentos,
+    # comum em endereço digitado à mão), usa o mesmo fallback robusto que
+    # _uf_de_origem_ou_destino já tem em vez de cidade_e_uf direto.
+    uf_dest = _uf_de_origem_ou_destino(p, cidade_destino) if cidade_destino else ""
+    if not cidade_dest or not uf_dest:
+        return None
+    chave = (origem_tabela, uf_dest, db.normalizar_texto(cidade_dest))
+    return p.custos_lotacao_destino.get(chave)
+
+
 def _taxa_balsa_outros_veiculos(
     p: "ParametrosFrete", cidade_origem: str | None, cidade_destino: str | None, veiculo_atual: str
 ) -> list[str]:
@@ -1278,42 +1322,42 @@ def _pedagio_aplicado(
 
 
 def _aplicar_pis_cofins(p: "ParametrosFrete", frete_total: float) -> tuple[float, float, float, float]:
-    """PIS/COFINS "por dentro" (gross-up) sobre o frete_total apurado até
-    aqui, com alíquota federal única (não varia por UF, ver
-    ParametrosFrete.aliquota_pis_cofins) — aplicado ANTES do ICMS: o ICMS
-    incide sobre o frete já com PIS/COFINS embutido, não o contrário.
-    Devolve (frete_total_novo, frete_sem_pis_cofins, valor_pis_cofins,
-    aliquota_pis_cofins_pct)."""
+    """PIS/COFINS: um percentual simples somado por fora sobre o
+    frete_total apurado até aqui (custo da operação + impostos/taxas,
+    ainda sem margem de lucro nem ICMS), com alíquota federal única (não
+    varia por UF, ver ParametrosFrete.aliquota_pis_cofins) — aplicado
+    ANTES da margem e do ICMS. Devolve (frete_total_novo,
+    frete_sem_pis_cofins, valor_pis_cofins, aliquota_pis_cofins_pct)."""
     frete_sem_pis_cofins = frete_total
     valor_pis_cofins = 0.0
     aliquota_pis_cofins_pct = p.aliquota_pis_cofins
     if aliquota_pis_cofins_pct > 0:
-        if aliquota_pis_cofins_pct >= 100:
-            raise FreteConfigError(
-                f"Alíquota de PIS/COFINS cadastrada ({aliquota_pis_cofins_pct}%) inválida — deve ser menor que 100%."
-            )
-        frete_total = frete_sem_pis_cofins / (1 - aliquota_pis_cofins_pct / 100)
-        valor_pis_cofins = frete_total - frete_sem_pis_cofins
+        valor_pis_cofins = frete_sem_pis_cofins * (aliquota_pis_cofins_pct / 100)
+        frete_total = frete_sem_pis_cofins + valor_pis_cofins
     return frete_total, frete_sem_pis_cofins, valor_pis_cofins, aliquota_pis_cofins_pct
 
 
 def _aplicar_icms(
     p: "ParametrosFrete", frete_total: float, cidade_origem: str | None, cidade_destino: str | None,
 ) -> tuple[float, float, float, "AliquotaIcms | None", float]:
-    """ICMS sobre o frete total: um acréscimo percentual simples (não
-    gross-up "por dentro" como o PIS/COFINS) somado por último, depois da
-    margem de lucro já embutida em frete_total — a alíquota da rota (UF
-    origem -> UF destino, ver aliquota_icms_aplicavel) incide sobre o
-    valor total já cobrado do cliente, não sobre um custo intermediário
-    antes da margem. Devolve (frete_total_novo, frete_sem_icms, valor_icms,
-    icms_aplicavel, aliquota_icms_pct)."""
+    """ICMS "por dentro" (gross-up), igual ao PIS/COFINS, somado por
+    último, depois da margem de lucro já embutida em frete_total — a
+    alíquota da rota (UF origem -> UF destino, ver aliquota_icms_aplicavel)
+    incide sobre o valor total já cobrado do cliente (frete_total já com
+    ICMS embutido), não é um acréscimo simples sobre o valor sem ICMS.
+    Devolve (frete_total_novo, frete_sem_icms, valor_icms, icms_aplicavel,
+    aliquota_icms_pct)."""
     frete_sem_icms = frete_total
     valor_icms = 0.0
     icms_aplicavel = aliquota_icms_aplicavel(p, cidade_origem, cidade_destino)
     aliquota_icms_pct = icms_aplicavel.aliquota if icms_aplicavel else 0.0
     if aliquota_icms_pct > 0:
-        valor_icms = frete_sem_icms * (aliquota_icms_pct / 100)
-        frete_total = frete_sem_icms + valor_icms
+        if aliquota_icms_pct >= 100:
+            raise FreteConfigError(
+                f"Alíquota de ICMS cadastrada ({aliquota_icms_pct}%) inválida — deve ser menor que 100%."
+            )
+        frete_total = frete_sem_icms / (1 - aliquota_icms_pct / 100)
+        valor_icms = frete_total - frete_sem_icms
     return frete_total, frete_sem_icms, valor_icms, icms_aplicavel, aliquota_icms_pct
 
 
@@ -1463,8 +1507,23 @@ def calcular_orcamento(
     peso_excedente = max(peso_considerado - v.ate, 0)
     custo_peso_excedente = (peso_excedente / 1000) * v.valor_tonelada_excedente
 
-    frete_base = custo_km + custo_peso_excedente
-    frete_ajustado = frete_base * cat.multiplicador * transp.multiplicador * s.multiplicador
+    # Rota com custo pré-tabelado (ver _custo_lotacao_destino_aplicavel)
+    # substitui custo_km/custo_peso_excedente inteiramente pelo custo
+    # operacional cadastrado + TAXA_FIXA_LOTACAO_TABELA -- sem rota
+    # cadastrada, mantém o cálculo por tarifa_km*distância normal.
+    custo_tabela_lotacao_destino = _custo_lotacao_destino_aplicavel(p, cidade_origem, cidade_destino)
+    if custo_tabela_lotacao_destino is not None:
+        # Valor já é o custo operacional completo porta-a-porta (mesma
+        # lógica da planilha legada, que não tem conceito de categoria/
+        # transporte/SLA) -- multiplicador_categoria/transporte/sla NÃO
+        # se aplicam aqui: aplicá-los infacionaria silenciosamente um
+        # valor que deveria ser exato, dependendo do que estiver
+        # cadastrado em Tabela de Preços pra essa categoria/transporte/sla.
+        frete_base = custo_tabela_lotacao_destino + TAXA_FIXA_LOTACAO_TABELA
+        frete_ajustado = frete_base
+    else:
+        frete_base = custo_km + custo_peso_excedente
+        frete_ajustado = frete_base * cat.multiplicador * transp.multiplicador * s.multiplicador
 
     detalhe_custos_extras, custo_extra_total = _custos_extras_aplicados(custos_extras)
     detalhe_taxas, custo_taxas_adicionais = _taxas_adicionais_aplicadas(p, valor_mercadoria, gris_pct, ad_valorem_pct)
@@ -1589,14 +1648,14 @@ def calcular_orcamento(
         + custo_retorno
     )
 
-    # PIS/COFINS "por dentro" (gross-up) sobre o frete_total apurado até
-    # aqui. A margem de lucro entra em seguida — seu VALOR (R$) é
-    # calculado só sobre total_custo_operacao (não sobre impostos/taxas/
-    # PIS-COFINS), somado ao frete_total corrente (ver
-    # _aplicar_margem_lucro). O ICMS é o último imposto, um % simples
-    # (não gross-up) sobre o frete total JÁ COM a margem embutida — a
-    # alíquota incide sobre o valor total cobrado do cliente, não sobre
-    # um custo intermediário antes do lucro (ver _aplicar_icms).
+    # PIS/COFINS: % simples sobre o frete_total apurado até aqui. A
+    # margem de lucro entra em seguida — seu VALOR (R$) é calculado só
+    # sobre total_custo_operacao (não sobre impostos/taxas/PIS-COFINS),
+    # somado ao frete_total corrente (ver _aplicar_margem_lucro). O ICMS
+    # é o último imposto, gross-up "por dentro" sobre o frete total JÁ
+    # COM a margem embutida — a alíquota incide sobre o valor total
+    # cobrado do cliente, que já inclui o próprio ICMS (ver
+    # _aplicar_icms).
     frete_total, frete_sem_pis_cofins, valor_pis_cofins, aliquota_pis_cofins_pct = _aplicar_pis_cofins(p, frete_total)
     frete_total, frete_sem_margem_lucro, valor_margem_lucro = _aplicar_margem_lucro(
         frete_total, total_custo_operacao, MARGEM_LUCRO_PADRAO
@@ -1648,6 +1707,9 @@ def calcular_orcamento(
             "peso_excedente_kg": round(peso_excedente, 3),
             "valor_tonelada_excedente": v.valor_tonelada_excedente,
             "custo_peso_excedente": round(custo_peso_excedente, 2),
+            "custo_tabela_lotacao_destino": (
+                round(custo_tabela_lotacao_destino, 2) if custo_tabela_lotacao_destino is not None else None
+            ),
             "frete_base": round(frete_base, 2),
             "multiplicador_categoria": cat.multiplicador,
             "multiplicador_transporte": transp.multiplicador,
@@ -1849,11 +1911,11 @@ def calcular_orcamento_fracionado(
         + pedagio
     )
 
-    # Mesma ordem de calcular_orcamento: PIS/COFINS "por dentro" sobre o
+    # Mesma ordem de calcular_orcamento: PIS/COFINS (% simples) sobre o
     # custo da operação + impostos e taxas, a margem de lucro em seguida
     # (valor calculado só sobre total_custo_operacao), e o ICMS por
-    # último — % simples sobre o frete total já com a margem embutida
-    # (ver _aplicar_pis_cofins/_aplicar_margem_lucro/_aplicar_icms).
+    # último — gross-up "por dentro" sobre o frete total já com a margem
+    # embutida (ver _aplicar_pis_cofins/_aplicar_margem_lucro/_aplicar_icms).
     frete_total, frete_sem_pis_cofins, valor_pis_cofins, aliquota_pis_cofins_pct = _aplicar_pis_cofins(p, frete_total)
     frete_total, frete_sem_margem_lucro, valor_margem_lucro = _aplicar_margem_lucro(
         frete_total, total_custo_operacao, MARGEM_LUCRO_PADRAO

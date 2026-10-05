@@ -28,3 +28,8 @@ db_config.key
 # Certificado TLS autoassinado (chave privada nunca deve ser versionada —
 # gerado localmente, cada ambiente cria o seu próprio; ver README.md).
 certs/
+
+# Planilha legada com dados reais de preço/cliente (COTAÇÃO SSONIC),
+# usada só como referência local pra comparar com o sistema -- nunca
+# deve ser versionada (ver comparar_planilha.py).
+Planilhas/

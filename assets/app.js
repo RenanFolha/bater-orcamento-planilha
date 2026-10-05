@@ -113,7 +113,7 @@ const MEMORIA_CALCULO_CAMPOS = [
   {header: 'PIS/COFINS'},
   {chave: 'aliquota_pis_cofins_pct', rotulo: 'Alíquota de PIS/COFINS', tipo: 'pct'},
   {chave: 'frete_sem_pis_cofins', rotulo: 'Frete sem PIS/COFINS', tipo: 'brl'},
-  {chave: 'valor_pis_cofins', rotulo: 'Valor do PIS/COFINS (gross-up)', tipo: 'brl'},
+  {chave: 'valor_pis_cofins', rotulo: 'Valor do PIS/COFINS (% simples)', tipo: 'brl'},
 
   {header: 'Margem de lucro'},
   {chave: 'margem_lucro_pct', rotulo: 'Margem de lucro', tipo: 'pct'},
@@ -132,7 +132,7 @@ const MEMORIA_CALCULO_CAMPOS = [
   {chave: 'uf_destino_icms', rotulo: 'UF de destino', tipo: 'texto'},
   {chave: 'aliquota_icms_pct', rotulo: 'Alíquota de ICMS', tipo: 'pct'},
   {chave: 'frete_sem_icms', rotulo: 'Frete sem ICMS (já com margem de lucro)', tipo: 'brl'},
-  {chave: 'valor_icms', rotulo: 'Valor do ICMS (% simples somado por fora, não gross-up)', tipo: 'brl'},
+  {chave: 'valor_icms', rotulo: 'Valor do ICMS (gross-up, por dentro)', tipo: 'brl'},
   {chave: 'ajuste_piso_markup', rotulo: 'Ajuste pro markup mínimo de 1,4x', tipo: 'brl'},
 
   {header: 'Resultado'},
@@ -1370,7 +1370,7 @@ form.addEventListener('submit', async (ev) => {
     const linhaPisCofins = document.getElementById('linha-pis-cofins');
     if(calc.valor_pis_cofins > 0){
       document.getElementById('d-pis-cofins').textContent = fmtBRL(calc.valor_pis_cofins);
-      linhaPisCofins.title = `${calc.aliquota_pis_cofins_pct}%, aplicado por dentro sobre ${fmtBRL(calc.frete_sem_pis_cofins)}`;
+      linhaPisCofins.title = `${calc.aliquota_pis_cofins_pct}%, somado por fora sobre ${fmtBRL(calc.frete_sem_pis_cofins)}`;
       linhaPisCofins.style.display = 'flex';
     }else{
       linhaPisCofins.style.display = 'none';
@@ -1379,7 +1379,7 @@ form.addEventListener('submit', async (ev) => {
     const linhaIcms = document.getElementById('linha-icms');
     if(calc.valor_icms > 0){
       document.getElementById('d-icms').textContent = fmtBRL(calc.valor_icms);
-      linhaIcms.title = `${calc.uf_origem_icms} → ${calc.uf_destino_icms} (${calc.aliquota_icms_pct}% somado por fora sobre ${fmtBRL(calc.frete_sem_icms)}, já com a margem de lucro embutida)`;
+      linhaIcms.title = `${calc.uf_origem_icms} → ${calc.uf_destino_icms} (${calc.aliquota_icms_pct}% gross-up, aplicado por dentro sobre ${fmtBRL(calc.frete_sem_icms)}, já com a margem de lucro embutida)`;
       linhaIcms.style.display = 'flex';
     }else{
       linhaIcms.style.display = 'none';
@@ -1884,14 +1884,14 @@ document.getElementById('frac-form-frete').addEventListener('submit', async (ev)
     const linhaPisCofins = document.getElementById('frac-linha-pis-cofins');
     if(calc.valor_pis_cofins > 0){
       document.getElementById('frac-d-pis-cofins').textContent = fmtBRL(calc.valor_pis_cofins);
-      linhaPisCofins.title = `${calc.aliquota_pis_cofins_pct}%, aplicado por dentro sobre ${fmtBRL(calc.frete_sem_pis_cofins)}`;
+      linhaPisCofins.title = `${calc.aliquota_pis_cofins_pct}%, somado por fora sobre ${fmtBRL(calc.frete_sem_pis_cofins)}`;
       linhaPisCofins.style.display = 'flex';
     }else{ linhaPisCofins.style.display = 'none'; }
 
     const linhaIcms = document.getElementById('frac-linha-icms');
     if(calc.valor_icms > 0){
       document.getElementById('frac-d-icms').textContent = fmtBRL(calc.valor_icms);
-      linhaIcms.title = `${calc.uf_origem_icms} → ${calc.uf_destino_icms} (${calc.aliquota_icms_pct}% somado por fora sobre ${fmtBRL(calc.frete_sem_icms)}, já com a margem de lucro embutida)`;
+      linhaIcms.title = `${calc.uf_origem_icms} → ${calc.uf_destino_icms} (${calc.aliquota_icms_pct}% gross-up, aplicado por dentro sobre ${fmtBRL(calc.frete_sem_icms)}, já com a margem de lucro embutida)`;
       linhaIcms.style.display = 'flex';
     }else{ linhaIcms.style.display = 'none'; }
 

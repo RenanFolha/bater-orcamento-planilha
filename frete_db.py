@@ -162,6 +162,28 @@ CREATE TABLE IF NOT EXISTS taxas_adicionais (
     observacao TEXT DEFAULT ''
 );
 
+CREATE TABLE IF NOT EXISTS custos_lotacao_destino (
+    -- Custo operacional (R$) de uma rota de lotação (FTL) fechada,
+    -- porta-a-porta, por origem cadastrada (ex: "AM" = filial Manaus) e
+    -- cidade/UF de destino -- substitui tarifa_km*distância quando a
+    -- rota está cadastrada aqui (ver frete_service.calcular_orcamento /
+    -- _custo_lotacao_destino_aplicavel), já que os valores vêm de uma
+    -- tabela de custo pré-negociada por rota (a mesma lógica da planilha
+    -- legada "TB LOTAÇÃO - CUSTO"), não de uma tarifa por km. Sem rota
+    -- cadastrada, cai no fallback de tarifa_km*distância normal.
+    -- cidade_destino_norm é a chave de busca (sem acento, minúscula,
+    -- ver normalizar_texto) -- cidade_destino guarda a grafia original
+    -- só para exibição/edição.
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    origem_tabela TEXT NOT NULL,
+    uf_destino TEXT NOT NULL,
+    cidade_destino TEXT NOT NULL,
+    cidade_destino_norm TEXT NOT NULL,
+    custo_total REAL NOT NULL,
+    observacao TEXT DEFAULT '',
+    UNIQUE(origem_tabela, uf_destino, cidade_destino_norm)
+);
+
 CREATE TABLE IF NOT EXISTS coleta_cidades_fixas (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     filial_origem TEXT NOT NULL,
@@ -258,9 +280,9 @@ CREATE TABLE IF NOT EXISTS prioridades_rota (
 CREATE TABLE IF NOT EXISTS aliquotas_icms (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     -- Matriz de alíquotas de ICMS por UF de origem -> UF de destino,
-    -- aplicada como um acréscimo percentual simples sobre o frete_total já
-    -- calculado (com a margem de lucro embutida), somado por último, depois
-    -- do PIS/COFINS: frete_com_icms = frete_total + frete_total * (aliquota/100)
+    -- aplicada "por dentro" (gross-up) sobre o frete_total já calculado
+    -- (com a margem de lucro embutida), somado por último, depois do
+    -- PIS/COFINS: frete_com_icms = frete_total / (1 - aliquota/100)
     -- (ver frete_service.aliquota_icms_aplicavel e _aplicar_icms).
     -- estado_origem e estado_destino aceitam "*" como curinga (mesmo
     -- mecanismo de taxas_balsa/prioridades_rota) -- quando mais de uma
@@ -274,8 +296,8 @@ CREATE TABLE IF NOT EXISTS aliquotas_icms (
 
 CREATE TABLE IF NOT EXISTS aliquota_pis_cofins (
     -- Alíquota federal única de PIS/COFINS (não varia por UF, diferente
-    -- do ICMS) -- aplicada "por dentro" (gross-up) sobre o frete_total
-    -- ANTES do ICMS (ver frete_service.calcular_orcamento). Tabela
+    -- do ICMS) -- percentual simples somado sobre o frete_total ANTES da
+    -- margem de lucro e do ICMS (ver frete_service.calcular_orcamento). Tabela
     -- singleton: sempre tem exatamente 1 linha (id=1), editada por
     -- UPDATE em vez de INSERT/DELETE (ver atualizar_aliquota_pis_cofins).
     id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -939,6 +961,17 @@ CREATE TABLE taxas_adicionais (
     tipo VARCHAR(20) NOT NULL DEFAULT 'fixo' CHECK (tipo IN ('fixo', 'percentual')),
     valor REAL NOT NULL DEFAULT 0,
     observacao TEXT DEFAULT ''
+);
+
+CREATE TABLE custos_lotacao_destino (
+    id {PK},
+    origem_tabela VARCHAR(60) NOT NULL,
+    uf_destino VARCHAR(10) NOT NULL,
+    cidade_destino TEXT NOT NULL,
+    cidade_destino_norm VARCHAR(255) NOT NULL,
+    custo_total REAL NOT NULL,
+    observacao TEXT DEFAULT '',
+    UNIQUE(origem_tabela, uf_destino, cidade_destino_norm)
 );
 
 CREATE TABLE coleta_cidades_fixas (
@@ -1878,6 +1911,54 @@ def atualizar_aliquota_icms(id_, estado_origem, estado_destino, aliquota, observ
 def excluir_aliquota_icms(id_):
     with get_connection() as conn:
         conn.execute("DELETE FROM aliquotas_icms WHERE id=?", (id_,))
+
+
+def listar_custos_lotacao_destino(origem_tabela: str | None = None) -> list[dict]:
+    with get_connection() as conn:
+        if origem_tabela:
+            rows = conn.execute(
+                "SELECT * FROM custos_lotacao_destino WHERE origem_tabela = ? ORDER BY uf_destino, cidade_destino",
+                (origem_tabela,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM custos_lotacao_destino ORDER BY origem_tabela, uf_destino, cidade_destino"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def importar_custos_lotacao_destino(origem_tabela: str, linhas: list[dict]) -> dict:
+    """Upsert em lote por (origem_tabela, uf_destino, cidade_destino_norm)
+    -- cada item de `linhas` é um dict com 'cidade', 'uf', 'custo_total' e
+    opcionalmente 'observacao'. Usado para popular a tabela a partir dos
+    dados extraídos da planilha legada (ver scripts de extração), não
+    tem endpoint de API/tela ainda -- ver frete_service.calcular_orcamento
+    para como o valor é usado."""
+    criadas, atualizadas = 0, 0
+    with get_connection() as conn:
+        for linha in linhas:
+            cidade, uf, custo_total = linha["cidade"], linha["uf"].strip().upper(), linha["custo_total"]
+            cidade_norm = normalizar_texto(cidade)
+            observacao = linha.get("observacao", "")
+            existente = conn.execute(
+                "SELECT id FROM custos_lotacao_destino WHERE origem_tabela=? AND uf_destino=? AND cidade_destino_norm=?",
+                (origem_tabela, uf, cidade_norm),
+            ).fetchone()
+            if existente:
+                conn.execute(
+                    "UPDATE custos_lotacao_destino SET cidade_destino=?, custo_total=?, observacao=? WHERE id=?",
+                    (cidade, custo_total, observacao, existente["id"]),
+                )
+                atualizadas += 1
+            else:
+                conn.execute(
+                    "INSERT INTO custos_lotacao_destino "
+                    "(origem_tabela, uf_destino, cidade_destino, cidade_destino_norm, custo_total, observacao) "
+                    "VALUES (?,?,?,?,?,?)",
+                    (origem_tabela, uf, cidade, cidade_norm, custo_total, observacao),
+                )
+                criadas += 1
+    return {"criadas": criadas, "atualizadas": atualizadas}
 
 
 def obter_aliquota_pis_cofins() -> dict:
