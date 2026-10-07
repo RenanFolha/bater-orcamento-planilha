@@ -179,9 +179,32 @@ dados reais, não assumir):
    Ananindeua em PA). Bahia tem 3 faixas na planilha (CAPITAL/INTERIOR
    I/INTERIOR II); como só distinguimos capital x resto, interior da
    Bahia cai em "INTERIOR I" por aproximação (limitação documentada no
-   código). **Validado com exatidão** em 2 casos reais modernos (SP→Manaus
-   e Manaus→São Paulo): `custo_tabela_fracionado_destino` bate exato com
-   a coluna CUSTO TOTAL da planilha.
+   código).
+
+   **Atualização (sessão seguinte, amostra maior)**: os 2 casos
+   inicialmente validados com exatidão eram só 2 pontos — rodando
+   `comparar_planilha.py fracionado` com 5 casos reais modernos
+   diversos (pesos de 0,35kg a 5.000kg) e checando `EMBARQUE`/`ENTREGA`/
+   `COLETA` contra a tabela em ~48 cotações reais (AM→São Paulo,
+   pós 01/07/2025), o quadro real é:
+   - **EMBARQUE bate em 42/48 (87,5%)** e **ENTREGA em 40/48 (83%)** —
+     esses dois componentes seguem a tabela de faixa de peso bem de
+     perto.
+   - **COLETA só bate em 16/48 (33%)** — na maioria das cotações reais,
+     o valor de COLETA real não é o da tabela (frequentemente R$ 50 fixo
+     em cargas pequenas, às vezes R$ 0, sem um padrão claro identificado
+     ainda). É provavelmente uma taxa mínima/por local de retirada que a
+     tabela de faixa de peso sozinha não captura.
+   - Pra cargas GRANDES (banda "excedente", acima de 200kg), os 3
+     componentes batem exato na maioria dos casos — foi aí que vieram os
+     2 casos "perfeitos" da validação inicial (peso 1030kg e 5000kg).
+     `frete_final` converge melhor quanto maior o peso: 3,5% de erro no
+     caso de 5.000kg, contra até 52% nos casos de poucos kg.
+
+   Conclusão: a tabela de faixa de peso está correta como aproximação
+   geral (resultado "ok, mas não exato" pra cargas pequenas/médias), mas
+   falta descobrir a regra real de COLETA pra cargas pequenas — pendência
+   nova, não investigada a fundo ainda (ver pendências abaixo).
 2. **Margem/preço de venda**: não precisou de lógica nova — o mecanismo
    que já existe no código (`MARGEM_LUCRO_PADRAO=40`, `MARKUP_MINIMO=1.4`
    em `_aplicar_margem_lucro`/`_aplicar_piso_markup`, os mesmos usados em
@@ -197,6 +220,13 @@ dados reais, não assumir):
 
 ### Pendências / não implementado ainda (Fracionado)
 
+- **COLETA não segue a tabela de faixa de peso na maioria das cotações
+  pequenas/médias** (só 33% de aderência em ~48 cotações reais checadas,
+  contra 83-87% de EMBARQUE/ENTREGA) — maior gap de precisão do
+  Fracionado hoje. Hipótese não confirmada: taxa mínima (ex: R$ 50) que
+  prevalece sobre o valor da tabela quando esse for menor, ou algo
+  ligado à cidade exata de origem/retirada — precisa de mais investigação
+  antes de implementar.
 - GRIS/Ad Valorem/Taxa Fluvial do Fracionado variam por UF/capital-interior
   na planilha (ex: AM tem GRIS 0,2%/ADV 0,6%/fluvial 1%, mas o sistema usa
   só o % nacional cadastrado em Tabela de Preços, sem fluvial nenhum) —
@@ -208,9 +238,11 @@ dados reais, não assumir):
   pra extrair.
 - Bahia: interior não diferencia "INTERIOR I" de "INTERIOR II" (usa
   sempre a faixa I).
-- `comparar_planilha.py` ainda só tem os 6 casos antigos (pré-corte) —
-  não foram trocados por casos modernos; a validação exata foi feita à
-  parte (ver nota no próprio arquivo).
+- `comparar_planilha.py fracionado` já usa 5 casos modernos (pós
+  17/06/2025, pesos de 0,35kg a 5.000kg, origem SP e AM) — ver nota no
+  próprio arquivo pra entender por que `frete_base`/`frete_sem_imposto`/
+  `pis_cofins`/`icms` ainda divergem mesmo nesses casos (ordem de
+  aplicação da margem + achado da COLETA acima).
 
 ## Outras pendências / não implementado ainda
 

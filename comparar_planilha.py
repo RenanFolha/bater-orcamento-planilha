@@ -40,20 +40,26 @@ confundidas com bug do sistema):
   destino -- a divergência nesses dois campos é esperada e não é bug de
   fórmula, é falta de dados (ver relatório de divergências, item 3).
 - Para o modal Fracionado, o frete base hoje vem de
-  custos_fracionado_destino (tabela por UF/capital-interino + faixa de
+  custos_fracionado_destino (tabela por UF/capital-interior + faixa de
   peso, ver frete_service._custo_fracionado_destino_aplicavel) quando a
   origem é SP ou AM -- as únicas duas abas "TB FRACIONADO - CUSTO"
-  extraídas até agora. Os 6 casos LTL abaixo são de maio/2025, ANTES da
-  regra vigente (mesmo corte de 17/06/2025 documentado acima pro
-  PIS/COFINS) -- "Margem" nessas linhas não é o MARGEM_LUCRO_PADRAO (40%)
-  atual, e o "frete_base" esperado aqui é o valor DEPOIS da margem
-  (coluna FRETE da planilha), enquanto o frete_base que o sistema
-  devolve é ANTES da margem (mesma diferença de ordem de aplicação já
-  documentada pro item 5 do CONTEXTO.md, lotação) -- por isso os campos
-  abaixo vão divergir mesmo com o cálculo correto; não é bug. Validado à
-  parte (fora deste script) com casos modernos (pós 17/06/2025, origem SP
-  e AM): custo_tabela_fracionado_destino bate exato com a coluna CUSTO
-  TOTAL da planilha.
+  extraídas até agora. Os casos LTL abaixo são todos pós 17/06/2025
+  (regime vigente, "Margem" já reflete negociação real em cima do
+  MARGEM_LUCRO_PADRAO=40% padrão). Mesmo assim, o "frete_base" esperado
+  aqui é o valor DEPOIS da margem (coluna FRETE da planilha), enquanto o
+  frete_base que o sistema devolve é ANTES da margem (mesma diferença de
+  ordem de aplicação já documentada pro item 5 do CONTEXTO.md, lotação:
+  a planilha embute a margem direto no "frete_base" dela, o sistema
+  aplica em cascata separado) -- por isso frete_base/frete_sem_imposto/
+  pis_cofins/icms divergem mesmo com o cálculo correto (mesmo padrão já
+  aceito nos casos de lotação abaixo); frete_final é o campo que importa
+  de verdade pra validar, e deve convergir melhor quanto maior o peso
+  (achado: COLETA só segue a tabela de faixa de peso em ~33% das
+  cotações reais pequenas/médias -- EMBARQUE/ENTREGA batem em 83-87% --
+  então frete_final converge bem pra cargas grandes/banda "excedente"
+  acima de 200kg e menos pra cargas pequenas, ver CONTEXTO.md). GRIS/Ad
+  Valorem foram escolhidos com % igual ao padrão nacional cadastrado
+  (0,15%/0,35%), então esses dois campos devem bater também.
 
 Como rodar (sempre pela raiz do repo, usando o Python do venv):
 
@@ -120,75 +126,63 @@ def _parametros_neutros() -> tuple[str, str, str]:
 # aba "Base Geral").
 CASOS = [
     {
-        "nome": "LTL SP->Tucuruí/PA (linha 2)",
+        "nome": "LTL São Bernardo do Campo/SP->Manaus/AM peso 0,35kg (linha 4186)",
         "tipo": "fracionado",
-        "peso": 130, "m3": 1.072526, "distancia_km": 2900,
-        "valor_mercadoria": 213750,
-        "cidade_origem": "São Paulo, SP", "cidade_destino": "Tucuruí, PA",
+        "peso": 0.35, "m3": 0.001408, "distancia_km": 3490,
+        "valor_mercadoria": 4050,
+        "cidade_origem": "São Bernardo do Campo, SP", "cidade_destino": "Manaus, AM",
         "esperado": {
-            "frete_base": 1043.73, "gris": 427.50, "ad_valorem": 1282.50,
-            "taxa_fluvial": 0.0, "frete_sem_imposto": 2753.73, "pis_cofins": 0.0,
-            "icms": 207.27, "frete_final": 2961.01,
+            "frete_base": 210.56, "gris": 6.075, "ad_valorem": 14.175,
+            "taxa_fluvial": 4.86, "frete_sem_imposto": 235.67, "pis_cofins": 7.0701,
+            "icms": 17.7386, "frete_final": 260.4787,
         },
     },
     {
-        "nome": "LTL SP->Moju/PA (linha 3)",
+        "nome": "LTL São Paulo/SP->Capanema/PA peso 69,8kg (linha 1466)",
         "tipo": "fracionado",
-        "peso": 140, "m3": 0.3, "distancia_km": 2850,
-        "valor_mercadoria": 19723.73,
-        "cidade_origem": "São Paulo, SP", "cidade_destino": "Moju, PA",
+        "peso": 69.8, "m3": 0.48, "distancia_km": 3000,
+        "valor_mercadoria": 7490.2,
+        "cidade_origem": "São Paulo, SP", "cidade_destino": "Capanema, PA",
         "esperado": {
-            "frete_base": 587.12, "gris": 39.45, "ad_valorem": 118.34,
-            "taxa_fluvial": 0.0, "frete_sem_imposto": 744.91, "pis_cofins": 0.0,
-            "icms": 56.07, "frete_final": 800.97,
+            "frete_base": 1028.0346, "gris": 11.2353, "ad_valorem": 26.2157,
+            "taxa_fluvial": 0.0, "frete_sem_imposto": 1065.4856, "pis_cofins": 31.9646,
+            "icms": 80.1978, "frete_final": 1177.6481,
         },
     },
     {
-        "nome": "LTL SP->Manaus/AM peso 16kg (linha 4)",
+        "nome": "LTL Guarulhos/SP->Carauari/AM peso 38,4kg (linha 1513)",
         "tipo": "fracionado",
-        "peso": 16, "m3": 0.25, "distancia_km": 3490,
-        "valor_mercadoria": 1207.68,
+        "peso": 38.4, "m3": 2.046, "distancia_km": 4200,
+        "valor_mercadoria": 3000,
+        "cidade_origem": "Guarulhos, SP", "cidade_destino": "Carauari, AM",
+        "esperado": {
+            "frete_base": 4469.3532, "gris": 4.5, "ad_valorem": 10.5,
+            "taxa_fluvial": 6.0, "frete_sem_imposto": 4490.3532, "pis_cofins": 134.7106,
+            "icms": 337.9836, "frete_final": 4963.0474,
+        },
+    },
+    {
+        "nome": "LTL São Paulo/SP->Manaus/AM peso 150kg (linha 1582)",
+        "tipo": "fracionado",
+        "peso": 150, "m3": 3.06, "distancia_km": 3490,
+        "valor_mercadoria": 10500,
         "cidade_origem": "São Paulo, SP", "cidade_destino": "Manaus, AM",
         "esperado": {
-            "frete_base": 377.91, "gris": 2.42, "ad_valorem": 7.25,
-            "taxa_fluvial": 12.08, "frete_sem_imposto": 399.65, "pis_cofins": 0.0,
-            "icms": 30.08, "frete_final": 429.73,
+            "frete_base": 2530.9872, "gris": 15.75, "ad_valorem": 36.75,
+            "taxa_fluvial": 12.6, "frete_sem_imposto": 2596.0872, "pis_cofins": 77.8826,
+            "icms": 195.4044, "frete_final": 2869.3742,
         },
     },
     {
-        "nome": "LTL SP->Manaus/AM peso 19kg (linha 5)",
+        "nome": "LTL Manaus/AM->São Paulo/SP peso 5.000kg (linha 3482)",
         "tipo": "fracionado",
-        "peso": 19, "m3": 0.3, "distancia_km": 3490,
-        "valor_mercadoria": 721.2,
-        "cidade_origem": "São Paulo, SP", "cidade_destino": "Manaus, AM",
+        "peso": 5000, "m3": 7, "distancia_km": 3490,
+        "valor_mercadoria": 3500,
+        "cidade_origem": "Manaus, AM", "cidade_destino": "São Paulo, SP",
         "esperado": {
-            "frete_base": 377.91, "gris": 1.44, "ad_valorem": 4.33,
-            "taxa_fluvial": 7.21, "frete_sem_imposto": 390.89, "pis_cofins": 0.0,
-            "icms": 29.42, "frete_final": 420.31,
-        },
-    },
-    {
-        "nome": "LTL SP->Manaus/AM peso 270kg (linha 6)",
-        "tipo": "fracionado",
-        "peso": 270, "m3": 3.5, "distancia_km": 3490,
-        "valor_mercadoria": 21900,
-        "cidade_origem": "São Paulo, SP", "cidade_destino": "Manaus, AM",
-        "esperado": {
-            "frete_base": 2822.21, "gris": 43.80, "ad_valorem": 131.40,
-            "taxa_fluvial": 219.0, "frete_sem_imposto": 3216.41, "pis_cofins": 0.0,
-            "icms": 242.10, "frete_final": 3458.50,
-        },
-    },
-    {
-        "nome": "LTL SP->Manaus/AM peso 20,92kg (linha 7)",
-        "tipo": "fracionado",
-        "peso": 20.92, "m3": 0.062304, "distancia_km": 3490,
-        "valor_mercadoria": 20000,
-        "cidade_origem": "São Paulo, SP", "cidade_destino": "Manaus, AM",
-        "esperado": {
-            "frete_base": 204.37, "gris": 40.0, "ad_valorem": 120.0,
-            "taxa_fluvial": 200.0, "frete_sem_imposto": 564.37, "pis_cofins": 0.0,
-            "icms": 42.48, "frete_final": 606.85,
+            "frete_base": 9743.258, "gris": 5.25, "ad_valorem": 12.25,
+            "taxa_fluvial": 4.2, "frete_sem_imposto": 9764.958, "pis_cofins": 292.9487,
+            "icms": 1331.5852, "frete_final": 11389.4919,
         },
     },
     {
