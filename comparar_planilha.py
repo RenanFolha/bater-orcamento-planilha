@@ -39,11 +39,21 @@ confundidas com bug do sistema):
   (Tabela de Preços), enquanto na planilha variam por cidade/UF de
   destino -- a divergência nesses dois campos é esperada e não é bug de
   fórmula, é falta de dados (ver relatório de divergências, item 3).
-- Para o modal Fracionado, não há nenhuma faixa de peso cadastrada em
-  Tabela de Preços → Fracionado hoje (tabela faixas_peso vazia para
-  tipo_frete='Fracionado') -- os casos LTL abaixo vão falhar com
-  FreteConfigError até que isso seja cadastrado. O script reporta esse
-  erro no lugar do resultado e segue para os próximos casos.
+- Para o modal Fracionado, o frete base hoje vem de
+  custos_fracionado_destino (tabela por UF/capital-interino + faixa de
+  peso, ver frete_service._custo_fracionado_destino_aplicavel) quando a
+  origem é SP ou AM -- as únicas duas abas "TB FRACIONADO - CUSTO"
+  extraídas até agora. Os 6 casos LTL abaixo são de maio/2025, ANTES da
+  regra vigente (mesmo corte de 17/06/2025 documentado acima pro
+  PIS/COFINS) -- "Margem" nessas linhas não é o MARGEM_LUCRO_PADRAO (40%)
+  atual, e o "frete_base" esperado aqui é o valor DEPOIS da margem
+  (coluna FRETE da planilha), enquanto o frete_base que o sistema
+  devolve é ANTES da margem (mesma diferença de ordem de aplicação já
+  documentada pro item 5 do CONTEXTO.md, lotação) -- por isso os campos
+  abaixo vão divergir mesmo com o cálculo correto; não é bug. Validado à
+  parte (fora deste script) com casos modernos (pós 17/06/2025, origem SP
+  e AM): custo_tabela_fracionado_destino bate exato com a coluna CUSTO
+  TOTAL da planilha.
 
 Como rodar (sempre pela raiz do repo, usando o Python do venv):
 

@@ -184,6 +184,34 @@ CREATE TABLE IF NOT EXISTS custos_lotacao_destino (
     UNIQUE(origem_tabela, uf_destino, cidade_destino_norm)
 );
 
+CREATE TABLE IF NOT EXISTS custos_fracionado_destino (
+    -- Custo operacional (R$) do Fracionado (LTL) por faixa de peso,
+    -- componente (coleta/embarque/entrega) e destino -- mesma lógica de
+    -- custos_lotacao_destino (tabela pré-negociada, não fórmula por km),
+    -- só que o Fracionado tem 3 componentes de custo e cada um escala
+    -- por faixa de peso (ver frete_service._custo_fracionado_destino_
+    -- aplicavel): v10..v200 são o custo total até aquele limite de peso
+    -- (kg), excedente_kg é o R$/kg adicional acima de 200kg -- extraído
+    -- das abas "TB FRACIONADO - CUSTO (SP/AM)" da planilha legada.
+    -- capital_interior guarda o texto exato da planilha ('CAPITAL',
+    -- 'INTERIOR', ou no caso da Bahia 'INTERIOR I'/'INTERIOR II').
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    origem_tabela TEXT NOT NULL,
+    uf_destino TEXT NOT NULL,
+    capital_interior TEXT NOT NULL,
+    componente TEXT NOT NULL CHECK (componente IN ('coleta', 'embarque', 'entrega')),
+    v10 REAL NOT NULL,
+    v20 REAL NOT NULL,
+    v30 REAL NOT NULL,
+    v50 REAL NOT NULL,
+    v70 REAL NOT NULL,
+    v100 REAL NOT NULL,
+    v150 REAL NOT NULL,
+    v200 REAL NOT NULL,
+    excedente_kg REAL NOT NULL,
+    UNIQUE(origem_tabela, uf_destino, capital_interior, componente)
+);
+
 CREATE TABLE IF NOT EXISTS coleta_cidades_fixas (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     filial_origem TEXT NOT NULL,
@@ -972,6 +1000,24 @@ CREATE TABLE custos_lotacao_destino (
     custo_total REAL NOT NULL,
     observacao TEXT DEFAULT '',
     UNIQUE(origem_tabela, uf_destino, cidade_destino_norm)
+);
+
+CREATE TABLE custos_fracionado_destino (
+    id {PK},
+    origem_tabela VARCHAR(60) NOT NULL,
+    uf_destino VARCHAR(10) NOT NULL,
+    capital_interior VARCHAR(20) NOT NULL,
+    componente VARCHAR(20) NOT NULL CHECK (componente IN ('coleta', 'embarque', 'entrega')),
+    v10 REAL NOT NULL,
+    v20 REAL NOT NULL,
+    v30 REAL NOT NULL,
+    v50 REAL NOT NULL,
+    v70 REAL NOT NULL,
+    v100 REAL NOT NULL,
+    v150 REAL NOT NULL,
+    v200 REAL NOT NULL,
+    excedente_kg REAL NOT NULL,
+    UNIQUE(origem_tabela, uf_destino, capital_interior, componente)
 );
 
 CREATE TABLE coleta_cidades_fixas (
@@ -1956,6 +2002,62 @@ def importar_custos_lotacao_destino(origem_tabela: str, linhas: list[dict]) -> d
                     "(origem_tabela, uf_destino, cidade_destino, cidade_destino_norm, custo_total, observacao) "
                     "VALUES (?,?,?,?,?,?)",
                     (origem_tabela, uf, cidade, cidade_norm, custo_total, observacao),
+                )
+                criadas += 1
+    return {"criadas": criadas, "atualizadas": atualizadas}
+
+
+def listar_custos_fracionado_destino(origem_tabela: str | None = None) -> list[dict]:
+    with get_connection() as conn:
+        if origem_tabela:
+            rows = conn.execute(
+                "SELECT * FROM custos_fracionado_destino WHERE origem_tabela = ? "
+                "ORDER BY uf_destino, capital_interior, componente",
+                (origem_tabela,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM custos_fracionado_destino "
+                "ORDER BY origem_tabela, uf_destino, capital_interior, componente"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def importar_custos_fracionado_destino(origem_tabela: str, linhas: list[dict]) -> dict:
+    """Upsert em lote por (origem_tabela, uf_destino, capital_interior,
+    componente) -- cada item de `linhas` é um dict com 'uf',
+    'capital_interior', 'componente' e os valores de faixa de peso
+    ('v10','v20','v30','v50','v70','v100','v150','v200','excedente_kg').
+    Usado para popular a tabela a partir dos dados extraídos da planilha
+    legada (abas "TB FRACIONADO - CUSTO (SP/AM)"), não tem endpoint de
+    API/tela ainda -- ver frete_service._custo_fracionado_destino_aplicavel
+    para como o valor é usado."""
+    criadas, atualizadas = 0, 0
+    campos_faixa = ("v10", "v20", "v30", "v50", "v70", "v100", "v150", "v200", "excedente_kg")
+    with get_connection() as conn:
+        for linha in linhas:
+            uf = linha["uf"].strip().upper()
+            capital_interior = linha["capital_interior"].strip().upper()
+            componente = linha["componente"].strip().lower()
+            valores = [linha[campo] for campo in campos_faixa]
+            existente = conn.execute(
+                "SELECT id FROM custos_fracionado_destino "
+                "WHERE origem_tabela=? AND uf_destino=? AND capital_interior=? AND componente=?",
+                (origem_tabela, uf, capital_interior, componente),
+            ).fetchone()
+            if existente:
+                conn.execute(
+                    f"UPDATE custos_fracionado_destino SET {', '.join(c + '=?' for c in campos_faixa)} "
+                    "WHERE id=?",
+                    (*valores, existente["id"]),
+                )
+                atualizadas += 1
+            else:
+                conn.execute(
+                    "INSERT INTO custos_fracionado_destino "
+                    "(origem_tabela, uf_destino, capital_interior, componente, "
+                    f"{', '.join(campos_faixa)}) VALUES (?,?,?,?,{','.join(['?'] * len(campos_faixa))})",
+                    (origem_tabela, uf, capital_interior, componente, *valores),
                 )
                 criadas += 1
     return {"criadas": criadas, "atualizadas": atualizadas}

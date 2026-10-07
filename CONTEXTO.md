@@ -96,12 +96,67 @@ planilha (não só exemplos pontuais) pra achar o padrão real, não assumir:
    migraram de PIS/COFINS pra ICMS (a validação técnica migrou porque só o
    gross-up tem risco de divisão por zero).
 
-## Pendências / não implementado ainda
+## Fracionado (LTL) — investigado e parcialmente implementado (sessão seguinte)
 
-- **Fracionado (LTL)**: nenhuma faixa de peso cadastrada em Tabela de
-  Preços → Fracionado hoje — todo caso de fracionado falha com
-  `FreteConfigError` antes de calcular qualquer coisa. Não investigado a
-  fundo ainda.
+Antes disso o Fracionado falhava 100% das vezes (`FreteConfigError`, nenhuma
+faixa cadastrada). Investigação (mesmo método do item 5: extrair e analisar
+dados reais, não assumir):
+
+1. **Custo** (`COLETA+EMBARQUE+ENTREGA`) vem de 3 tabelas por faixa de peso
+   fixa (10/20/30/50/70/100/150/200kg + R$/kg excedente acima de 200kg),
+   uma por UF+capital/interior do destino, extraídas das abas "TB
+   FRACIONADO - CUSTO (SP)" e "TB FRACIONADO - CUSTO (AM)" (a aba "(PA)"
+   existe mas está toda zerada na planilha — não extraída, origem PA do
+   Fracionado não tem custo real cadastrado lá). Nova tabela no banco:
+   `custos_fracionado_destino` (chave: origem_tabela + uf_destino +
+   capital_interior + componente), implementada em
+   `frete_service._custo_fracionado_destino_aplicavel` — quando a rota
+   não está coberta (faltam dados dos 3 componentes), cai no fallback
+   antigo de `faixas_peso_fracionado`/`faixas_distancia_fracionado`
+   genérico (que continua vazio hoje, então ainda falha fora de SP/AM).
+   Populado localmente (dado real, não versionado) com 111+87 linhas
+   (37 destinos SP × 3 componentes + 29 destinos AM × 3). Classificação
+   capital/interior usa a lista fixa `CAPITAIS_BR` em `frete_service.py`
+   (extraída da aba "Capitais" — inclui região metropolitana quando a
+   planilha trata como capital, ex: Guarulhos/Barueri/Osasco em SP,
+   Ananindeua em PA). Bahia tem 3 faixas na planilha (CAPITAL/INTERIOR
+   I/INTERIOR II); como só distinguimos capital x resto, interior da
+   Bahia cai em "INTERIOR I" por aproximação (limitação documentada no
+   código). **Validado com exatidão** em 2 casos reais modernos (SP→Manaus
+   e Manaus→São Paulo): `custo_tabela_fracionado_destino` bate exato com
+   a coluna CUSTO TOTAL da planilha.
+2. **Margem/preço de venda**: não precisou de lógica nova — o mecanismo
+   que já existe no código (`MARGEM_LUCRO_PADRAO=40`, `MARKUP_MINIMO=1.4`
+   em `_aplicar_margem_lucro`/`_aplicar_piso_markup`, os mesmos usados em
+   lotação) já é a regra vigente da planilha pro Fracionado também —
+   confirmado batendo os valores de "Margem" (quase sempre 0,4) e
+   "MARKUP" (~1,4) das cotações reais pós 17/06/2025 com essas duas
+   constantes. Mesma ressalva do item 5 (ordem de aplicação): a planilha
+   embute a margem direto no "frete_base" dela, o sistema aplica em
+   cascata separado — bate no frete final, não nos campos intermediários.
+3. **Cotações anteriores a 17/06/2025** (mesmo corte do PIS/COFINS): usam
+   fórmula antiga (sem o conceito de MARKUP, margem variável tipo 0,2/0,3)
+   — decisão consciente de não replicar, mesma política do item 5.
+
+### Pendências / não implementado ainda (Fracionado)
+
+- GRIS/Ad Valorem/Taxa Fluvial do Fracionado variam por UF/capital-interior
+  na planilha (ex: AM tem GRIS 0,2%/ADV 0,6%/fluvial 1%, mas o sistema usa
+  só o % nacional cadastrado em Tabela de Preços, sem fluvial nenhum) —
+  mesma limitação já aceita pra lotação (item 3), não implementada aqui
+  também.
+- Origem PA do Fracionado: aba de custo existe mas está zerada na
+  planilha — não há dado real pra extrair.
+- Outras origens de Fracionado (fora SP/AM): não existem abas de custo
+  pra extrair.
+- Bahia: interior não diferencia "INTERIOR I" de "INTERIOR II" (usa
+  sempre a faixa I).
+- `comparar_planilha.py` ainda só tem os 6 casos antigos (pré-corte) —
+  não foram trocados por casos modernos; a validação exata foi feita à
+  parte (ver nota no próprio arquivo).
+
+## Outras pendências / não implementado ainda
+
 - **Aba "TB LOTAÇÃO - DIVERSOS"**: estrutura diferente das outras (origem
   variável linha a linha, não fixa por filial/UF) — não cadastrada.
 - **Outras origens de lotação** (fora SP/AM/PR): não extraídas.
@@ -121,5 +176,11 @@ planilha (não só exemplos pontuais) pra achar o padrão real, não assumir:
 2. Rodar `comparar_planilha.py` pra ver o estado atual.
 3. Rodar a suíte (`pytest tests/ -q`) antes de qualquer mudança nova, pra
    ter uma baseline.
-4. Decidir por qual pendência seguir (fracionado é provavelmente a próxima
-   mais impactante, já que hoje falha 100% das vezes).
+4. Decidir por qual pendência seguir. Fracionado SP/AM já calcula e o
+   custo bate exato (ver seção acima) — falta GRIS/ADV/fluvial por UF,
+   PA/outras origens, e separadamente há o achado do `Teste_Completo_
+   FTL_2026_Sistema_vs_Planilha.xlsx` (em `Planilhas/`, não versionado):
+   rodando 1017 cotações FTL reais de 2026 direto pelos endpoints, só
+   9,3% batem em ±5% — achados maiores: consolidação de carga pequena em
+   AM, tarifas de veículos leves/médios em SP abaixo do praticado, regra
+   de balsa Manaus-Belém incompleta, prazo sempre fixo "5 dias úteis".

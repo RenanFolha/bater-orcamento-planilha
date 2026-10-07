@@ -51,6 +51,44 @@ _UFS_BR_SIGLAS = {
     "mg", "pa", "pb", "pr", "pe", "pi", "rj", "rn", "rs", "ro", "rr", "sc",
     "sp", "se", "to",
 }
+# Cidades (normalizadas, ver db.normalizar_texto) classificadas como
+# "CAPITAL" por UF pra fins de custo do Fracionado (ver
+# _classificar_capital_interior/_custo_fracionado_destino_aplicavel) --
+# inclui a região metropolitana quando a planilha legada (aba "Capitais")
+# trata ela como capital pra efeito de tarifa (ex: Guarulhos/Barueri/Osasco
+# em SP, Ananindeua em PA), não só o município-sede. Qualquer cidade fora
+# dessa lista cai em "INTERIOR". Referência nacional estável -- não
+# cadastrada em tela, ao contrário dos dados de preço.
+CAPITAIS_BR: dict[str, set[str]] = {
+    "AC": {"rio branco"},
+    "AL": {"maceio"},
+    "AM": {"manaus"},
+    "AP": {"macapa"},
+    "BA": {"salvador"},
+    "CE": {"fortaleza"},
+    "DF": {"brasilia"},
+    "ES": {"vitoria"},
+    "GO": {"goiania"},
+    "MA": {"sao luis"},
+    "MG": {"belo horizonte"},
+    "MS": {"campo grande"},
+    "MT": {"cuiaba"},
+    "PA": {"ananindeua", "belem"},
+    "PB": {"joao pessoa"},
+    "PE": {"recife"},
+    "PI": {"teresina"},
+    "PR": {"curitiba"},
+    "RJ": {"rio de janeiro"},
+    "RN": {"natal"},
+    "RO": {"porto velho"},
+    "RR": {"boa vista"},
+    "RS": {"porto alegre"},
+    "SC": {"florianopolis"},
+    "SE": {"aracaju"},
+    "SP": {"barueri", "guarulhos", "osasco", "sao bernardo dos campos", "sao paulo"},
+    "TO": {"palmas"},
+}
+
 _CEP_SOLTO_REGEX = re.compile(r"^\d{5}-?\d{3}$")
 # O Nominatim separa a UF em segmento próprio ("..., São Paulo, SP, Brasil"),
 # mas o formatted_address do Google Maps cola a sigla no mesmo segmento da
@@ -143,6 +181,33 @@ class FaixaPeso:
     ate: float
     tarifa_base: float
     custo_kg_adicional: float
+
+
+@dataclass
+class FaixaCustoFracionado:
+    """Custo (R$) de um componente (coleta/embarque/entrega) do Fracionado
+    por faixa de peso fixa (10/20/30/50/70/100/150/200kg) + R$/kg acima de
+    200kg (excedente_kg) -- replica a estrutura das abas "TB FRACIONADO -
+    CUSTO (SP/AM)" da planilha legada (ver custos_fracionado_destino e
+    _custo_fracionado_destino_aplicavel)."""
+    v10: float
+    v20: float
+    v30: float
+    v50: float
+    v70: float
+    v100: float
+    v150: float
+    v200: float
+    excedente_kg: float
+
+    def calcular(self, peso: float) -> float:
+        for limite, valor in (
+            (10, self.v10), (20, self.v20), (30, self.v30), (50, self.v50),
+            (70, self.v70), (100, self.v100), (150, self.v150), (200, self.v200),
+        ):
+            if peso <= limite:
+                return valor
+        return self.v200 + self.excedente_kg * (peso - 200)
 
 
 @dataclass
@@ -376,6 +441,13 @@ class ParametrosFrete:
             self.custos_lotacao_destino = {
                 (r["origem_tabela"], r["uf_destino"], r["cidade_destino_norm"]): r["custo_total"]
                 for r in conn.execute("SELECT * FROM custos_lotacao_destino")
+            }
+            self.custos_fracionado_destino = {
+                (r["origem_tabela"], r["uf_destino"], r["capital_interior"], r["componente"]): FaixaCustoFracionado(
+                    r["v10"], r["v20"], r["v30"], r["v50"], r["v70"], r["v100"], r["v150"], r["v200"],
+                    r["excedente_kg"],
+                )
+                for r in conn.execute("SELECT * FROM custos_fracionado_destino")
             }
             self.taxas_diaria_veiculo = [
                 TaxaDiariaVeiculo(r["uf"], r["valor_carreta"], r["valor_cavalo"])
@@ -1091,6 +1163,59 @@ def _custo_lotacao_destino_aplicavel(
         return None
     chave = (origem_tabela, uf_dest, db.normalizar_texto(cidade_dest))
     return p.custos_lotacao_destino.get(chave)
+
+
+def _classificar_capital_interior(p: "ParametrosFrete", uf_destino: str, cidade_destino: str) -> str:
+    """'CAPITAL' quando a cidade (normalizada) está em CAPITAIS_BR pra essa
+    UF, senão 'INTERIOR' -- ver _custo_fracionado_destino_aplicavel. Exceção
+    conhecida: a Bahia tem três faixas na planilha ('CAPITAL'/'INTERIOR I'/
+    'INTERIOR II') em vez de duas; como CAPITAIS_BR só distingue capital x
+    resto, cidades do interior da Bahia caem todas em 'INTERIOR', e
+    _custo_fracionado_destino_aplicavel tenta 'INTERIOR I' como variante
+    quando 'INTERIOR' não está cadastrado pra essa UF -- não diferencia
+    I de II, limitação conhecida e documentada aqui."""
+    cidade_norm = db.normalizar_texto(cidade_destino)
+    if cidade_norm in CAPITAIS_BR.get(uf_destino.strip().upper(), set()):
+        return "CAPITAL"
+    return "INTERIOR"
+
+
+def _custo_fracionado_destino_aplicavel(
+    p: "ParametrosFrete", cidade_origem: str | None, cidade_destino: str | None, peso_considerado: float,
+) -> float | None:
+    """Custo operacional (R$) do Fracionado (LTL) pré-tabelado por faixa de
+    peso, somando os 3 componentes (coleta + embarque + entrega)
+    cadastrados em custos_fracionado_destino pra essa origem (UF da tabela,
+    ver _uf_de_origem_ou_destino -- só 'SP' e 'AM' têm tabela extraída hoje)
+    e cidade/UF de destino -- mesma lógica das abas "TB FRACIONADO - CUSTO"
+    da planilha legada. Devolve None quando a origem não tem tabela
+    cadastrada, ou quando falta QUALQUER um dos 3 componentes pra esse
+    destino (a planilha não tem embarque/entrega cadastrados pra toda UF a
+    partir de toda origem) -- nesses casos calcular_orcamento_fracionado
+    cai no fallback de faixas_peso_fracionado/faixas_distancia_fracionado
+    genérico."""
+    if not p.custos_fracionado_destino:
+        return None
+    origem_tabela = _uf_de_origem_ou_destino(p, cidade_origem)
+    if not origem_tabela:
+        return None
+    cidade_dest = _cidade_da_retirada(cidade_destino) if cidade_destino else None
+    uf_dest = _uf_de_origem_ou_destino(p, cidade_destino) if cidade_destino else ""
+    if not cidade_dest or not uf_dest:
+        return None
+    capital_interior = _classificar_capital_interior(p, uf_dest, cidade_dest)
+    total = 0.0
+    for componente in ("coleta", "embarque", "entrega"):
+        faixa = p.custos_fracionado_destino.get((origem_tabela, uf_dest, capital_interior, componente))
+        if faixa is None and capital_interior == "INTERIOR":
+            # Bahia: a planilha não tem faixa "INTERIOR" simples, só
+            # "INTERIOR I"/"INTERIOR II" -- usa "INTERIOR I" como
+            # aproximação (ver docstring de _classificar_capital_interior).
+            faixa = p.custos_fracionado_destino.get((origem_tabela, uf_dest, "INTERIOR I", componente))
+        if faixa is None:
+            return None
+        total += faixa.calcular(peso_considerado)
+    return total
 
 
 def _taxa_balsa_outros_veiculos(
@@ -1867,14 +1992,32 @@ def calcular_orcamento_fracionado(
     balsa_km = distancia_balsa_km(p, cidade_origem, cidade_destino, prioridade_rota)
     distancia_faturavel = max(distancia - balsa_km, 0.0)
 
-    faixa_peso = p.buscar_faixa_peso_fracionado(peso_considerado)
-    custo_base_peso = faixa_peso.tarifa_base + faixa_peso.custo_kg_adicional * max(peso_considerado - faixa_peso.de, 0)
+    # Rota com custo pré-tabelado por faixa de peso (ver
+    # _custo_fracionado_destino_aplicavel) substitui as faixas genéricas de
+    # peso/distância inteiramente -- mesma lógica de
+    # _custo_lotacao_destino_aplicavel em calcular_orcamento: o valor já é
+    # o custo operacional completo (coleta+embarque+entrega somados por
+    # faixa de peso, da planilha legada), então categoria/transporte/sla
+    # NÃO se aplicam aqui pela mesma razão. Sem rota cadastrada pra essa
+    # origem/destino, cai no fallback de faixas_peso_fracionado/
+    # faixas_distancia_fracionado genérico (comportamento histórico).
+    faixa_peso = faixa_distancia = None
+    custo_base_peso = custo_base_distancia = None
+    custo_tabela_fracionado_destino = _custo_fracionado_destino_aplicavel(
+        p, cidade_origem, cidade_destino, peso_considerado
+    )
+    if custo_tabela_fracionado_destino is not None:
+        frete_base = custo_tabela_fracionado_destino
+        frete_ajustado = frete_base
+    else:
+        faixa_peso = p.buscar_faixa_peso_fracionado(peso_considerado)
+        custo_base_peso = faixa_peso.tarifa_base + faixa_peso.custo_kg_adicional * max(peso_considerado - faixa_peso.de, 0)
 
-    faixa_distancia = p.buscar_faixa_distancia_fracionado(distancia_faturavel)
-    custo_base_distancia = faixa_distancia.taxa_fixa + faixa_distancia.tarifa_km * distancia_faturavel
+        faixa_distancia = p.buscar_faixa_distancia_fracionado(distancia_faturavel)
+        custo_base_distancia = faixa_distancia.taxa_fixa + faixa_distancia.tarifa_km * distancia_faturavel
 
-    frete_base = custo_base_peso + custo_base_distancia
-    frete_ajustado = frete_base * cat.multiplicador * transp.multiplicador * s.multiplicador
+        frete_base = custo_base_peso + custo_base_distancia
+        frete_ajustado = frete_base * cat.multiplicador * transp.multiplicador * s.multiplicador
 
     detalhe_custos_extras, custo_extra_total = _custos_extras_aplicados(custos_extras)
     detalhe_taxas, custo_taxas_adicionais = _taxas_adicionais_aplicadas(p, valor_mercadoria, gris_pct, ad_valorem_pct)
@@ -1947,16 +2090,19 @@ def calcular_orcamento_fracionado(
             "volume_total_m3": round(volume_total_m3, 4),
             "distancia_balsa_km": round(balsa_km),
             "distancia_faturavel_km": round(distancia_faturavel),
-            "faixa_peso_de": faixa_peso.de,
-            "faixa_peso_ate": faixa_peso.ate,
-            "tarifa_base_peso": faixa_peso.tarifa_base,
-            "custo_kg_adicional_peso": faixa_peso.custo_kg_adicional,
-            "custo_base_peso": round(custo_base_peso, 2),
-            "faixa_distancia_de": faixa_distancia.de,
-            "faixa_distancia_ate": faixa_distancia.ate,
-            "taxa_fixa_distancia": faixa_distancia.taxa_fixa,
-            "tarifa_km_distancia": faixa_distancia.tarifa_km,
-            "custo_base_distancia": round(custo_base_distancia, 2),
+            "custo_tabela_fracionado_destino": (
+                round(custo_tabela_fracionado_destino, 2) if custo_tabela_fracionado_destino is not None else None
+            ),
+            "faixa_peso_de": faixa_peso.de if faixa_peso else None,
+            "faixa_peso_ate": faixa_peso.ate if faixa_peso else None,
+            "tarifa_base_peso": faixa_peso.tarifa_base if faixa_peso else None,
+            "custo_kg_adicional_peso": faixa_peso.custo_kg_adicional if faixa_peso else None,
+            "custo_base_peso": round(custo_base_peso, 2) if custo_base_peso is not None else None,
+            "faixa_distancia_de": faixa_distancia.de if faixa_distancia else None,
+            "faixa_distancia_ate": faixa_distancia.ate if faixa_distancia else None,
+            "taxa_fixa_distancia": faixa_distancia.taxa_fixa if faixa_distancia else None,
+            "tarifa_km_distancia": faixa_distancia.tarifa_km if faixa_distancia else None,
+            "custo_base_distancia": round(custo_base_distancia, 2) if custo_base_distancia is not None else None,
             "frete_base": round(frete_base, 2),
             "multiplicador_categoria": cat.multiplicador,
             "multiplicador_transporte": transp.multiplicador,
