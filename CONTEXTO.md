@@ -87,6 +87,31 @@ planilha (não só exemplos pontuais) pra achar o padrão real, não assumir:
    Valorem no padrão), o `frete_final` bate em ~1% — contra 36-65% de erro
    antes de toda essa investigação.
 
+   **Investigação de acompanhamento (sessão seguinte)**: os 3 casos de
+   lotação que `comparar_planilha.py` mostra "divergindo muito" (Macapá/AP
+   linha 10, Tocantinópolis/TO linha 42, Cajamar→Belém linha 117) **não são
+   rota faltando em `custos_lotacao_destino`** — as 3 rotas já estavam
+   cadastradas e `frete_base` do sistema bate exato com
+   `custo_tabela + 33,10` nos três. A divergência tem duas causas
+   diferentes, confirmadas direto na planilha:
+   - Macapá (02/06/2025) e Tocantinópolis (09/06/2025) são **anteriores ao
+     corte de 17/06/2025** (regime antigo, `MARKUP=0` na planilha;
+     Tocantinópolis inclusive tem GRIS/Ad Valorem zerados naquela cotação
+     específica) — mesma categoria "não replicável" do item acima, não
+     bug.
+   - Cajamar→Belém (26/06/2025) é moderna e o custo bate, mas essa
+     cotação usou GRIS 0,2%/Ad Valorem 0,4% em vez do padrão nacional
+     (0,15%/0,35%). Checado em 139 cotações reais de lotação pra UF
+     destino PA: 0,15%/0,35% é a moda (76/139, 55%), 0,2%/0,4% é a segunda
+     mais comum (31/139, 22%) — não é uma regra fixa de UF, é negociação
+     por cliente/cotação, mesma natureza do achado do item 4 (margem) —
+     já coberto pelos campos `gris_pct`/`ad_valorem_pct` por orçamento
+     quando o valor negociado for conhecido, não dá pra virar regra fixa
+     por UF.
+
+   Conclusão: a tabela de custo de lotação está completa e correta pros 7
+   casos de teste — nenhuma rota falta cadastrar.
+
 6. **Frontend** (`assets/app.js`, `index.html`) — labels/tooltips de
    ICMS/PIS-COFINS corrigidos (estavam descrevendo a fórmula antiga,
    exatamente invertida).
