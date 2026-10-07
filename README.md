@@ -7,6 +7,33 @@ banco SQLite (`frete.db`) — sem depender de planilha. Inclui filiais
 pré-cadastradas, cálculo automático de distância por endereço e taxa de
 coleta quando a carga é retirada direto no cliente.
 
+## Sobre este repositório
+
+Este repositório nasceu como um **git worktree** do repositório principal
+([`Cota-o-SSonic`](https://github.com/RenanFolha/Cota-o-SSonic)/frete.folha),
+isolado pra uma investigação específica: fazer os orçamentos calculados por
+este sistema baterem com os valores históricos da planilha legada usada pela
+empresa antes do sistema existir (`COTAÇÃO SSONIC - 2026.xlsx`, não
+versionada — contém dados reais de preço/cliente).
+
+Por isso o código aqui é o mesmo da aplicação completa (documentada no
+restante deste README), mas o repositório carrega também:
+
+- **`CONTEXTO.md`** — histórico da investigação: o que já foi corrigido
+  (ICMS, PIS/COFINS, GRIS/Ad Valorem, custo de lotação e de fracionado por
+  destino), o que ainda falta e como retomar o trabalho numa sessão nova.
+- **`comparar_planilha.py`** — ferramenta de desenvolvimento (não é
+  `pytest`) que roda casos reais extraídos da planilha pelo motor de
+  cálculo do sistema e compara campo a campo:
+  ```bash
+  .venv/Scripts/python.exe comparar_planilha.py              # todos os casos
+  .venv/Scripts/python.exe comparar_planilha.py lotacao       # só lotação (FTL)
+  .venv/Scripts/python.exe comparar_planilha.py fracionado    # só fracionado (LTL)
+  ```
+
+Se você está só procurando a documentação de uso/API do sistema de
+orçamento em si, ela começa na seção seguinte.
+
 ## Como rodar
 
 1. Instale as dependências (Python 3.10+):
