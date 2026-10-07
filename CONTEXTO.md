@@ -32,6 +32,38 @@ Não é teste automatizado de regressão (não é pytest) — é ferramenta de
 desenvolvimento, pra rodar manualmente a cada ajuste. Tem 7 casos hoje (6
 lotação de Manaus/AM + 1 de São Paulo/SP), documentados no próprio arquivo.
 
+## Diferenças de código vs o repositório principal (Cota-o-SSonic)
+
+Este worktree está **5 commits à frente** da branch `main` do repo
+principal (`2d98598`, `dc55c2f`, `27417cc`, `2bcf767`, `cef1501` — ver
+`git log main..worktree-bater-orcamento-planilha` com os dois worktrees
+lado a lado). Resumo das diferenças de cálculo (detalhadas nos itens 1-5
+abaixo), gerado via `git diff` entre as duas branches — tem uma planilha
+com essa comparação, destacada por tipo, enviada ao usuário em
+2026-10-07 (`Diferencas_Calculo_vs_CotaSSonic.xlsx`, não versionada):
+
+- **ICMS**: invertido — era soma simples por fora, virou gross-up "por
+  dentro" (item 1).
+- **PIS/COFINS**: invertido — era gross-up "por dentro", virou % simples
+  por fora (item 2). Ou seja, as fórmulas de ICMS e PIS/COFINS estavam
+  **trocadas** entre si no projeto original.
+- **Lotação (FTL)**: funcionalidade nova — tabela `custos_lotacao_destino`
+  por rota (item 5).
+- **Fracionado (LTL)**: funcionalidade nova — de 100% quebrado
+  (`FreteConfigError` sempre) pra funcional em SP/AM via
+  `custos_fracionado_destino` (seção própria abaixo).
+
+**Ressalva importante — correção de % é dado, não código**: os valores de
+GRIS (0,05%→0,15%), Ad Valorem (0,047%→0,35%) e PIS/COFINS (9,25%→3%)
+citados nos itens 2/3 abaixo foram corrigidos **direto no `frete.db`
+local deste worktree** (tabelas `taxas_adicionais` e
+`aliquota_pis_cofins`), não no seed default de `frete_db.py` — o seed
+continua com os mesmos valores de exemplo (0,30%/0,50%) nos dois
+projetos. **Quem pegar só o código deste repo sem copiar o `frete.db`
+local leva as correções de fórmula (ICMS/PIS-COFINS/lotação/fracionado)
+mas NÃO leva nenhuma das correções de percentual** — são dado em runtime,
+não fazem parte do código versionado.
+
 ## O que já foi corrigido (commit `2d98598`)
 
 Investigação feita extraindo e analisando centenas de linhas reais da
