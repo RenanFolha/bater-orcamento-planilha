@@ -53,6 +53,39 @@ orçamento em si, ela começa na seção seguinte.
 
 3. Acesse a tela no navegador: `http://localhost:8000/`
 
+## Acesso de outros dispositivos na mesma rede (HTTPS)
+
+Por padrão a API só aceita conexões de `localhost`/`127.0.0.1` — rodar
+com `HOST` diferente disso **sem certificado TLS configurado** faz
+`main.py` recusar subir (login e cookie de sessão trafegariam em texto
+puro pela rede sem isso). Pra acessar de outro computador/celular na
+mesma rede local:
+
+1. Gere um certificado autoassinado (uso interno, não precisa de CA
+   pública) cobrindo o IP da máquina que vai rodar a API — troque
+   `SEU_IP_LOCAL` pelo IP real (`ipconfig` no Windows, procure o
+   adaptador Wi-Fi/Ethernet em uso):
+   ```bash
+   mkdir certs
+   openssl req -x509 -newkey rsa:2048 -keyout certs/chave.pem -out certs/certificado.pem \
+     -days 825 -nodes -subj "/CN=SEU_IP_LOCAL/O=SSonic/OU=Uso interno" \
+     -addext "subjectAltName=DNS:localhost,IP:SEU_IP_LOCAL,IP:127.0.0.1"
+   ```
+   `certs/` já está no `.gitignore` — a chave privada nunca deve ser
+   versionada.
+2. Rode `iniciar_api.bat` (Windows) — ele detecta `certs/chave.pem` +
+   `certs/certificado.pem` automaticamente, define `HOST=0.0.0.0` e sobe
+   em HTTPS. Rodando `python main.py` direto, defina as variáveis
+   `HOST`, `SSL_KEYFILE` e `SSL_CERTFILE` você mesmo antes.
+3. De outro dispositivo na mesma rede, acesse
+   `https://SEU_IP_LOCAL:8000` — o navegador vai avisar que a conexão
+   "não é segura" (certificado autoassinado); isso é esperado, clique em
+   Avançado → Continuar mesmo assim.
+
+O certificado expira em ~825 dias — gere um novo quando vencer, ou se o
+IP da máquina mudar (certificado é atrelado ao IP/host cadastrado no
+`subjectAltName`).
+
 ## Login e usuários
 
 Na primeira execução o sistema cria um usuário administrador padrão:
