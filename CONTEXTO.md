@@ -333,16 +333,85 @@ esforço/dado disponível:
    esforço — exige modo novo de "rateio de carreta compartilhada") —
    ainda não implementados, na ordem de prioridade discutida na sessão.
 
+## Correções no histórico de orçamento (sessão seguinte, 2026-10-08)
+
+Revisão de código de `routers/historico.py` achou 3 problemas, todos
+corrigidos em `routers/historico.py`/`frete_db.py`:
+
+1. **Race condition** em `PUT /historico/{id}/pedagio` e `/recalcular` —
+   leitura e escrita do `dados_json`/`frete_total` não eram atômicas (duas
+   edições quase simultâneas no mesmo registro podiam se sobrescrever
+   silenciosamente). Corrigido com controle de concorrência otimista:
+   `atualizar_pedagio_historico`/`atualizar_recalculo_historico` recebem o
+   `dados_json` que o router leu antes de calcular o novo valor
+   (`dados_json_esperado`) e comparam com o valor atual no banco,
+   imediatamente antes do `UPDATE`, na mesma transação — se mudou nesse
+   meio tempo, rejeita com `ConflitoIntegridade` → HTTP 409 em vez de
+   sobrescrever.
+2. **`frete_total` podia ficar negativo** em `atualizar_pedagio` — corrigir
+   um pedágio antigo super estimado pra um valor bem menor podia zerar ou
+   inverter o sinal do frete total salvo. Agora tem piso em 0
+   (`max(0.0, ...)`, mesmo padrão de `ajuste_piso_markup`).
+3. **`listar_historico` buscava a coluna `dados_json` inteira** (snapshot
+   completo, vários KB por linha) só pra descartar em Python a cada `GET
+   /historico`. `db.listar_orcamentos_historico()` agora faz `SELECT` só
+   das colunas usadas na listagem.
+
+Commit `c69c989` (pushado pra `bater/main`) tem as duas coisas: essas 3
+correções do histórico + a implementação do prazo do Fracionado por
+destino (ver seção acima).
+
+## Divergências achadas vs "Sistema de Precificação" (manual oficial +
+## contratos + tabelas de custo, sessão seguinte, 2026-10-08)
+
+Pasta local `Sistema de Precificação/` (não versionada, mesma razão de
+`Planilhas/` — adicionada ao `.gitignore`) tem o manual oficial
+("Manual Precificação Logistica Terrestre_Grupo IS_v20.docx"), contratos
+de balsa (Chibatão/Belnave/Unirios), tabelas de custo de transferência por
+região e a tabela de frete agregado reajustada de junho/2026. Comparação
+sistemática contra `frete_service.py`/`frete.db`, por impacto:
+
+1. **Tabela de lotação SP desatualizada** — `custos_lotacao_destino`
+   (ex: SP→Manaus R$27.516,60) está 29-53% ACIMA da
+   `TABELA_DE_FRETE_JUNHO_2026` vigente (SP→Manaus R$19.038,00). Pode ser
+   diferença de escopo (custo total vs só trecho carreteiro) — não
+   confirmado, vale conferir antes de decidir se precisa reextrair.
+2. **Prazo do Fracionado** — já corrigido (ver seção acima).
+3. **Peso excedente em Carreta**: manual diz R$200,00/tonelada acima de
+   18t; `veiculos.valor_tonelada_excedente` da Carreta está em R$220,00/t
+   (10% acima). Não alterado — não investigado com dados reais ainda
+   (mesmo método usado pra validar os outros %).
+4. **RCA (Fracionado)** não existe em nenhuma tabela do banco — o manual
+   lista GRIS 0,1% + RCA 0,12% + Seguro(ADV) 0,35% sobre NF como 3 taxas
+   distintas pro Fracionado; o sistema só tem GRIS e Ad Valorem (0,15%/
+   0,35%), iguais pra Lotação e Fracionado, sem RCA.
+5. Isenção de ICMS sul de MG, transbordo (tarifa reduzida Belém→Sudeste),
+   lotação curta em SP (Valinhos/Ribeirão Preto), subcontratação sem
+   ICMS, diária de entrega em Belém/Macapá, custos adicionais
+   (ajudante/conferente/empilhadeira por filial) — **não implementados**,
+   a maioria já conhecida como pendência dos achados do
+   `Teste_Completo_FTL` (achados #6 e #8).
+6. Valores de balsa no banco (`taxas_balsa`) já estão mais altos que os do
+   manual, citando os próprios contratos reajustados de 2026 (Carta
+   140/2026-BEL, propostas Belnave/Unirios de abril/2026) — parecem ter
+   sido atualizados numa sessão anterior direto desses PDFs, não é uma
+   divergência real.
+
+Nenhuma dessas foi implementada nesta sessão (fora o prazo do
+Fracionado) — fica como lista de pendências priorizada.
+
 ## Como retomar
 
-1. Confirmar que `Planilhas/COTAÇÃO SSONIC - 2026.xlsx` existe localmente
-   (não versionado).
+1. Confirmar que `Planilhas/COTAÇÃO SSONIC - 2026.xlsx` e a pasta
+   `Sistema de Precificação/` existem localmente (nenhuma versionada).
 2. Rodar `comparar_planilha.py` pra ver o estado atual.
 3. Rodar a suíte (`pytest tests/ -q`) antes de qualquer mudança nova, pra
-   ter uma baseline.
+   ter uma baseline (543 passed, 4 skipped nesta sessão).
 4. Decidir por qual pendência seguir. Fracionado SP/AM já calcula e o
    custo bate exato (ver seção acima) — falta GRIS/ADV/fluvial por UF,
    PA/outras origens, e separadamente há os achados do `Teste_Completo_
-   FTL_2026_Sistema_vs_Planilha.xlsx` (ver seção acima) — prazo por rota
-   já implementado, restam tarifas SP, limites de formulário, ICMS por
-   cliente, balsa, roteirização e consolidação de carga AM.
+   FTL_2026_Sistema_vs_Planilha.xlsx` e as divergências do "Sistema de
+   Precificação" (ambas seções acima) — prazo por rota já implementado
+   pros dois modais, restam tarifas SP, limites de formulário, ICMS por
+   cliente, balsa, roteirização, consolidação de carga AM, RCA do
+   Fracionado e a tabela de lotação SP possivelmente desatualizada.
