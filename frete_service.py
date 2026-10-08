@@ -31,6 +31,7 @@ continuam existindo no banco por compatibilidade, mas não são mais
 usadas no cálculo — o veículo assumiu esse papel.
 """
 
+import datetime
 import re
 import threading
 from dataclasses import dataclass
@@ -150,6 +151,18 @@ PEDAGIO_PCT_FALLBACK = 4.0
 # documentada na planilha, mas é necessário pra bater o frete_base
 # exatamente com os dados históricos.
 TAXA_FIXA_LOTACAO_TABELA = 33.1
+
+# Prazo estimado (dias úteis) por rota: 1 dia base + 1 dia adicional a
+# cada PRAZO_KM_POR_DIA_ADICIONAL km rodados (achado #7 do relatório
+# Teste_Completo_FTL_2026_Sistema_vs_Planilha.xlsx -- o sistema devolvia
+# sempre "5 dias úteis" fixo, independente da distância real da rota, ver
+# _prazo_estimado_dias_uteis). Rotas com travessia de balsa somam mais
+# PRAZO_DIAS_EXTRA_BALSA dias (PRAZO_DIAS_EXTRA_BALSA_SECA de outubro a
+# dezembro, quando o nível do rio baixa e a travessia demora mais).
+PRAZO_KM_POR_DIA_ADICIONAL = 500
+PRAZO_DIAS_EXTRA_BALSA = 5
+PRAZO_DIAS_EXTRA_BALSA_SECA = 7
+_MESES_SECA_BALSA = {10, 11, 12}
 
 # Nomes de taxas adicionais que podem ser digitadas por orçamento (ver
 # gris_pct/ad_valorem_pct em calcular_orcamento/calcular_orcamento_fracionado
@@ -1137,6 +1150,21 @@ def distancia_balsa_km(
     return fixa.distancia_km if fixa else 0.0
 
 
+def _prazo_estimado_dias_uteis(distancia_rodoviaria: float, balsa_km: float) -> int:
+    """Prazo estimado (dias úteis) pela distância rodoviária real da rota
+    -- 1 dia base + 1 dia adicional a cada PRAZO_KM_POR_DIA_ADICIONAL km
+    (distancia_rodoviaria já exclui o trecho de balsa, ver balsa_km em
+    calcular_orcamento/calcular_orcamento_fracionado), mais
+    PRAZO_DIAS_EXTRA_BALSA(_SECA) dias quando a rota tem travessia de
+    balsa -- substitui o SLA.prazo_dias fixo (que não varia por rota, ver
+    achado #7 do Teste_Completo_FTL_2026_Sistema_vs_Planilha.xlsx)."""
+    dias = 1 + int(distancia_rodoviaria // PRAZO_KM_POR_DIA_ADICIONAL)
+    if balsa_km > 0:
+        mes_atual = datetime.date.today().month
+        dias += PRAZO_DIAS_EXTRA_BALSA_SECA if mes_atual in _MESES_SECA_BALSA else PRAZO_DIAS_EXTRA_BALSA
+    return dias
+
+
 def _custo_lotacao_destino_aplicavel(
     p: "ParametrosFrete", cidade_origem: str | None, cidade_destino: str | None,
 ) -> float | None:
@@ -1888,7 +1916,7 @@ def calcular_orcamento(
         },
         "resultado": {
             "frete_total": round(frete_total, 2),
-            "prazo_estimado_dias_uteis": s.prazo_dias,
+            "prazo_estimado_dias_uteis": _prazo_estimado_dias_uteis(distancia_faturavel, balsa_km),
         },
     }
 
@@ -2137,6 +2165,6 @@ def calcular_orcamento_fracionado(
         },
         "resultado": {
             "frete_total": round(frete_total, 2),
-            "prazo_estimado_dias_uteis": s.prazo_dias,
+            "prazo_estimado_dias_uteis": _prazo_estimado_dias_uteis(distancia_faturavel, balsa_km),
         },
     }

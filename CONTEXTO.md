@@ -274,6 +274,33 @@ dados reais, não assumir):
   um fator `/0,86` que já não existe mais na planilha) não são replicados
   — o sistema reflete a regra vigente, não a histórica.
 
+## Revisão dos achados do Teste_Completo_FTL (sessão seguinte)
+
+`Teste_Completo_FTL_2026_Sistema_vs_Planilha.xlsx` (`Planilhas/`, não
+versionado) tem 10 achados rodando 1017 cotações FTL reais de 2026 direto
+pelos endpoints (só 9,3% batem em ±5%, ver "Como retomar" original
+abaixo). Revisão (2026-10-08): nenhum dos 10 achados foi tocado pelas
+correções de ICMS/PIS-COFINS/lotação/fracionado desta sessão (eixos
+diferentes) — todos os 10 continuam procedendo. Priorizados por
+esforço/dado disponível:
+
+1. **Prazo por rota — IMPLEMENTADO** (achado #7). Antes: `prazo_estimado_
+   dias_uteis` sempre devolvia `SLA.prazo_dias` fixo (5 dias), não importa
+   a rota. Agora: `_prazo_estimado_dias_uteis` em `frete_service.py` — 1
+   dia base + 1 dia a cada 500km rodados (`PRAZO_KM_POR_DIA_ADICIONAL`),
+   mais 5 dias se a rota tem balsa (7 de outubro a dezembro, nível do rio
+   baixo — `PRAZO_DIAS_EXTRA_BALSA`/`_SECA`), usado em `calcular_orcamento`
+   e `calcular_orcamento_fracionado`. Fórmula vinda direto da observação
+   do achado #7 na planilha. `SLA.prazo_dias` continua cadastrado no banco
+   mas não é mais usado pro prazo — fica só como campo legado (não
+   removido, pra não quebrar CRUD/telas existentes).
+2. Tarifas leves/médios SP (achado #3), limites do formulário (achado #8),
+   GRIS/ADV/taxa fluvial (achado #9), ICMS indevido por cliente (achado
+   #6), balsa Manaus-Belém incompleta (achado #4), roteirização via filial
+   (achado #5) e consolidação de carga pequena AM (achado #2, o maior
+   esforço — exige modo novo de "rateio de carreta compartilhada") —
+   ainda não implementados, na ordem de prioridade discutida na sessão.
+
 ## Como retomar
 
 1. Confirmar que `Planilhas/COTAÇÃO SSONIC - 2026.xlsx` existe localmente
@@ -283,9 +310,7 @@ dados reais, não assumir):
    ter uma baseline.
 4. Decidir por qual pendência seguir. Fracionado SP/AM já calcula e o
    custo bate exato (ver seção acima) — falta GRIS/ADV/fluvial por UF,
-   PA/outras origens, e separadamente há o achado do `Teste_Completo_
-   FTL_2026_Sistema_vs_Planilha.xlsx` (em `Planilhas/`, não versionado):
-   rodando 1017 cotações FTL reais de 2026 direto pelos endpoints, só
-   9,3% batem em ±5% — achados maiores: consolidação de carga pequena em
-   AM, tarifas de veículos leves/médios em SP abaixo do praticado, regra
-   de balsa Manaus-Belém incompleta, prazo sempre fixo "5 dias úteis".
+   PA/outras origens, e separadamente há os achados do `Teste_Completo_
+   FTL_2026_Sistema_vs_Planilha.xlsx` (ver seção acima) — prazo por rota
+   já implementado, restam tarifas SP, limites de formulário, ICMS por
+   cliente, balsa, roteirização e consolidação de carga AM.
