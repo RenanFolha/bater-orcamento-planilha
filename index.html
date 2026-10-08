@@ -391,7 +391,7 @@
             </div>
             <div class="breakdown">
               <h3>Taxas</h3>
-              <div class="line" id="linha-taxas-regionais" style="display:none;"><span>Taxa fluvial (RCA)</span><span id="d-taxas-regionais">-</span></div>
+              <div class="line" id="linha-taxas-regionais" style="display:none;"><span>Taxas regionais</span><span id="d-taxas-regionais">-</span></div>
               <div class="line" id="linha-gris" style="display:none;"><span>GRIS</span><span id="d-gris">-</span></div>
               <div class="line" id="linha-ad-valorem" style="display:none;"><span>Ad Valorem</span><span id="d-ad-valorem">-</span></div>
               <div class="line" id="linha-taxas" style="display:none;"><span>Taxas adicionais</span><span id="d-taxas">-</span></div>
@@ -615,7 +615,7 @@
                 <div id="frac-lista-valores-custos-extras"></div>
               </div>
 
-              <div class="section-label">GRIS e Ad Valorem</div>
+              <div class="section-label">GRIS, Ad Valorem e RCA</div>
               <div class="field">
                 <div class="idx">·</div>
                 <div>
@@ -630,6 +630,14 @@
                   <label for="frac-ad_valorem_pct">Ad Valorem (%)</label>
                   <input type="number" id="frac-ad_valorem_pct" min="0" step="any" required>
                   <div id="frac-ad_valorem_pct-lucro" style="font-size:11.5px;margin-top:4px;"></div>
+                </div>
+              </div>
+              <div class="field">
+                <div class="idx">·</div>
+                <div>
+                  <label for="frac-rca_pct">RCA (%)</label>
+                  <input type="number" id="frac-rca_pct" min="0" step="any" required>
+                  <div id="frac-rca_pct-lucro" style="font-size:11.5px;margin-top:4px;"></div>
                 </div>
               </div>
 
@@ -685,9 +693,10 @@
             </div>
             <div class="breakdown">
               <h3>Taxas</h3>
-              <div class="line" id="frac-linha-taxas-regionais" style="display:none;"><span>Taxa fluvial (RCA)</span><span id="frac-d-taxas-regionais">-</span></div>
+              <div class="line" id="frac-linha-taxas-regionais" style="display:none;"><span>Taxas regionais</span><span id="frac-d-taxas-regionais">-</span></div>
               <div class="line" id="frac-linha-gris" style="display:none;"><span>GRIS</span><span id="frac-d-gris">-</span></div>
               <div class="line" id="frac-linha-ad-valorem" style="display:none;"><span>Ad Valorem</span><span id="frac-d-ad-valorem">-</span></div>
+              <div class="line" id="frac-linha-rca" style="display:none;"><span>RCA</span><span id="frac-d-rca">-</span></div>
               <div class="line" id="frac-linha-taxas" style="display:none;"><span>Taxas adicionais</span><span id="frac-d-taxas">-</span></div>
               <div class="line subtotal-line"><span>Total de impostos e taxas</span><span id="frac-d-total-impostos-taxas">-</span></div>
             </div>

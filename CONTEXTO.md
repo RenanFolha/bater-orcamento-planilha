@@ -381,10 +381,30 @@ sistemática contra `frete_service.py`/`frete.db`, por impacto:
    18t; `veiculos.valor_tonelada_excedente` da Carreta está em R$220,00/t
    (10% acima). Não alterado — não investigado com dados reais ainda
    (mesmo método usado pra validar os outros %).
-4. **RCA (Fracionado)** não existe em nenhuma tabela do banco — o manual
-   lista GRIS 0,1% + RCA 0,12% + Seguro(ADV) 0,35% sobre NF como 3 taxas
-   distintas pro Fracionado; o sistema só tem GRIS e Ad Valorem (0,15%/
-   0,35%), iguais pra Lotação e Fracionado, sem RCA.
+4. **RCA (Fracionado) — IMPLEMENTADO (sessão seguinte, 2026-10-08)**.
+   Revisão inicial achou que RCA "não existe no sistema", mas na verdade
+   já existia de um jeito diferente do manual: cadastrado em
+   `taxas_regionais` (não `taxas_adicionais`), 0,05% (não 0,12%), e só se
+   aplicava quando origem/destino era exatamente Manaus ou Belém (não em
+   toda cotação de Fracionado) — aparecia no resultado como "Taxa fluvial
+   (RCA)". Decisão do usuário: generalizar como GRIS/Ad Valorem em vez de
+   só corrigir o %. Implementado: `_NOME_TAXA_RCA` em `frete_service.py`,
+   `rca_pct` editável por orçamento (igual `gris_pct`/`ad_valorem_pct`,
+   mesma validação de piso/tipo fixo), aplicado via
+   `_taxas_adicionais_aplicadas(..., incluir_rca=True)` só em
+   `calcular_orcamento_fracionado` -- `calcular_orcamento` (Lotação) nunca
+   aplica RCA, mesmo que exista uma linha "RCA" cadastrada (parâmetro
+   `incluir_rca` default `False`). Banco: removidas as 2 linhas antigas de
+   `taxas_regionais` (Manaus/Belém 0,05%) e inserida 1 linha nova em
+   `taxas_adicionais` ("RCA", percentual, 0,12%) -- dado local, não
+   versionado, mesma política de GRIS/Ad Valorem. Frontend
+   (`index.html`/`assets/app.js`): campo `frac-rca_pct` só no formulário
+   Fracionado, linha própria no resultado ("RCA"), e o rótulo genérico de
+   `taxas_regionais` (que dizia "Taxa fluvial (RCA)" nos dois formulários)
+   corrigido pra "Taxas regionais" (mecanismo continua existindo, só não é
+   mais usado pra nada hoje já que as 2 linhas foram removidas). Testes:
+   4 novos em `tests/test_frete_service.py` (override, piso, default
+   cadastrado, e confirmação de que a Lotação nunca aplica RCA).
 5. Isenção de ICMS sul de MG, transbordo (tarifa reduzida Belém→Sudeste),
    lotação curta em SP (Valinhos/Ribeirão Preto), subcontratação sem
    ICMS, diária de entrega em Belém/Macapá, custos adicionais
@@ -406,12 +426,13 @@ Fracionado) — fica como lista de pendências priorizada.
    `Sistema de Precificação/` existem localmente (nenhuma versionada).
 2. Rodar `comparar_planilha.py` pra ver o estado atual.
 3. Rodar a suíte (`pytest tests/ -q`) antes de qualquer mudança nova, pra
-   ter uma baseline (543 passed, 4 skipped nesta sessão).
+   ter uma baseline (547 passed, 4 skipped nesta sessão).
 4. Decidir por qual pendência seguir. Fracionado SP/AM já calcula e o
    custo bate exato (ver seção acima) — falta GRIS/ADV/fluvial por UF,
    PA/outras origens, e separadamente há os achados do `Teste_Completo_
    FTL_2026_Sistema_vs_Planilha.xlsx` e as divergências do "Sistema de
-   Precificação" (ambas seções acima) — prazo por rota já implementado
-   pros dois modais, restam tarifas SP, limites de formulário, ICMS por
-   cliente, balsa, roteirização, consolidação de carga AM, RCA do
-   Fracionado e a tabela de lotação SP possivelmente desatualizada.
+   Precificação" (ambas seções acima) — prazo por rota e RCA do
+   Fracionado já implementados, restam tarifas SP, limites de formulário,
+   ICMS por cliente, balsa, roteirização, consolidação de carga AM, peso
+   excedente de Carreta (R$200 vs R$220/t) e a tabela de lotação SP
+   possivelmente desatualizada.

@@ -35,6 +35,7 @@ def montar_resultado(payload: OrcamentoFracionadoRequest) -> dict:
         custos_extras=[c.model_dump() for c in payload.custos_extras],
         gris_pct=payload.gris_pct,
         ad_valorem_pct=payload.ad_valorem_pct,
+        rca_pct=payload.rca_pct,
     )
 
 

@@ -281,7 +281,10 @@ document.getElementById('config-conn-status').textContent = location.origin;
 // que o cadastrado é rejeitado pela API (ver
 // fs._piso_taxa_customizavel/calcular_orcamento). 0 quando não há nenhuma
 // taxa cadastrada com esse nome.
-let taxasCustomizaveisCache = {gris: 0, adValorem: 0};
+// rca só existe no Fracionado (ver frete_service._NOME_TAXA_RCA) -- o
+// campo frac-rca_pct é o único que usa essa chave do cache; o formulário
+// de Lotação nem tem esse input.
+let taxasCustomizaveisCache = {gris: 0, adValorem: 0, rca: 0};
 
 async function carregarTaxasCustomizaveis(){
   try{
@@ -290,13 +293,16 @@ async function carregarTaxasCustomizaveis(){
     const data = await res.json();
     const gris = data.find(t => t.nome.trim().toLowerCase() === 'gris');
     const adValorem = data.find(t => t.nome.trim().toLowerCase() === 'ad valorem');
-    taxasCustomizaveisCache = {gris: gris ? gris.valor : 0, adValorem: adValorem ? adValorem.valor : 0};
+    const rca = data.find(t => t.nome.trim().toLowerCase() === 'rca');
+    taxasCustomizaveisCache = {
+      gris: gris ? gris.valor : 0, adValorem: adValorem ? adValorem.valor : 0, rca: rca ? rca.valor : 0,
+    };
   }catch(e){
-    taxasCustomizaveisCache = {gris: 0, adValorem: 0};
+    taxasCustomizaveisCache = {gris: 0, adValorem: 0, rca: 0};
   }
 }
 
-function preencherCamposTaxasCustomizaveis(idGris, idAdValorem){
+function preencherCamposTaxasCustomizaveis(idGris, idAdValorem, idRca){
   const campoGris = document.getElementById(idGris);
   const campoAdValorem = document.getElementById(idAdValorem);
   // min = % cadastrado -- trava no navegador pra não deixar digitar um
@@ -307,6 +313,11 @@ function preencherCamposTaxasCustomizaveis(idGris, idAdValorem){
   campoGris.value = taxasCustomizaveisCache.gris;
   campoAdValorem.min = taxasCustomizaveisCache.adValorem;
   campoAdValorem.value = taxasCustomizaveisCache.adValorem;
+  if(idRca){
+    const campoRca = document.getElementById(idRca);
+    campoRca.min = taxasCustomizaveisCache.rca;
+    campoRca.value = taxasCustomizaveisCache.rca;
+  }
 }
 
 // Lucro em cima do % cadastrado em Tabela de Preços: GRIS/Ad Valorem são
@@ -346,10 +357,16 @@ function atualizarLucrosTaxasCustomizaveis(prefixo){
   atualizarLucroTaxaCustomizavel(
     `${prefixo}ad_valorem_pct`, `${prefixo}ad_valorem_pct-lucro`, `${prefixo}valor_mercadoria`, taxasCustomizaveisCache.adValorem,
   );
+  // rca_pct só existe no formulário Fracionado ('frac-') -- no de Lotação
+  // ('') esses ids não existem, e atualizarLucroTaxaCustomizavel já sai
+  // de imediato (ver `if(!input || !hint) return;`) sem erro.
+  atualizarLucroTaxaCustomizavel(
+    `${prefixo}rca_pct`, `${prefixo}rca_pct-lucro`, `${prefixo}valor_mercadoria`, taxasCustomizaveisCache.rca,
+  );
 }
 
 for(const prefixo of ['', 'frac-']){
-  for(const campo of ['gris_pct', 'ad_valorem_pct', 'valor_mercadoria']){
+  for(const campo of ['gris_pct', 'ad_valorem_pct', 'rca_pct', 'valor_mercadoria']){
     const el = document.getElementById(`${prefixo}${campo}`);
     if(el) el.addEventListener('input', () => atualizarLucrosTaxasCustomizaveis(prefixo));
   }
@@ -1571,7 +1588,7 @@ async function fracInicializarFormulario(){
     preencherOpcoes(document.getElementById('frac-destino-filial'), filiaisCache);
     // taxasCustomizaveisCache também já foi carregado pelo formulário
     // principal (ver carregarTaxasCustomizaveis em inicializarFormulario).
-    preencherCamposTaxasCustomizaveis('frac-gris_pct', 'frac-ad_valorem_pct');
+    preencherCamposTaxasCustomizaveis('frac-gris_pct', 'frac-ad_valorem_pct', 'frac-rca_pct');
     atualizarLucrosTaxasCustomizaveis('frac-');
     const categoriaSel = document.getElementById('frac-categoria');
     if([...categoriaSel.options].some(o => o.value === 'Geral')) categoriaSel.value = 'Geral';
@@ -1763,6 +1780,7 @@ document.getElementById('frac-form-frete').addEventListener('submit', async (ev)
     custos_extras: fracColetarCustosExtras(),
     gris_pct: parseFloat(document.getElementById('frac-gris_pct').value),
     ad_valorem_pct: parseFloat(document.getElementById('frac-ad_valorem_pct').value),
+    rca_pct: parseFloat(document.getElementById('frac-rca_pct').value),
   };
 
   btnFrac.disabled = true;
@@ -1822,9 +1840,10 @@ document.getElementById('frac-form-frete').addEventListener('submit', async (ev)
     const taxasAdicionaisLista = calc.taxas_adicionais || [];
     const taxaGris = taxasAdicionaisLista.find(t => t.nome.trim().toLowerCase() === 'gris');
     const taxaAdValorem = taxasAdicionaisLista.find(t => t.nome.trim().toLowerCase() === 'ad valorem');
+    const taxaRca = taxasAdicionaisLista.find(t => t.nome.trim().toLowerCase() === 'rca');
     const outrasTaxasAdicionais = taxasAdicionaisLista.filter(t => {
       const chave = t.nome.trim().toLowerCase();
-      return chave !== 'gris' && chave !== 'ad valorem';
+      return chave !== 'gris' && chave !== 'ad valorem' && chave !== 'rca';
     });
 
     const linhaGris = document.getElementById('frac-linha-gris');
@@ -1838,6 +1857,12 @@ document.getElementById('frac-form-frete').addEventListener('submit', async (ev)
       document.getElementById('frac-d-ad-valorem').textContent = `${fmtBRL(taxaAdValorem.valor_aplicado)} (${taxaAdValorem.valor_configurado}%)`;
       linhaAdValorem.style.display = 'flex';
     }else{ linhaAdValorem.style.display = 'none'; }
+
+    const linhaRca = document.getElementById('frac-linha-rca');
+    if(taxaRca && taxaRca.valor_aplicado > 0){
+      document.getElementById('frac-d-rca').textContent = `${fmtBRL(taxaRca.valor_aplicado)} (${taxaRca.valor_configurado}%)`;
+      linhaRca.style.display = 'flex';
+    }else{ linhaRca.style.display = 'none'; }
 
     const custoOutrasTaxasAdicionais = outrasTaxasAdicionais.reduce((soma, t) => soma + t.valor_aplicado, 0);
     const linhaTaxas = document.getElementById('frac-linha-taxas');

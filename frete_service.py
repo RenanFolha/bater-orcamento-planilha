@@ -171,6 +171,16 @@ _MESES_SECA_BALSA = {10, 11, 12}
 _NOME_TAXA_GRIS = "GRIS"
 _NOME_TAXA_AD_VALOREM = "Ad Valorem"
 
+# RCA (% sobre a NF) -- só existe no Fracionado (ver manual de
+# precificação, "Sistema de Precificação/Manual de Procedimentos"),
+# diferente de GRIS/Ad Valorem acima que valem pros dois modais. Mesmo
+# mecanismo de digitação por orçamento (rca_pct), mas só
+# calcular_orcamento_fracionado passa incluir_rca=True pra
+# _taxas_adicionais_aplicadas -- calcular_orcamento (Lotação) nunca
+# aplica RCA, mesmo que exista uma linha "RCA" cadastrada em
+# taxas_adicionais (ver uso de incluir_rca lá).
+_NOME_TAXA_RCA = "RCA"
+
 
 class FreteConfigError(Exception):
     """Erro ao ler/validar os parâmetros do banco."""
@@ -375,7 +385,7 @@ class ParametrosFrete:
         self.aliquotas_icms: list[AliquotaIcms] = []
         self.aliquota_pis_cofins: float = 0.0
         self.custos_lotacao_destino: dict[tuple[str, str, str], float] = {}
-        self.custos_fracionado_destino: dict[tuple[str, str, str, str], "FaixaCustoFracionado"] = {}
+        self.custos_fracionado_destino: dict[tuple[str, str, str, str], FaixaCustoFracionado] = {}
         self.prazo_fracionado_destino: dict[tuple[str, str, str], int] = {}
         self.taxas_diaria_veiculo: list[TaxaDiariaVeiculo] = []
         self.coleta_cidades_fixas: list[ColetaCidadeFixa] = []
@@ -1398,6 +1408,7 @@ def _taxa_customizavel_e_tipo_fixo(p: "ParametrosFrete", nome: str) -> bool:
 def _taxas_adicionais_aplicadas(
     p: "ParametrosFrete", valor_mercadoria: float,
     gris_pct: float | None = None, ad_valorem_pct: float | None = None,
+    rca_pct: float | None = None, incluir_rca: bool = False,
 ) -> tuple[list[dict], float]:
     """Taxas adicionais cadastradas (fixas em R$ ou % do valor da
     mercadoria) — entram sempre, sem depender de rota. GRIS e Ad Valorem
@@ -1407,13 +1418,25 @@ def _taxas_adicionais_aplicadas(
     nome; sem override, usa o cadastrado normalmente. Um override sem
     nenhuma taxa cadastrada de mesmo nome ainda assim entra no cálculo,
     como uma taxa avulsa desse orçamento (piso 0%, ver
-    _piso_taxa_customizavel)."""
+    _piso_taxa_customizavel).
+
+    RCA (ver _NOME_TAXA_RCA) só existe no Fracionado -- quando
+    incluir_rca=False (padrão, usado por calcular_orcamento/Lotação),
+    uma linha "RCA" cadastrada em taxas_adicionais é ignorada aqui, como
+    se não existisse; calcular_orcamento_fracionado passa
+    incluir_rca=True pra realmente aplicá-la."""
     overrides = {_NOME_TAXA_GRIS.lower(): gris_pct, _NOME_TAXA_AD_VALOREM.lower(): ad_valorem_pct}
+    nomes_customizaveis = [(_NOME_TAXA_GRIS, _NOME_TAXA_GRIS.lower()), (_NOME_TAXA_AD_VALOREM, _NOME_TAXA_AD_VALOREM.lower())]
+    if incluir_rca:
+        overrides[_NOME_TAXA_RCA.lower()] = rca_pct
+        nomes_customizaveis.append((_NOME_TAXA_RCA, _NOME_TAXA_RCA.lower()))
     detalhe_taxas = []
     custo_taxas_adicionais = 0.0
     aplicados = set()
     for taxa in p.taxas_adicionais:
         chave = taxa.nome.strip().lower()
+        if chave == _NOME_TAXA_RCA.lower() and not incluir_rca:
+            continue
         override = overrides.get(chave)
         if override is not None:
             valor_configurado = override
@@ -1427,7 +1450,7 @@ def _taxas_adicionais_aplicadas(
             "nome": taxa.nome, "tipo": taxa.tipo,
             "valor_configurado": valor_configurado, "valor_aplicado": round(valor_taxa, 2),
         })
-    for nome_exibicao, chave in ((_NOME_TAXA_GRIS, _NOME_TAXA_GRIS.lower()), (_NOME_TAXA_AD_VALOREM, _NOME_TAXA_AD_VALOREM.lower())):
+    for nome_exibicao, chave in nomes_customizaveis:
         override = overrides.get(chave)
         if override is not None and chave not in aplicados:
             valor_taxa = valor_mercadoria * (override / 100)
@@ -1974,6 +1997,7 @@ def calcular_orcamento_fracionado(
     custos_extras: list[dict] | None = None,
     gris_pct: float | None = None,
     ad_valorem_pct: float | None = None,
+    rca_pct: float | None = None,
 ) -> dict:
     """Frete Fracionado -- mesma logica de calcular_orcamento pra tudo que
     nao eh o frete base (categoria/transporte/SLA, taxas adicionais e
@@ -2033,6 +2057,15 @@ def calcular_orcamento_fracionado(
         piso_ad_valorem = _piso_taxa_customizavel(parametros, _NOME_TAXA_AD_VALOREM)
         if ad_valorem_pct < piso_ad_valorem:
             raise FreteInputError(f"Ad Valorem ({ad_valorem_pct}%) abaixo do mínimo cadastrado ({piso_ad_valorem}%).")
+    if rca_pct is not None:
+        if _taxa_customizavel_e_tipo_fixo(parametros, _NOME_TAXA_RCA):
+            raise FreteInputError(
+                "RCA está cadastrado como valor fixo em Tabela de Preços — não é possível substituir "
+                "por um % digitado nesse orçamento."
+            )
+        piso_rca = _piso_taxa_customizavel(parametros, _NOME_TAXA_RCA)
+        if rca_pct < piso_rca:
+            raise FreteInputError(f"RCA ({rca_pct}%) abaixo do mínimo cadastrado ({piso_rca}%).")
     custos_extras = custos_extras or []
     for custo_extra in custos_extras:
         if custo_extra.get("categoria") not in CATEGORIAS_CUSTO_EXTRA:
@@ -2085,7 +2118,9 @@ def calcular_orcamento_fracionado(
         frete_ajustado = frete_base * cat.multiplicador * transp.multiplicador * s.multiplicador
 
     detalhe_custos_extras, custo_extra_total = _custos_extras_aplicados(custos_extras)
-    detalhe_taxas, custo_taxas_adicionais = _taxas_adicionais_aplicadas(p, valor_mercadoria, gris_pct, ad_valorem_pct)
+    detalhe_taxas, custo_taxas_adicionais = _taxas_adicionais_aplicadas(
+        p, valor_mercadoria, gris_pct, ad_valorem_pct, rca_pct=rca_pct, incluir_rca=True,
+    )
     detalhe_taxas_regionais, custo_taxas_regionais = _taxas_regionais_aplicadas(
         p, cidade_origem, cidade_destino, valor_mercadoria
     )

@@ -35,6 +35,16 @@ def _campo_ad_valorem_pct() -> float | None:
     )
 
 
+def _campo_rca_pct() -> float | None:
+    """Campo `rca_pct` — mesma regra de _campo_gris_pct(), pro RCA. Só
+    existe em OrcamentoFracionadoRequest (RCA é só do Fracionado, ver
+    frete_service._NOME_TAXA_RCA)."""
+    return Field(
+        None, ge=0,
+        description="% de RCA pra este orçamento (só Fracionado) — substitui o % cadastrado em Tabela de Preços, nunca abaixo dele. Deixe em branco (null) pra usar o cadastrado.",
+    )
+
+
 class PaleteIn(BaseModel):
     comprimento: float = Field(..., gt=0, description="Comprimento do palete em cm", examples=[40])
     largura: float = Field(..., gt=0, description="Largura do palete em cm", examples=[30])
@@ -104,6 +114,7 @@ class OrcamentoFracionadoRequest(BaseModel):
     custos_extras: list[CustoExtraIn] = Field(default_factory=list, description="Custos extras escolhidos pra este orçamento (categoria + valor em R$), somados ao frete antes do PIS/COFINS e do ICMS")
     gris_pct: float | None = _campo_gris_pct()
     ad_valorem_pct: float | None = _campo_ad_valorem_pct()
+    rca_pct: float | None = _campo_rca_pct()
 
 
 class DistanciaRequest(BaseModel):
