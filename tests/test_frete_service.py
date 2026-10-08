@@ -1615,6 +1615,73 @@ def test_calcular_orcamento_fracionado_quantidade_do_palete_menor_que_1(parametr
         ))
 
 
+# ============================================================
+# calcular_orcamento_fracionado -- prazo por destino (prazo_fracionado_
+# destino) substitui a fórmula por km quando a rota está cadastrada
+# (achado da investigação do prazo real do Fracionado, ver CONTEXTO.md:
+# diferente da Lotação, o prazo real do Fracionado não varia com km
+# rodado, varia com UF+capital/interior do destino).
+# ============================================================
+
+
+def _com_faixas_fracionado_genericas(p):
+    # Faixa de peso/distância genérica só pra calcular_orcamento_fracionado
+    # completar (frete_base) sem custos_fracionado_destino cadastrado --
+    # os testes desta seção só se importam com o prazo, não com o valor
+    # do frete em si.
+    p.faixas_peso_fracionado = [fs.FaixaPeso(de=0, ate=999999, tarifa_base=50, custo_kg_adicional=0)]
+    p.faixas_distancia_fracionado = [fs.FaixaDistancia(de=0, ate=999999, taxa_fixa=20, tarifa_km=0.3)]
+
+
+def test_prazo_fracionado_usa_tabela_por_destino_quando_cadastrada(parametros):
+    # distancia bem alta pra deixar claro que, se a fórmula por km fosse
+    # usada, o resultado seria bem diferente de 9 -- confirma que a
+    # tabela tem prioridade sobre _prazo_estimado_dias_uteis.
+    _com_faixas_fracionado_genericas(parametros)
+    parametros.prazo_fracionado_destino = {("SP", "PA", "CAPITAL"): 9}
+    resultado = fs.calcular_orcamento_fracionado(**_fracionado_base(
+        distancia=3000,
+        cidade_origem="São Paulo, SP, Brasil", cidade_destino="Belém, PA, Brasil",
+    ))
+    assert resultado["resultado"]["prazo_estimado_dias_uteis"] == 9
+
+
+def test_prazo_fracionado_cai_no_fallback_por_km_sem_tabela_cadastrada(parametros):
+    # parametros de teste não populam prazo_fracionado_destino -- sem
+    # entrada pra essa rota, usa a mesma fórmula da Lotação (1 dia + 1 a
+    # cada 500km, sem balsa aqui).
+    _com_faixas_fracionado_genericas(parametros)
+    resultado = fs.calcular_orcamento_fracionado(**_fracionado_base(
+        distancia=1200,
+        cidade_origem="São Paulo, SP, Brasil", cidade_destino="Belém, PA, Brasil",
+    ))
+    assert resultado["resultado"]["prazo_estimado_dias_uteis"] == 3  # 1 + 1200//500
+
+
+def test_prazo_fracionado_sem_cidade_cai_no_fallback_por_km(parametros):
+    # Sem cidade_origem/cidade_destino (ex: formulário antigo que não
+    # manda essa informação) não dá pra classificar UF/capital-interior
+    # -- cai no fallback por km direto, sem erro.
+    _com_faixas_fracionado_genericas(parametros)
+    resultado = fs.calcular_orcamento_fracionado(**_fracionado_base(distancia=1200))
+    assert resultado["resultado"]["prazo_estimado_dias_uteis"] == 3
+
+
+def test_prazo_fracionado_bahia_interior_usa_interior_i_como_aproximacao(parametros):
+    # Mesma aproximação de _custo_fracionado_destino_aplicavel: a Bahia
+    # tem 3 faixas na planilha (CAPITAL/INTERIOR I/INTERIOR II), mas
+    # _classificar_capital_interior só distingue CAPITAL x INTERIOR --
+    # cidades do interior caem em "INTERIOR" e tentam "INTERIOR I" como
+    # variante antes de cair no fallback por km.
+    _com_faixas_fracionado_genericas(parametros)
+    parametros.prazo_fracionado_destino = {("SP", "BA", "INTERIOR I"): 8}
+    resultado = fs.calcular_orcamento_fracionado(**_fracionado_base(
+        distancia=1800,
+        cidade_origem="São Paulo, SP, Brasil", cidade_destino="Ilhéus, BA, Brasil",
+    ))
+    assert resultado["resultado"]["prazo_estimado_dias_uteis"] == 8
+
+
 def test_buscar_faixa_peso_fracionado_sem_cadastro_da_erro_de_configuracao(parametros):
     # parametros de teste (ver _parametros_teste) não populam faixas do
     # Fracionado -- diferente das outras tabelas, essas têm falha

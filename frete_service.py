@@ -375,6 +375,8 @@ class ParametrosFrete:
         self.aliquotas_icms: list[AliquotaIcms] = []
         self.aliquota_pis_cofins: float = 0.0
         self.custos_lotacao_destino: dict[tuple[str, str, str], float] = {}
+        self.custos_fracionado_destino: dict[tuple[str, str, str, str], "FaixaCustoFracionado"] = {}
+        self.prazo_fracionado_destino: dict[tuple[str, str, str], int] = {}
         self.taxas_diaria_veiculo: list[TaxaDiariaVeiculo] = []
         self.coleta_cidades_fixas: list[ColetaCidadeFixa] = []
         self.faixas_coleta: list[FaixaDistancia] = []
@@ -461,6 +463,10 @@ class ParametrosFrete:
                     r["excedente_kg"],
                 )
                 for r in conn.execute("SELECT * FROM custos_fracionado_destino")
+            }
+            self.prazo_fracionado_destino = {
+                (r["origem_tabela"], r["uf_destino"], r["capital_interior"]): r["dias_uteis"]
+                for r in conn.execute("SELECT * FROM prazo_fracionado_destino")
             }
             self.taxas_diaria_veiculo = [
                 TaxaDiariaVeiculo(r["uf"], r["valor_carreta"], r["valor_cavalo"])
@@ -1244,6 +1250,37 @@ def _custo_fracionado_destino_aplicavel(
             return None
         total += faixa.calcular(peso_considerado)
     return total
+
+
+def _prazo_fracionado_destino_aplicavel(
+    p: "ParametrosFrete", cidade_origem: str | None, cidade_destino: str | None,
+) -> int | None:
+    """Prazo (dias úteis) do Fracionado (LTL) pré-tabelado por destino,
+    cadastrado em prazo_fracionado_destino -- diferente da Lotação, cujo
+    prazo é calculado por distância (_prazo_estimado_dias_uteis), o prazo
+    real do Fracionado não varia com km rodado: varia com a classificação
+    do destino (UF + capital/interior), confirmado em cotações reais da
+    planilha legada (ver CONTEXTO.md). Devolve None quando a origem não
+    tem tabela cadastrada ou não há entrada pra esse destino -- nesse
+    caso calcular_orcamento_fracionado cai no fallback de
+    _prazo_estimado_dias_uteis (fórmula por km, validada só pra
+    Lotação)."""
+    if not p.prazo_fracionado_destino:
+        return None
+    origem_tabela = _uf_de_origem_ou_destino(p, cidade_origem)
+    if not origem_tabela:
+        return None
+    cidade_dest = _cidade_da_retirada(cidade_destino) if cidade_destino else None
+    uf_dest = _uf_de_origem_ou_destino(p, cidade_destino) if cidade_destino else ""
+    if not cidade_dest or not uf_dest:
+        return None
+    capital_interior = _classificar_capital_interior(p, uf_dest, cidade_dest)
+    dias = p.prazo_fracionado_destino.get((origem_tabela, uf_dest, capital_interior))
+    if dias is None and capital_interior == "INTERIOR":
+        # Bahia: mesma aproximação de _custo_fracionado_destino_aplicavel
+        # (a planilha não tem faixa "INTERIOR" simples pra esse estado).
+        dias = p.prazo_fracionado_destino.get((origem_tabela, uf_dest, "INTERIOR I"))
+    return dias
 
 
 def _taxa_balsa_outros_veiculos(
@@ -2165,6 +2202,9 @@ def calcular_orcamento_fracionado(
         },
         "resultado": {
             "frete_total": round(frete_total, 2),
-            "prazo_estimado_dias_uteis": _prazo_estimado_dias_uteis(distancia_faturavel, balsa_km),
+            "prazo_estimado_dias_uteis": (
+                _prazo_fracionado_destino_aplicavel(p, cidade_origem, cidade_destino)
+                or _prazo_estimado_dias_uteis(distancia_faturavel, balsa_km)
+            ),
         },
     }

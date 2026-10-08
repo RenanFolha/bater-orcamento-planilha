@@ -114,7 +114,8 @@ def atualizar_pedagio(id_: int, payload: AtualizarPedagioHistoricoRequest, usuar
         raise HTTPException(status_code=404, detail="Orçamento não encontrado no histórico.")
     _exigir_dono_ou_admin(registro, usuario, "editá-lo")
 
-    dados = json.loads(registro["dados_json"] or "{}")
+    dados_json_esperado = registro["dados_json"]
+    dados = json.loads(dados_json_esperado or "{}")
     resultado = dados.setdefault("resultado", {})
     calc = resultado.setdefault("calculos_intermediarios", {})
     pedagio_antigo = calc.get("pedagio") or 0
@@ -123,16 +124,23 @@ def atualizar_pedagio(id_: int, payload: AtualizarPedagioHistoricoRequest, usuar
 
     res_final = resultado.setdefault("resultado", {})
     frete_total_antigo = res_final.get("frete_total", registro["frete_total"]) or 0
-    frete_total_novo = round(frete_total_antigo - pedagio_antigo + novo_pedagio, 2)
+    # Piso em 0 -- sem isso, corrigir um pedágio antigo super estimado pra
+    # um valor bem menor podia zerar ou até inverter o sinal do frete
+    # total salvo (ver achado de revisão de código).
+    frete_total_novo = max(0.0, round(frete_total_antigo - pedagio_antigo + novo_pedagio, 2))
     res_final["frete_total"] = frete_total_novo
 
     if isinstance(dados.get("payload"), dict):
         dados["payload"]["pedagio"] = novo_pedagio
 
-    db.atualizar_pedagio_historico(
-        id_, frete_total_novo, json.dumps(dados, ensure_ascii=False),
-        pedagio_antigo=pedagio_antigo, pedagio_novo=novo_pedagio, alterado_por=usuario["username"],
-    )
+    try:
+        db.atualizar_pedagio_historico(
+            id_, frete_total_novo, json.dumps(dados, ensure_ascii=False),
+            pedagio_antigo=pedagio_antigo, pedagio_novo=novo_pedagio, alterado_por=usuario["username"],
+            dados_json_esperado=dados_json_esperado,
+        )
+    except db.ConflitoIntegridade as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     return {"status": "ok", "pedagio": novo_pedagio, "frete_total": frete_total_novo}
 
 
@@ -155,7 +163,8 @@ def recalcular_historico(id_: int, usuario: dict = Depends(exigir_login)):
         raise HTTPException(status_code=404, detail="Orçamento não encontrado no histórico.")
     _exigir_dono_ou_admin(registro, usuario, "recalculá-lo")
 
-    dados = json.loads(registro["dados_json"] or "{}")
+    dados_json_esperado = registro["dados_json"]
+    dados = json.loads(dados_json_esperado or "{}")
     payload_salvo = dados.get("payload")
     if not isinstance(payload_salvo, dict):
         raise HTTPException(
@@ -186,10 +195,14 @@ def recalcular_historico(id_: int, usuario: dict = Depends(exigir_login)):
     frete_total_novo = resultado["resultado"]["frete_total"]
     dados["resultado"] = resultado
 
-    db.atualizar_recalculo_historico(
-        id_, frete_total_novo, json.dumps(dados, ensure_ascii=False),
-        frete_total_antigo=frete_total_antigo, alterado_por=usuario["username"],
-    )
+    try:
+        db.atualizar_recalculo_historico(
+            id_, frete_total_novo, json.dumps(dados, ensure_ascii=False),
+            frete_total_antigo=frete_total_antigo, alterado_por=usuario["username"],
+            dados_json_esperado=dados_json_esperado,
+        )
+    except db.ConflitoIntegridade as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     return {"status": "ok", "frete_total_antigo": frete_total_antigo, "frete_total": frete_total_novo}
 
 

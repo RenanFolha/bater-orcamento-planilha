@@ -284,16 +284,48 @@ correções de ICMS/PIS-COFINS/lotação/fracionado desta sessão (eixos
 diferentes) — todos os 10 continuam procedendo. Priorizados por
 esforço/dado disponível:
 
-1. **Prazo por rota — IMPLEMENTADO** (achado #7). Antes: `prazo_estimado_
-   dias_uteis` sempre devolvia `SLA.prazo_dias` fixo (5 dias), não importa
-   a rota. Agora: `_prazo_estimado_dias_uteis` em `frete_service.py` — 1
-   dia base + 1 dia a cada 500km rodados (`PRAZO_KM_POR_DIA_ADICIONAL`),
-   mais 5 dias se a rota tem balsa (7 de outubro a dezembro, nível do rio
-   baixo — `PRAZO_DIAS_EXTRA_BALSA`/`_SECA`), usado em `calcular_orcamento`
-   e `calcular_orcamento_fracionado`. Fórmula vinda direto da observação
-   do achado #7 na planilha. `SLA.prazo_dias` continua cadastrado no banco
-   mas não é mais usado pro prazo — fica só como campo legado (não
-   removido, pra não quebrar CRUD/telas existentes).
+1. **Prazo por rota — IMPLEMENTADO** (achado #7), só pra **Lotação**. Antes:
+   `prazo_estimado_dias_uteis` sempre devolvia `SLA.prazo_dias` fixo (5
+   dias), não importa a rota. Agora: `_prazo_estimado_dias_uteis` em
+   `frete_service.py` — 1 dia base + 1 dia a cada 500km rodados
+   (`PRAZO_KM_POR_DIA_ADICIONAL`), mais 5 dias se a rota tem balsa (7 de
+   outubro a dezembro, nível do rio baixo —
+   `PRAZO_DIAS_EXTRA_BALSA`/`_SECA`). Fórmula vinda direto da observação do
+   achado #7 na planilha, validada com as 1017 cotações FTL do próprio
+   `Teste_Completo_FTL`. `SLA.prazo_dias` continua cadastrado no banco mas
+   não é mais usado pro prazo — fica só como campo legado (não removido,
+   pra não quebrar CRUD/telas existentes).
+
+   **Correção (sessão seguinte, 2026-10-08)**: essa fórmula tinha sido
+   aplicada também ao **Fracionado** (`calcular_orcamento_fracionado`),
+   mas investigando com dados reais de Fracionado (aba "PRAZO" +
+   "Base Geral" de `COTAÇÃO SSONIC - 2026.xlsx`, 3.479 cotações
+   sem particularidade pós 17/06/2025) ficou claro que o prazo do
+   Fracionado **não correlaciona com km rodado** — a coluna `KM` da
+   planilha está quase toda vazia (2/3.938) e o prazo real varia só com a
+   classificação do destino (UF + capital/interior), às vezes de forma
+   contraintuitiva (SP→RO capital ~D+10 vs SP→RR capital ~D+23, SP→SP
+   interior ~D+0-3 vs SP→PA interior ~D+10-15). A própria aba "PRAZO" da
+   planilha (lookup oficial que ela já usa) só bate 61,7% com o prazo real
+   registrado; usando a **moda empírica** por (origem, UF destino,
+   capital/interior) o match sobe pra 77,3% (65 de 110 chaves com moda
+   dominante em ≥70% dos casos) — mesmo padrão de confiabilidade já
+   aceito pra GRIS/ADV/margem/custo de lotação neste projeto.
+
+   Implementado: nova tabela `prazo_fracionado_destino` (mesma chave de
+   `custos_fracionado_destino`: origem_tabela + uf_destino +
+   capital_interior) e `_prazo_fracionado_destino_aplicavel` em
+   `frete_service.py`, usada em `calcular_orcamento_fracionado` com
+   fallback pra `_prazo_estimado_dias_uteis` (fórmula por km) quando a
+   rota não está cadastrada — `calcular_orcamento` (Lotação) continua só
+   com a fórmula por km, inalterada. Populado localmente (dado real, não
+   versionado) com 95 chaves (46 AM + 49 SP) via a moda empírica
+   calculada a partir da planilha legada. Também corrigido de passagem:
+   `ParametrosFrete.__init__` não declarava `custos_fracionado_destino`
+   (só existia depois de `.load()`) — qualquer `ParametrosFrete()` montado
+   manualmente (ex: em teste) quebrava com `AttributeError` ao cotar
+   Fracionado com cidade_origem/destino preenchidos; bug pré-existente,
+   nunca exercitado até os novos testes de prazo passarem essas cidades.
 2. Tarifas leves/médios SP (achado #3), limites do formulário (achado #8),
    GRIS/ADV/taxa fluvial (achado #9), ICMS indevido por cliente (achado
    #6), balsa Manaus-Belém incompleta (achado #4), roteirização via filial

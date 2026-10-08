@@ -33,3 +33,8 @@ certs/
 # usada só como referência local pra comparar com o sistema -- nunca
 # deve ser versionada (ver comparar_planilha.py).
 Planilhas/
+
+# Documentos internos de precificação (manual, contratos de balsa,
+# tabelas de custo de transferência, propostas comerciais) -- dados reais
+# da empresa, mesma razão de Planilhas/ acima, nunca devem ser versionados.
+Sistema de Precificação/

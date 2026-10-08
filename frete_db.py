@@ -212,6 +212,25 @@ CREATE TABLE IF NOT EXISTS custos_fracionado_destino (
     UNIQUE(origem_tabela, uf_destino, capital_interior, componente)
 );
 
+CREATE TABLE IF NOT EXISTS prazo_fracionado_destino (
+    -- Prazo estimado (dias úteis) do Fracionado (LTL) por destino --
+    -- diferente da Lotação (FTL), o prazo real do Fracionado não varia
+    -- com km rodado (dados reais da planilha legada não mostram
+    -- correlação alguma com distância), varia com a classificação do
+    -- destino (UF + capital/interior) -- ver
+    -- _prazo_fracionado_destino_aplicavel. dias_uteis é a moda (valor
+    -- mais frequente) observada em cotações reais pra essa combinação
+    -- origem+destino; sem rota cadastrada aqui, calcular_orcamento_
+    -- fracionado cai no fallback de _prazo_estimado_dias_uteis (fórmula
+    -- por km, validada só pra Lotação).
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    origem_tabela TEXT NOT NULL,
+    uf_destino TEXT NOT NULL,
+    capital_interior TEXT NOT NULL,
+    dias_uteis INTEGER NOT NULL,
+    UNIQUE(origem_tabela, uf_destino, capital_interior)
+);
+
 CREATE TABLE IF NOT EXISTS coleta_cidades_fixas (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     filial_origem TEXT NOT NULL,
@@ -1018,6 +1037,15 @@ CREATE TABLE custos_fracionado_destino (
     v200 REAL NOT NULL,
     excedente_kg REAL NOT NULL,
     UNIQUE(origem_tabela, uf_destino, capital_interior, componente)
+);
+
+CREATE TABLE prazo_fracionado_destino (
+    id {PK},
+    origem_tabela VARCHAR(60) NOT NULL,
+    uf_destino VARCHAR(10) NOT NULL,
+    capital_interior VARCHAR(20) NOT NULL,
+    dias_uteis INTEGER NOT NULL,
+    UNIQUE(origem_tabela, uf_destino, capital_interior)
 );
 
 CREATE TABLE coleta_cidades_fixas (
@@ -2063,6 +2091,56 @@ def importar_custos_fracionado_destino(origem_tabela: str, linhas: list[dict]) -
     return {"criadas": criadas, "atualizadas": atualizadas}
 
 
+def listar_prazo_fracionado_destino(origem_tabela: str | None = None) -> list[dict]:
+    with get_connection() as conn:
+        if origem_tabela:
+            rows = conn.execute(
+                "SELECT * FROM prazo_fracionado_destino WHERE origem_tabela = ? "
+                "ORDER BY uf_destino, capital_interior",
+                (origem_tabela,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM prazo_fracionado_destino ORDER BY origem_tabela, uf_destino, capital_interior"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def importar_prazo_fracionado_destino(origem_tabela: str, linhas: list[dict]) -> dict:
+    """Upsert em lote por (origem_tabela, uf_destino, capital_interior) --
+    cada item de `linhas` é um dict com 'uf', 'capital_interior' e
+    'dias_uteis'. Usado para popular a tabela a partir da moda observada
+    em cotações reais da planilha legada (ver investigação documentada em
+    CONTEXTO.md), não tem endpoint de API/tela ainda -- ver
+    frete_service._prazo_fracionado_destino_aplicavel para como o valor é
+    usado."""
+    criadas, atualizadas = 0, 0
+    with get_connection() as conn:
+        for linha in linhas:
+            uf = linha["uf"].strip().upper()
+            capital_interior = linha["capital_interior"].strip().upper()
+            dias_uteis = int(linha["dias_uteis"])
+            existente = conn.execute(
+                "SELECT id FROM prazo_fracionado_destino "
+                "WHERE origem_tabela=? AND uf_destino=? AND capital_interior=?",
+                (origem_tabela, uf, capital_interior),
+            ).fetchone()
+            if existente:
+                conn.execute(
+                    "UPDATE prazo_fracionado_destino SET dias_uteis=? WHERE id=?",
+                    (dias_uteis, existente["id"]),
+                )
+                atualizadas += 1
+            else:
+                conn.execute(
+                    "INSERT INTO prazo_fracionado_destino "
+                    "(origem_tabela, uf_destino, capital_interior, dias_uteis) VALUES (?,?,?,?)",
+                    (origem_tabela, uf, capital_interior, dias_uteis),
+                )
+                criadas += 1
+    return {"criadas": criadas, "atualizadas": atualizadas}
+
+
 def obter_aliquota_pis_cofins() -> dict:
     with get_connection() as conn:
         return dict(conn.execute("SELECT * FROM aliquota_pis_cofins WHERE id = 1").fetchone())
@@ -2373,10 +2451,17 @@ def salvar_orcamento_historico(
 
 
 def listar_orcamentos_historico() -> list[dict]:
+    """Versão sem `dados_json` (snapshot completo, pode ter vários KB por
+    linha) -- quem lista o histórico (GET /historico) nunca usa esse
+    campo, só GET /historico/{codigo} (ver _buscar_historico_com_dados em
+    routers/historico.py), então não há motivo pra trazer do banco."""
     with get_connection() as conn:
         return [
             dict(r) for r in conn.execute(
-                "SELECT * FROM orcamentos_historico ORDER BY id DESC"
+                """SELECT id, codigo, criado_em, cliente, responsavel, origem_resumo,
+                          destino_resumo, veiculo, distancia_km, valor_mercadoria,
+                          frete_total, status, criado_por
+                   FROM orcamentos_historico ORDER BY id DESC"""
             )
         ]
 
@@ -2423,6 +2508,7 @@ def excluir_orcamento_historico(id_: int):
 def atualizar_pedagio_historico(
     id_: int, frete_total: float, dados_json: str,
     pedagio_antigo: float, pedagio_novo: float, alterado_por: str = "",
+    dados_json_esperado: str | None = None,
 ):
     """Usado só pra corrigir o pedágio de um orçamento já salvo (ex: o
     valor estimado pelo Google Maps na hora da cotação estava errado) —
@@ -2430,8 +2516,23 @@ def atualizar_pedagio_historico(
     antes de chamar essa função. Não mexe em mais nenhum campo do
     orçamento salvo, além de registrar a alteração em
     orcamentos_historico_alteracoes (ver listar_alteracoes_historico) pra
-    manter rastro de quem mudou o quê."""
+    manter rastro de quem mudou o quê.
+
+    `dados_json_esperado` é o snapshot que o chamador leu antes de
+    calcular o novo valor (controle de concorrência otimista) -- se o
+    registro mudou nesse meio tempo (outra edição concorrente no mesmo
+    id), o snapshot atual não bate mais com o esperado e a escrita é
+    rejeitada em vez de sobrescrever silenciosamente a mudança da outra
+    edição."""
     with get_connection() as conn:
+        if dados_json_esperado is not None:
+            atual = conn.execute(
+                "SELECT dados_json FROM orcamentos_historico WHERE id=?", (id_,)
+            ).fetchone()
+            if not atual or atual["dados_json"] != dados_json_esperado:
+                raise db_conexao.ConflitoIntegridade(
+                    "Este orçamento foi alterado por outra operação enquanto você editava -- recarregue e tente de novo."
+                )
         conn.execute(
             "UPDATE orcamentos_historico SET frete_total=?, dados_json=? WHERE id=?",
             (frete_total, dados_json, id_),
@@ -2448,6 +2549,7 @@ def atualizar_pedagio_historico(
 def atualizar_recalculo_historico(
     id_: int, frete_total: float, dados_json: str,
     frete_total_antigo: float, alterado_por: str = "",
+    dados_json_esperado: str | None = None,
 ):
     """Usado pra recalcular um orçamento já salvo com os parâmetros ATUAIS
     da Tabela de Preços (ex: depois de um reajuste que deve valer
@@ -2455,8 +2557,19 @@ def atualizar_recalculo_historico(
     frete_total e o dados_json inteiro (diferente de
     atualizar_pedagio_historico, que só ajusta o campo pedágio dentro do
     snapshot) e registra em orcamentos_historico_alteracoes pra manter
-    rastro de quem/quando recalculou."""
+    rastro de quem/quando recalculou.
+
+    `dados_json_esperado`: mesmo controle de concorrência otimista de
+    atualizar_pedagio_historico (ver lá)."""
     with get_connection() as conn:
+        if dados_json_esperado is not None:
+            atual = conn.execute(
+                "SELECT dados_json FROM orcamentos_historico WHERE id=?", (id_,)
+            ).fetchone()
+            if not atual or atual["dados_json"] != dados_json_esperado:
+                raise db_conexao.ConflitoIntegridade(
+                    "Este orçamento foi alterado por outra operação enquanto você editava -- recarregue e tente de novo."
+                )
         conn.execute(
             "UPDATE orcamentos_historico SET frete_total=?, dados_json=? WHERE id=?",
             (frete_total, dados_json, id_),
