@@ -377,10 +377,23 @@ sistemática contra `frete_service.py`/`frete.db`, por impacto:
    diferença de escopo (custo total vs só trecho carreteiro) — não
    confirmado, vale conferir antes de decidir se precisa reextrair.
 2. **Prazo do Fracionado** — já corrigido (ver seção acima).
-3. **Peso excedente em Carreta**: manual diz R$200,00/tonelada acima de
-   18t; `veiculos.valor_tonelada_excedente` da Carreta está em R$220,00/t
-   (10% acima). Não alterado — não investigado com dados reais ainda
-   (mesmo método usado pra validar os outros %).
+3. **Peso excedente em Carreta — investigado, mantido R$220/t (sessão
+   seguinte, 2026-10-08)**. Manual diz R$200,00/tonelada acima de 18t;
+   `veiculos.valor_tonelada_excedente` da Carreta está em R$220,00/t
+   (10% acima). Investigado com o mesmo método das outras validações
+   (extrair cotações reais da Base Geral, filtrar particularidade e
+   corte de 17/06/2025), mas a amostra é pequena e ruidosa demais pra
+   decidir: de 347 cotações reais de Lotação acima de 18t, 291 (84%)
+   estão em rotas já cadastradas em `custos_lotacao_destino`, onde o
+   peso excedente nunca é cobrado hoje (custo da tabela substitui
+   `custo_km + custo_peso_excedente` por completo) -- a questão só
+   importa pros 16% restantes. Dessas, só 46 ficaram "limpas", e nem
+   pares na mesma rota exata (taxa implícita variando de R$109/t a
+   R$632/t entre datas diferentes) nem regressão linear (R² entre 0,009
+   e 0,082, ou seja, peso excedente não explica a variação do
+   custo_total nessa amostra) deram um sinal confiável em nenhuma
+   direção. **Decisão do usuário: manter R$220/t por enquanto** --
+   sem dado confiável pra justificar a troca pro R$200 do manual.
 4. **RCA (Fracionado) — IMPLEMENTADO (sessão seguinte, 2026-10-08)**.
    Revisão inicial achou que RCA "não existe no sistema", mas na verdade
    já existia de um jeito diferente do manual: cadastrado em
@@ -432,7 +445,8 @@ Fracionado) — fica como lista de pendências priorizada.
    PA/outras origens, e separadamente há os achados do `Teste_Completo_
    FTL_2026_Sistema_vs_Planilha.xlsx` e as divergências do "Sistema de
    Precificação" (ambas seções acima) — prazo por rota e RCA do
-   Fracionado já implementados, restam tarifas SP, limites de formulário,
-   ICMS por cliente, balsa, roteirização, consolidação de carga AM, peso
-   excedente de Carreta (R$200 vs R$220/t) e a tabela de lotação SP
-   possivelmente desatualizada.
+   Fracionado já implementados, peso excedente de Carreta investigado e
+   mantido em R$220/t (sem dado confiável pra trocar), restam tarifas
+   SP, limites de formulário, ICMS por cliente, balsa, roteirização,
+   consolidação de carga AM e a tabela de lotação SP possivelmente
+   desatualizada.
