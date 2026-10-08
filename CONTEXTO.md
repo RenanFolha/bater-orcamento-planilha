@@ -221,12 +221,28 @@ dados reais, não assumir):
 ### Pendências / não implementado ainda (Fracionado)
 
 - **COLETA não segue a tabela de faixa de peso na maioria das cotações
-  pequenas/médias** (só 33% de aderência em ~48 cotações reais checadas,
-  contra 83-87% de EMBARQUE/ENTREGA) — maior gap de precisão do
-  Fracionado hoje. Hipótese não confirmada: taxa mínima (ex: R$ 50) que
-  prevalece sobre o valor da tabela quando esse for menor, ou algo
-  ligado à cidade exata de origem/retirada — precisa de mais investigação
-  antes de implementar.
+  pequenas/médias** (só 30,4% de aderência em ~3.300 cotações reais
+  pós 17/06/2025, contra 83-87% de EMBARQUE/ENTREGA numa amostra menor)
+  — maior gap de precisão do Fracionado hoje.
+
+  **Investigação de acompanhamento (sessão seguinte)**: testando
+  `coleta = max(peso_considerado × taxa, R$50)` como taxa LINEAR simples
+  (sem faixa nenhuma) em vez da tabela:
+  - **Origem AM**: taxa = 0,16 R$/kg bate em **55,4%** (923/1.666) —
+    melhor que a tabela, mas tem um segundo grupo relevante (~20%, 335
+    cotações) com taxa ~0,20 R$/kg em vez de 0,16. Não achei o que
+    diferencia os dois grupos: não é por data (se misturam ao longo de
+    todo o período), não é por capital x interior do destino (proporção
+    parecida nos dois grupos) — pode ser por cliente específico, tipo de
+    veículo negociado, ou outra variável que não está na planilha "Base
+    Geral". Não decifrado.
+  - **Origem SP**: taxa = 0,20 R$/kg bate em **37,4%** (612/1.636).
+  - **Decisão (2026-10-08)**: usuário optou por **manter a tabela de
+    faixas atual** (`custos_fracionado_destino`) em vez de trocar pela
+    fórmula linear — mesmo sendo uma aderência pior, a fórmula linear
+    ainda não está "fechada" (resta o segundo grupo de taxa não
+    explicado) pra justificar a troca agora. Fica documentado aqui caso
+    alguém queira retomar essa investigação depois.
 - GRIS/Ad Valorem/Taxa Fluvial do Fracionado variam por UF/capital-interior
   na planilha (ex: AM tem GRIS 0,2%/ADV 0,6%/fluvial 1%, mas o sistema usa
   só o % nacional cadastrado em Tabela de Preços, sem fluvial nenhum) —
