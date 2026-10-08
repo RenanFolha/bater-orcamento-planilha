@@ -274,16 +274,13 @@ let ultimoOrcamento = null;
 const stamp = document.getElementById('stamp');
 document.getElementById('config-conn-status').textContent = location.origin;
 
-// GRIS/Ad Valorem cadastrados em Tabela de Preços (ver
+// GRIS/Ad Valorem/RCA cadastrados em Tabela de Preços (ver
 // routers/parametros.py::listar_taxas_adicionais_publico) -- usados só
-// pra pré-preencher os campos digitáveis 'gris_pct'/'ad_valorem_pct' (e
-// os equivalentes 'frac-') com o valor cadastrado; digitar um valor MENOR
-// que o cadastrado é rejeitado pela API (ver
+// pra pré-preencher os campos digitáveis 'gris_pct'/'ad_valorem_pct'/
+// 'rca_pct' (e os equivalentes 'frac-') com o valor cadastrado; digitar
+// um valor MENOR que o cadastrado é rejeitado pela API (ver
 // fs._piso_taxa_customizavel/calcular_orcamento). 0 quando não há nenhuma
 // taxa cadastrada com esse nome.
-// rca só existe no Fracionado (ver frete_service._NOME_TAXA_RCA) -- o
-// campo frac-rca_pct é o único que usa essa chave do cache; o formulário
-// de Lotação nem tem esse input.
 let taxasCustomizaveisCache = {gris: 0, adValorem: 0, rca: 0};
 
 async function carregarTaxasCustomizaveis(){
@@ -357,9 +354,6 @@ function atualizarLucrosTaxasCustomizaveis(prefixo){
   atualizarLucroTaxaCustomizavel(
     `${prefixo}ad_valorem_pct`, `${prefixo}ad_valorem_pct-lucro`, `${prefixo}valor_mercadoria`, taxasCustomizaveisCache.adValorem,
   );
-  // rca_pct só existe no formulário Fracionado ('frac-') -- no de Lotação
-  // ('') esses ids não existem, e atualizarLucroTaxaCustomizavel já sai
-  // de imediato (ver `if(!input || !hint) return;`) sem erro.
   atualizarLucroTaxaCustomizavel(
     `${prefixo}rca_pct`, `${prefixo}rca_pct-lucro`, `${prefixo}valor_mercadoria`, taxasCustomizaveisCache.rca,
   );
@@ -388,7 +382,7 @@ async function inicializarFormulario(){
     ]);
     carregouParametros = true;
     statusTag.textContent = 'Aguardando';
-    preencherCamposTaxasCustomizaveis('gris_pct', 'ad_valorem_pct');
+    preencherCamposTaxasCustomizaveis('gris_pct', 'ad_valorem_pct', 'rca_pct');
     atualizarLucrosTaxasCustomizaveis('');
     // "Geral" é a categoria padrão (multiplicador 1.00, sem cuidado
     // especial) -- pré-seleciona pra cobrir o caso comum sem exigir que a
@@ -1117,6 +1111,7 @@ form.addEventListener('submit', async (ev) => {
     custos_extras: coletarCustosExtras(),
     gris_pct: parseFloat(document.getElementById('gris_pct').value),
     ad_valorem_pct: parseFloat(document.getElementById('ad_valorem_pct').value),
+    rca_pct: parseFloat(document.getElementById('rca_pct').value),
   };
 
   btn.disabled = true;
@@ -1309,16 +1304,18 @@ form.addEventListener('submit', async (ev) => {
       linhaDiariaVeiculo.style.display = 'none';
     }
 
-    // GRIS e Ad Valorem (ver gris_pct/ad_valorem_pct) ganham linha própria
-    // em Impostos e taxas, em vez de ficarem só somados dentro de "Taxas
-    // adicionais" -- as outras taxas cadastradas (se houver) continuam
-    // juntas ali, sem repetir GRIS/Ad Valorem duas vezes na tela.
+    // GRIS, Ad Valorem e RCA (ver gris_pct/ad_valorem_pct/rca_pct) ganham
+    // linha própria em Impostos e taxas, em vez de ficarem só somados
+    // dentro de "Taxas adicionais" -- as outras taxas cadastradas (se
+    // houver) continuam juntas ali, sem repetir essas três duas vezes
+    // na tela.
     const taxasAdicionaisLista = calc.taxas_adicionais || [];
     const taxaGris = taxasAdicionaisLista.find(t => t.nome.trim().toLowerCase() === 'gris');
     const taxaAdValorem = taxasAdicionaisLista.find(t => t.nome.trim().toLowerCase() === 'ad valorem');
+    const taxaRca = taxasAdicionaisLista.find(t => t.nome.trim().toLowerCase() === 'rca');
     const outrasTaxasAdicionais = taxasAdicionaisLista.filter(t => {
       const chave = t.nome.trim().toLowerCase();
-      return chave !== 'gris' && chave !== 'ad valorem';
+      return chave !== 'gris' && chave !== 'ad valorem' && chave !== 'rca';
     });
 
     const linhaGris = document.getElementById('linha-gris');
@@ -1335,6 +1332,14 @@ form.addEventListener('submit', async (ev) => {
       linhaAdValorem.style.display = 'flex';
     }else{
       linhaAdValorem.style.display = 'none';
+    }
+
+    const linhaRca = document.getElementById('linha-rca');
+    if(taxaRca && taxaRca.valor_aplicado > 0){
+      document.getElementById('d-rca').textContent = `${fmtBRL(taxaRca.valor_aplicado)} (${taxaRca.valor_configurado}%)`;
+      linhaRca.style.display = 'flex';
+    }else{
+      linhaRca.style.display = 'none';
     }
 
     const custoOutrasTaxasAdicionais = outrasTaxasAdicionais.reduce((soma, t) => soma + t.valor_aplicado, 0);

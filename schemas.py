@@ -36,9 +36,8 @@ def _campo_ad_valorem_pct() -> float | None:
 
 
 def _campo_rca_pct() -> float | None:
-    """Campo `rca_pct` — mesma regra de _campo_gris_pct(), pro RCA. Só
-    existe em OrcamentoFracionadoRequest (RCA é só do Fracionado, ver
-    frete_service._NOME_TAXA_RCA)."""
+    """Campo `rca_pct` — mesma regra de _campo_gris_pct(), pro RCA.
+    Idêntico em OrcamentoRequest e OrcamentoFracionadoRequest."""
     return Field(
         None, ge=0,
         description="% de RCA pra este orçamento (só Fracionado) — substitui o % cadastrado em Tabela de Preços, nunca abaixo dele. Deixe em branco (null) pra usar o cadastrado.",
@@ -85,6 +84,7 @@ class OrcamentoRequest(BaseModel):
     custos_extras: list[CustoExtraIn] = Field(default_factory=list, description="Custos extras escolhidos pra este orçamento (categoria + valor em R$), somados ao frete antes do PIS/COFINS e do ICMS")
     gris_pct: float | None = _campo_gris_pct()
     ad_valorem_pct: float | None = _campo_ad_valorem_pct()
+    rca_pct: float | None = _campo_rca_pct()
 
 
 class OrcamentoFracionadoRequest(BaseModel):

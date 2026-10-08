@@ -311,7 +311,7 @@
                 <div id="lista-valores-custos-extras"></div>
               </div>
 
-              <div class="section-label">GRIS e Ad Valorem</div>
+              <div class="section-label">GRIS, Ad Valorem e RCA</div>
               <div class="field">
                 <div class="idx">·</div>
                 <div>
@@ -326,6 +326,14 @@
                   <label for="ad_valorem_pct">Ad Valorem (%)</label>
                   <input type="number" id="ad_valorem_pct" min="0" step="any" required>
                   <div id="ad_valorem_pct-lucro" style="font-size:11.5px;margin-top:4px;"></div>
+                </div>
+              </div>
+              <div class="field">
+                <div class="idx">·</div>
+                <div>
+                  <label for="rca_pct">RCA (%)</label>
+                  <input type="number" id="rca_pct" min="0" step="any" required>
+                  <div id="rca_pct-lucro" style="font-size:11.5px;margin-top:4px;"></div>
                 </div>
               </div>
 
@@ -394,6 +402,7 @@
               <div class="line" id="linha-taxas-regionais" style="display:none;"><span>Taxas regionais</span><span id="d-taxas-regionais">-</span></div>
               <div class="line" id="linha-gris" style="display:none;"><span>GRIS</span><span id="d-gris">-</span></div>
               <div class="line" id="linha-ad-valorem" style="display:none;"><span>Ad Valorem</span><span id="d-ad-valorem">-</span></div>
+              <div class="line" id="linha-rca" style="display:none;"><span>RCA</span><span id="d-rca">-</span></div>
               <div class="line" id="linha-taxas" style="display:none;"><span>Taxas adicionais</span><span id="d-taxas">-</span></div>
               <div class="line subtotal-line"><span>Total de impostos e taxas</span><span id="d-total-impostos-taxas">-</span></div>
             </div>

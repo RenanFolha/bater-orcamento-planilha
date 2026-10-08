@@ -404,20 +404,27 @@ sistemática contra `frete_service.py`/`frete.db`, por impacto:
    só corrigir o %. Implementado: `_NOME_TAXA_RCA` em `frete_service.py`,
    `rca_pct` editável por orçamento (igual `gris_pct`/`ad_valorem_pct`,
    mesma validação de piso/tipo fixo), aplicado via
-   `_taxas_adicionais_aplicadas(..., incluir_rca=True)` só em
-   `calcular_orcamento_fracionado` -- `calcular_orcamento` (Lotação) nunca
-   aplica RCA, mesmo que exista uma linha "RCA" cadastrada (parâmetro
-   `incluir_rca` default `False`). Banco: removidas as 2 linhas antigas de
-   `taxas_regionais` (Manaus/Belém 0,05%) e inserida 1 linha nova em
-   `taxas_adicionais` ("RCA", percentual, 0,12%) -- dado local, não
-   versionado, mesma política de GRIS/Ad Valorem. Frontend
-   (`index.html`/`assets/app.js`): campo `frac-rca_pct` só no formulário
+   `_taxas_adicionais_aplicadas(...)`. Banco: removidas as 2 linhas
+   antigas de `taxas_regionais` (Manaus/Belém 0,05%) e inserida 1 linha
+   nova em `taxas_adicionais` ("RCA", percentual, 0,12%) -- dado local,
+   não versionado, mesma política de GRIS/Ad Valorem. Frontend
+   (`index.html`/`assets/app.js`): campo `rca_pct` no formulário
    Fracionado, linha própria no resultado ("RCA"), e o rótulo genérico de
    `taxas_regionais` (que dizia "Taxa fluvial (RCA)" nos dois formulários)
    corrigido pra "Taxas regionais" (mecanismo continua existindo, só não é
-   mais usado pra nada hoje já que as 2 linhas foram removidas). Testes:
-   4 novos em `tests/test_frete_service.py` (override, piso, default
-   cadastrado, e confirmação de que a Lotação nunca aplica RCA).
+   mais usado pra nada hoje já que as 2 linhas foram removidas).
+
+   **Extensão (mesma sessão): RCA também na Lotação.** Pedido explícito
+   do usuário -- decisão consciente de divergir do manual (que descreve
+   RCA só pro Fracionado; a Lotação tem "Seguro Rodoviário" com
+   composição diferente, 0,07%+0,03%, nunca implementada). Removido o
+   parâmetro `incluir_rca` de `_taxas_adicionais_aplicadas` (RCA passou a
+   ser tratado exatamente como GRIS/Ad Valorem, sem escopo por modal);
+   `calcular_orcamento` ganhou `rca_pct` com a mesma validação de piso/
+   tipo fixo. Frontend: campo `rca_pct` e linha de resultado "RCA"
+   também na tela de Lotação. Testes: 6 no total em
+   `tests/test_frete_service.py` (override, piso e default cadastrado,
+   repetidos pros dois modais).
 5. Isenção de ICMS sul de MG, transbordo (tarifa reduzida Belém→Sudeste),
    lotação curta em SP (Valinhos/Ribeirão Preto), subcontratação sem
    ICMS, diária de entrega em Belém/Macapá, custos adicionais

@@ -1684,9 +1684,7 @@ def test_prazo_fracionado_bahia_interior_usa_interior_i_como_aproximacao(paramet
 
 # ============================================================
 # RCA -- taxa digitável por orçamento igual GRIS/Ad Valorem (ver
-# _NOME_TAXA_RCA), mas só existe no Fracionado (manual de precificação):
-# calcular_orcamento (Lotação) nunca aplica RCA, mesmo que esteja
-# cadastrado em taxas_adicionais.
+# _NOME_TAXA_RCA), nos dois modais (Lotação e Fracionado).
 # ============================================================
 
 
@@ -1717,17 +1715,39 @@ def test_rca_nao_informado_usa_cadastrado_no_fracionado(parametros):
     assert rca["valor_aplicado"] == pytest.approx(1.2)  # 1000 * 0.12%
 
 
-def test_rca_nunca_aplica_na_lotacao_mesmo_cadastrado(parametros):
-    # RCA cadastrado em taxas_adicionais (ex: alguém cadastrou pensando só
-    # no Fracionado) não deve aparecer no cálculo de Lotação de jeito
-    # nenhum -- incluir_rca=False é o padrão de calcular_orcamento.
+def test_rca_digitado_substitui_o_cadastrado_na_lotacao(parametros):
+    parametros.taxas_adicionais.append(fs.TaxaAdicional(nome="RCA", tipo="percentual", valor=0.12))
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        rca_pct=5.0,
+    )
+    calc = resultado["calculos_intermediarios"]
+    rca = next(t for t in calc["taxas_adicionais"] if t["nome"] == "RCA")
+    assert rca["valor_configurado"] == pytest.approx(5.0)
+    assert rca["valor_aplicado"] == pytest.approx(50.0)  # 1000 * 5%
+
+
+def test_rca_digitado_abaixo_do_cadastrado_gera_erro_na_lotacao(parametros):
+    parametros.taxas_adicionais.append(fs.TaxaAdicional(nome="RCA", tipo="percentual", valor=0.12))
+    with pytest.raises(fs.FreteInputError, match="RCA"):
+        fs.calcular_orcamento(
+            peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+            categoria="Geral", transporte="Rodoviário", sla="Padrão",
+            rca_pct=0.05,
+        )
+
+
+def test_rca_nao_informado_usa_cadastrado_na_lotacao(parametros):
     parametros.taxas_adicionais.append(fs.TaxaAdicional(nome="RCA", tipo="percentual", valor=0.12))
     resultado = fs.calcular_orcamento(
         peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
         categoria="Geral", transporte="Rodoviário", sla="Padrão",
     )
     calc = resultado["calculos_intermediarios"]
-    assert "RCA" not in [t["nome"] for t in calc["taxas_adicionais"]]
+    rca = next(t for t in calc["taxas_adicionais"] if t["nome"] == "RCA")
+    assert rca["valor_configurado"] == pytest.approx(0.12)
+    assert rca["valor_aplicado"] == pytest.approx(1.2)  # 1000 * 0.12%
 
 
 def test_buscar_faixa_peso_fracionado_sem_cadastro_da_erro_de_configuracao(parametros):
