@@ -1,8 +1,13 @@
 fastapi==0.141.1
 uvicorn==0.52.4
 httpx==0.28.1
-openpyxl==3.1.5
 cryptography==50.0.1  # cifra a senha salva em db_config.json (ver db_conexao.py)
+
+# Gera o PDF de cotação do histórico (ver export_service.py) dirigindo o
+# Google Chrome já instalado na máquina (channel="chrome") -- não baixa
+# nenhum Chromium próprio, então NÃO precisa rodar `playwright install`.
+# Só exige que o Google Chrome esteja instalado no servidor que roda a API.
+playwright==1.63.0
 
 # Drivers opcionais pra apontar o banco de dados pra um servidor externo
 # (ver "Banco de dados configurável" no README) -- sem eles, o sistema

@@ -41,6 +41,12 @@ orçamento em si, ela começa na seção seguinte.
    pip install -r requirements.txt
    ```
 
+   A exportação de cotação em PDF (ver "Exportar PDF" no histórico de
+   orçamentos) usa o `playwright` pra imprimir o PDF, mas dirige o
+   **Google Chrome já instalado na máquina** — não baixa nenhum Chromium
+   próprio. Não precisa rodar `playwright install`; só exige o Chrome
+   instalado no computador/servidor que roda a API.
+
 2. Suba a aplicação:
    ```bash
    python main.py
@@ -619,7 +625,7 @@ frete_project/
 ├── frete_service.py           # Leitura do banco + lógica de cálculo do frete
 ├── geo_service.py             # Geocodificação, distância e filial mais próxima
 ├── auth_service.py            # Login, sessão e hash de senha
-├── export_service.py          # Exportação de orçamento do histórico para planilha
+├── export_service.py          # Exportação de orçamento do histórico para PDF
 ├── frete_db.py                # Schema do banco SQLite e dados de exemplo
 ├── frete.db                   # Banco de dados (criado automaticamente)
 ├── index.html                 # Interface web (HTML) — CSS e JS ficam em assets/

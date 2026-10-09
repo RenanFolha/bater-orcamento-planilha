@@ -3398,7 +3398,7 @@ document.getElementById('btn-exportar-planilha').addEventListener('click', async
   statusEl.className = 'cep-info';
   statusEl.textContent = '';
   try{
-    const res = await fetch(`${API_BASE}/historico/${detalheHistoricoCodigo}/planilha`);
+    const res = await fetch(`${API_BASE}/historico/${detalheHistoricoCodigo}/pdf`);
     if(!res.ok){
       const data = await res.json().catch(() => ({}));
       throw new Error(data.detail || `Erro HTTP ${res.status}`);
@@ -3407,14 +3407,14 @@ document.getElementById('btn-exportar-planilha').addEventListener('click', async
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `Orcamento_${detalheHistoricoCodigo}.xlsx`;
+    a.download = `Orcamento_${detalheHistoricoCodigo}.pdf`;
     document.body.appendChild(a);
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
   }catch(e){
     statusEl.className = 'cep-info err';
-    statusEl.textContent = `Erro ao exportar planilha: ${e.message}`;
+    statusEl.textContent = `Erro ao exportar PDF: ${e.message}`;
   }finally{
     btn.disabled = false;
     btn.innerHTML = textoOriginal;

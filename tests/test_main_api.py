@@ -368,7 +368,7 @@ def test_historico_excluir_inexistente_da_404(client):
     assert r.status_code == 404
 
 
-def test_historico_planilha_gera_xlsx_com_sucesso(client):
+def test_historico_pdf_gera_pdf_com_sucesso(client):
     _login(client)
     payload_orcamento = _orcamento_payload()
     resultado = client.post("/orcamento", json=payload_orcamento).json()
@@ -384,33 +384,26 @@ def test_historico_planilha_gera_xlsx_com_sucesso(client):
     assert r.status_code == 200, r.text
     codigo = r.json()["codigo"]
 
-    r = client.get(f"/historico/{codigo}/planilha")
+    r = client.get(f"/historico/{codigo}/pdf")
     assert r.status_code == 200
-    assert r.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    assert len(r.content) > 0
-
-    from io import BytesIO
-
-    import openpyxl
-
-    wb = openpyxl.load_workbook(BytesIO(r.content))
-    assert wb.sheetnames
+    assert r.headers["content-type"] == "application/pdf"
+    assert r.content.startswith(b"%PDF")
 
 
-def test_historico_planilha_erro_de_exportacao_da_500(client, monkeypatch):
+def test_historico_pdf_erro_de_exportacao_da_500(client, monkeypatch):
     import export_service as export
     import routers.historico as historico_router
 
     def _gerar_fake(registro):
-        raise export.ExportacaoError("planilha modelo não encontrada")
+        raise export.ExportacaoError("Google Chrome não encontrado")
 
-    monkeypatch.setattr(historico_router.export, "gerar_planilha_orcamento", _gerar_fake)
+    monkeypatch.setattr(historico_router.export, "gerar_pdf_orcamento", _gerar_fake)
 
     _login(client)
     codigo = client.post("/historico", json={"cliente": "X", "responsavel": "Y"}).json()["codigo"]
-    r = client.get(f"/historico/{codigo}/planilha")
+    r = client.get(f"/historico/{codigo}/pdf")
     assert r.status_code == 500
-    assert "não encontrada" in r.json()["detail"]
+    assert "não encontrado" in r.json()["detail"]
 
 
 def test_historico_soh_pode_ser_excluido_pelo_dono_ou_admin(client):
@@ -471,7 +464,7 @@ def test_usuario_comum_nao_ve_detalhe_de_historico_de_outro(client):
     client.post("/auth/logout")
     _login(client, username="comum", senha="senha1234")
     assert client.get(f"/historico/{codigo_admin}").status_code == 403
-    assert client.get(f"/historico/{codigo_admin}/planilha").status_code == 403
+    assert client.get(f"/historico/{codigo_admin}/pdf").status_code == 403
 
     client.post("/auth/logout")
     _login(client)

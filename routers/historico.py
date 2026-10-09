@@ -64,7 +64,7 @@ def listar_historico(usuario: dict = Depends(exigir_login)):
 def _buscar_historico_com_dados(codigo: str) -> dict:
     """Busca o registro do histórico por código e já desserializa o
     snapshot completo do orçamento (dados_json) — usado tanto pra exibir
-    o detalhe quanto pra gerar a planilha exportada."""
+    o detalhe quanto pra gerar o PDF exportado."""
     registro = db.buscar_orcamento_historico(codigo)
     if not registro:
         raise HTTPException(status_code=404, detail=f"Orçamento '{codigo}' não encontrado no histórico.")
@@ -206,18 +206,18 @@ def recalcular_historico(id_: int, usuario: dict = Depends(exigir_login)):
     return {"status": "ok", "frete_total_antigo": frete_total_antigo, "frete_total": frete_total_novo}
 
 
-@router.get("/{codigo}/planilha")
-def exportar_historico_planilha(codigo: str, usuario: dict = Depends(exigir_login)):
-    """Gera a planilha de orçamento (formato 'Modelo de Orçamento.xlsx')
-    preenchida com os dados desse orçamento do histórico."""
+@router.get("/{codigo}/pdf")
+def exportar_historico_pdf(codigo: str, usuario: dict = Depends(exigir_login)):
+    """Gera o PDF de cotação (Modelo 1 -- cotação única, estilo proposta
+    comercial) preenchido com os dados desse orçamento do histórico."""
     registro = _buscar_historico_com_dados(codigo)
     _exigir_dono_ou_admin(registro, usuario, "exportá-lo")
     try:
-        conteudo = export.gerar_planilha_orcamento(registro)
+        conteudo = export.gerar_pdf_orcamento(registro)
     except export.ExportacaoError as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
     return Response(
         content=conteudo,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="Orcamento_{codigo}.xlsx"'},
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="Orcamento_{codigo}.pdf"'},
     )

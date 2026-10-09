@@ -511,6 +511,57 @@ textos), em vez de a cada vez que abre o detalhe.
 decodificação de polyline, coordenadas no resultado de `calcular_
 distancia` nos 3 caminhos -- direto, prioridade de rota, histórico).
 
+## Exportação de cotação em PDF (sessão seguinte, 2026-10-09)
+
+Pedido do usuário, fora da lista de achados: trocar a exportação do
+histórico (antes um `.xlsx` que preenchia uma linha da planilha "Modelo
+de Orçamento.xlsx", um log tabular) por um PDF de página única, estilo
+proposta comercial pra mandar direto pro cliente. O usuário trouxe 3
+mockups prontos (link de artifact do claude.ai, visto pela extensão
+Claude-in-Chrome já que o fetch comum só pega a casca da SPA) e escolheu
+implementar só o **Modelo 1** (cotação única) -- os outros dois (cotação
+múltipla com custos segregados, e comparativo de modais incluindo Aéreo,
+que o sistema não calcula) ficam de fora por ora.
+
+`export_service.py` foi reescrito do zero: `gerar_pdf_orcamento(registro)`
+monta um HTML (`_html_orcamento`, com todo texto livre passando por
+`html.escape` -- risco de HTML/script injection, diferente do guard de
+fórmula do xlsx antigo) e renderiza em PDF via `playwright.sync_api`,
+`p.chromium.launch(channel="chrome")` -- dirige o **Google Chrome já
+instalado na máquina**, não baixa Chromium próprio (não precisa
+`playwright install`, só o pacote `pip install playwright` + Chrome no
+host, documentado no README). `page.pdf(..., print_background=True)` é
+obrigatório -- sem isso o Chrome rasterizava o PDF sem as cores de fundo/
+flexbox do CSS.
+
+Alternativas descartadas: **WeasyPrint** (precisa de libs nativas GTK3/
+Pango que não vêm instaladas no Windows, `OSError: cannot load library
+'libgobject-2.0-0'`); baixar o **Chromium do próprio Playwright** via
+`playwright install` (timeout de rede no ambiente, `cdn.playwright.dev`
+não respondeu em 30s).
+
+`GET /historico/{codigo}/planilha` virou `GET /historico/{codigo}/pdf`
+(`routers/historico.py`), devolvendo `application/pdf`. Front
+(`assets/app.js`/`index.html`): botão "Exportar planilha" → "Exportar
+PDF" (ícone `ti-file-type-pdf`), mesmo fluxo de download, só trocando a
+URL/extensão. Removido do repositório o arquivo `Modelo de Orçamento.xlsx`
+(não é mais usado por nada) e a dependência `openpyxl` do `requirements.txt`
+(só sobrevive em `requirements-dev.txt` indiretamente -- os testes do PDF
+leem o conteúdo via `pypdf`, adicionado como dependência de teste).
+
+Dados fixos da empresa (CNPJ, endereço, e-mail/telefone de contato,
+razão social) vieram do mockup aprovado e foram deixados como constantes
+no topo de `export_service.py` -- **não confirmados com o usuário como
+valores reais**; revisar antes do primeiro envio de verdade pra cliente.
+O nome do "seu contato na SuperSonic" no rodapé do mockup era fixo
+("Leonardo da Silva Santos") -- no sistema usa `registro.get("responsavel")`
+dinamicamente (quem cotou), mais correto que hardcodar um nome.
+
+6 testes em `tests/test_export_service.py` (reescritos -- PDF em vez de
+xlsx, usando `pypdf.PdfReader(...).extract_text()` pra conferir o
+conteúdo) + 2 em `tests/test_main_api.py` renomeados/atualizados pra
+`/pdf`. Suíte completa: 551 passed, 4 skipped.
+
 ## Como retomar
 
 1. Confirmar que `Planilhas/COTAÇÃO SSONIC - 2026.xlsx` e a pasta
