@@ -275,6 +275,30 @@ def test_retorno_sem_taxa_de_balsa_cadastrada_continua_cobrando_por_km(parametro
     assert calc["distancia_manutencao_km"] == 140
 
 
+def test_retorno_pra_mesma_cidade_do_destino_nao_cobra_balsa_de_novo(parametros):
+    # Achado real (histórico "erro manaus" x "erro manaus pt 2", mesma
+    # rota, R$11.417,82 de diferença): quando o destino e a filial de
+    # retorno são a MESMA cidade (ex: entrega em Manaus com retorno de
+    # poucos km pra uma filial também em Manaus), uma taxa de balsa
+    # cadastrada como curinga ("*" -> Manaus, usada pra cobrar a
+    # travessia na ida de qualquer origem) não pode casar de novo com
+    # esse "Manaus -> Manaus" degenerado -- não existe travessia nenhuma
+    # nesse retorno local.
+    parametros.taxas_balsa = [
+        fs.TaxaBalsa(cidade_origem="*", cidade_destino="Manaus", veiculo="VUC", tipo="fixo", valor=7110.58),
+    ]
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+        cidade_origem="Campinas, SP, Brasil", cidade_destino="manaus",
+        distancia_retorno=2, filial_retorno="Manaus",
+    )
+    calc = resultado["calculos_intermediarios"]
+    assert calc["taxa_balsa_retorno"] is None
+    assert calc["custo_balsa"] == pytest.approx(7110.58)  # só a ida, não dobra
+    assert calc["custo_retorno"] == pytest.approx(1.0)  # 2km * 0.5 (tarifa_km_retorno do VUC), por km normal
+
+
 def test_manutencao_incide_sobre_coleta_com_frota_propria(parametros):
     resultado = fs.calcular_orcamento(
         peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,

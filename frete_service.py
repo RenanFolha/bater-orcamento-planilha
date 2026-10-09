@@ -1761,8 +1761,20 @@ def calcular_orcamento(
     # pra esse sentido, cobra ela — a balsa é cobrada sempre que a rota
     # passa por ela, ida ou volta — e o trecho já não roda por estrada
     # (ver distancia_retorno_faturavel abaixo).
+    #
+    # Exceção: quando o destino e a filial de retorno são a MESMA cidade
+    # (ex: entrega em Manaus com retorno de poucos km pra uma filial
+    # também em Manaus), não existe travessia nenhuma pra cobrar -- sem
+    # essa checagem, uma regra de balsa cadastrada como curinga (ex:
+    # "*" -> Manaus) casava com esse "Manaus -> Manaus" degenerado e
+    # cobrava a travessia inteira de novo só por causa de um retorno
+    # local de poucos km (achado real: "erro manaus" x "erro manaus pt 2"
+    # no histórico, mesma rota, R$11.417,82 de diferença só por isso).
     custo_balsa_retorno, detalhe_balsa_retorno = 0.0, None
-    if distancia_retorno > 0 and filial_retorno:
+    mesma_cidade_retorno = db.normalizar_texto(_cidade_da_retirada(cidade_destino) or "") == db.normalizar_texto(
+        _cidade_da_retirada(filial_retorno) or ""
+    )
+    if distancia_retorno > 0 and filial_retorno and not mesma_cidade_retorno:
         custo_balsa_retorno, detalhe_balsa_retorno, _ = _taxa_balsa_aplicada(
             p, cidade_destino, filial_retorno, v.nome, valor_mercadoria
         )

@@ -574,6 +574,41 @@ xlsx, usando `pypdf.PdfReader(...).extract_text()` pra conferir o
 conteúdo) + 2 em `tests/test_main_api.py` renomeados/atualizados pra
 `/pdf`. Suíte completa: 551 passed, 4 skipped.
 
+## Bug: balsa de retorno cobrada 2x quando destino e filial de retorno são a mesma cidade (sessão seguinte, 2026-10-09)
+
+Achado pelo usuário via dois orçamentos salvos no histórico ("erro manaus"
+e "erro manaus pt 2", mesma rota Campinas→Manaus, mesmo veículo/peso/valor
+de mercadoria, mas `frete_total` divergindo em **R$11.417,82**). Diff
+campo a campo dos dois snapshots achou a única diferença de entrada:
+`distancia_retorno=2km` + `filial_retorno="Manaus"` num deles (retorno
+vazio pra uma filial também em Manaus, provavelmente só alguns km de
+deslocamento local).
+
+Causa: o cálculo de retorno vazio (`calcular_orcamento`) checa uma taxa de
+balsa pro trecho `cidade_destino -> filial_retorno` independente da taxa já
+cobrada na ida. Como `cidade_destino` e `filial_retorno` eram a MESMA
+cidade (Manaus), e existe uma taxa de balsa cadastrada como curinga
+(`"*" -> Manaus`, usada pra cobrar a travessia na ida vinda de qualquer
+origem), essa regra casava de novo com esse "Manaus -> Manaus" degenerado
+e cobrava a travessia inteira (R$7.110,58) por cima de um retorno local
+que não cruza rio nenhum. O valor extra ainda se propagava por pedágio
+estimado (%), PIS/COFINS, margem e ICMS, amplificando pra R$11.417,82 de
+diferença final.
+
+Corrigido em `frete_service.py::calcular_orcamento`: a checagem da taxa de
+balsa de retorno agora é pulada quando `cidade_destino` e `filial_retorno`
+normalizam pra mesma cidade (`_cidade_da_retirada` + `db.normalizar_texto`)
+-- nesse caso só o custo por km normal do retorno (`custo_retorno`)
+continua sendo cobrado, sem duplicar a balsa. 1 teste novo em
+`tests/test_frete_service.py`
+(`test_retorno_pra_mesma_cidade_do_destino_nao_cobra_balsa_de_novo`).
+`calcular_orcamento_fracionado` não tem conceito de retorno vazio, não
+precisou de correção.
+
+O registro `ORC-0014` ("erro manaus") no histórico ainda guarda o valor
+antigo errado (R$75.960,33) -- usar "Recalcular" na tela de detalhe do
+histórico pra atualizar com a correção, se for reaproveitar essa cotação.
+
 ## Como retomar
 
 1. Confirmar que `Planilhas/COTAÇÃO SSONIC - 2026.xlsx` e a pasta
