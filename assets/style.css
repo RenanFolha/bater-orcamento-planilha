@@ -338,10 +338,10 @@
   }
   .btn-mapa-rota:hover{background:var(--accent); color:var(--on-accent);}
   .btn-mapa-rota-inline{
-    width:24px; height:24px; border-radius:50%; flex-shrink:0;
+    width:30px; height:30px; border-radius:50%; flex-shrink:0;
     background:var(--panel-alt); border:1px solid var(--border); color:var(--accent-strong);
     display:inline-flex; align-items:center; justify-content:center; cursor:pointer;
-    font-size:12px; padding:0; transition:background .15s ease, color .15s ease;
+    font-size:15px; padding:0; transition:background .15s ease, color .15s ease;
   }
   .btn-mapa-rota-inline:hover{background:var(--accent); color:var(--on-accent);}
   .btn-mapa-rota-inline:disabled{opacity:.6; cursor:wait;}
