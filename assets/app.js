@@ -341,10 +341,9 @@ document.addEventListener('keydown', (ev) => {
 // Histórico não salva lat/lon (só os endereços resolvidos em texto, ver
 // registro.origem_resumo/destino_resumo) -- geocodifica sob demanda
 // quando a pessoa pede o mapa, em vez de a cada vez que abre o detalhe.
-// Delegação de evento porque o botão é recriado a cada renderizarDetalheHistorico.
-document.getElementById('detalhe-conteudo').addEventListener('click', async (ev) => {
-  const btn = ev.target.closest('#btn-mapa-rota-historico');
-  if(!btn || !detalheHistoricoRegistro) return;
+document.getElementById('btn-mapa-rota-historico').addEventListener('click', async () => {
+  const btn = document.getElementById('btn-mapa-rota-historico');
+  if(!detalheHistoricoRegistro) return;
   const statusEl = document.getElementById('detalhe-status');
   const iconeOriginal = btn.innerHTML;
   btn.disabled = true;
@@ -3273,25 +3272,17 @@ function renderizarDetalheHistorico(registro){
     ['Valor da mercadoria', fmtBRL(registro.valor_mercadoria)],
     ['Frete total', fmtBRL(registro.frete_total)],
   );
-  const linhasHtml = linhas.map(([label, valor]) => `
+  linhas.splice(1, 0, ['Veículo', registro.veiculo || entrada.veiculo || '—']);
+  document.getElementById('detalhe-conteudo').innerHTML = linhas.map(([label, valor]) => `
     <div class="line"><span>${esc(label)}</span><span>${esc(valor)}</span></div>
-  `);
-  // Linha "Veículo" com o mesmo ícone de mapa dos formulários de cotação
-  // (ver abrirMapaRotaComDados) -- aqui a rota não tem coordenadas
-  // salvas (só os endereços resolvidos em texto), então geocodifica sob
-  // demanda só quando a pessoa clica (ver listener de #detalhe-conteudo).
-  const nomeVeiculo = registro.veiculo || entrada.veiculo || '—';
-  const temRotaParaMapa = !!(registro.origem_resumo && registro.destino_resumo);
-  linhasHtml.splice(1, 0, `
-    <div class="line">
-      <span>Veículo</span>
-      <span style="display:flex;align-items:center;gap:8px;">
-        ${esc(nomeVeiculo)}
-        ${temRotaParaMapa ? '<button type="button" class="btn-mapa-rota-inline" id="btn-mapa-rota-historico" title="Ver mapa da rota"><i class="ti ti-map-2"></i></button>' : ''}
-      </span>
-    </div>
-  `);
-  document.getElementById('detalhe-conteudo').innerHTML = linhasHtml.join('');
+  `).join('');
+
+  // Botão de mapa fica no canto do card (não na linha "Veículo") -- rota
+  // do histórico não tem coordenadas salvas (só os endereços resolvidos
+  // em texto), geocodifica sob demanda só quando a pessoa clica (ver
+  // listener de #btn-mapa-rota-historico).
+  document.getElementById('detalhe-mapa-rota-wrap').style.display =
+    (registro.origem_resumo && registro.destino_resumo) ? 'flex' : 'none';
 
   // Só quem salvou o registro (mesma conta logada) ou um admin pode editar
   // o pedágio -- mesma regra usada pra excluir (ver renderizarHistorico).
