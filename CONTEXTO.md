@@ -549,10 +549,17 @@ URL/extensão. Removido do repositório o arquivo `Modelo de Orçamento.xlsx`
 (só sobrevive em `requirements-dev.txt` indiretamente -- os testes do PDF
 leem o conteúdo via `pypdf`, adicionado como dependência de teste).
 
-Dados fixos da empresa (CNPJ, endereço, e-mail/telefone de contato,
-razão social) vieram do mockup aprovado e foram deixados como constantes
-no topo de `export_service.py` -- **não confirmados com o usuário como
-valores reais**; revisar antes do primeiro envio de verdade pra cliente.
+Dados fixos da empresa (constantes no topo de `export_service.py`),
+revisados com o usuário na sessão seguinte (2026-10-09): razão social,
+e-mail e telefone do mockup foram **confirmados** como reais. O **CNPJ
+ficou em aberto** por pedido do usuário (ainda não tem o número pra
+cadastrar) -- `_EMPRESA_CNPJ = ""`, e `_html_orcamento` omite o trecho
+"CNPJ ..." do rodapé enquanto estiver vazio, em vez de imprimir um
+número não confirmado; preencher essa constante quando o CNPJ real
+existir. O **endereço** foi corrigido pro mesmo já cadastrado na filial
+São Paulo (`frete_db.py`, `_seed_filiais`) em vez do trecho truncado do
+mockup -- essa é a fonte real, não o mockup.
+
 O nome do "seu contato na SuperSonic" no rodapé do mockup era fixo
 ("Leonardo da Silva Santos") -- no sistema usa `registro.get("responsavel")`
 dinamicamente (quem cotou), mais correto que hardcodar um nome.

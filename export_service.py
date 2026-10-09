@@ -33,13 +33,20 @@ _VALIDADE_DIAS = 15
 
 # Dados fixos da empresa pro rodapé/cabeçalho -- não existe cadastro de
 # CNPJ/endereço/contato comercial em nenhuma tabela do banco hoje, então
-# ficam aqui como constante (ajustar se mudar). Vieram direto do mockup
-# aprovado -- confirme com o usuário se CNPJ/endereço/e-mail/telefone
-# abaixo são os valores reais antes de mandar pro primeiro cliente de
-# verdade.
+# ficam aqui como constante (ajustar se mudar). E-mail/telefone/razão
+# social vieram do mockup aprovado e foram confirmados com o usuário.
+# Endereço é o mesmo já cadastrado pra filial São Paulo em frete_db.py
+# (_seed_filiais) -- fonte real, não o mockup.
 _EMPRESA_RAZAO_SOCIAL = "SuperSonic Logística e Transportes Ltda"
-_EMPRESA_CNPJ = "47.705.660/0001-31"
-_EMPRESA_ENDERECO = "Av. Otaviano Alves de Lima, 2724, São Paulo/SP"
+# CNPJ deixado em aberto por pedido do usuário -- ainda não tem o número
+# real pra cadastrar; _html_orcamento omite o trecho "CNPJ ..." do rodapé
+# enquanto essa constante estiver vazia, em vez de imprimir um número
+# não confirmado (ver uso abaixo).
+_EMPRESA_CNPJ = ""
+_EMPRESA_ENDERECO = (
+    "Av. Otaviano Alves de Lima, nº 2724, Bloco B, 4º andar, "
+    "Jardim das Graças, São Paulo/SP — CEP 02.701-000"
+)
 _EMPRESA_SITE = "supersonic.com.br"
 _CONTATO_EMAIL = "cotacao@ssonic.com.br"
 _CONTATO_TELEFONE = "(11) 97401-0527"
@@ -307,7 +314,12 @@ table.carga td.obs {{ font-weight: 400; color: #717C89; }}
     <a class="btn" href="mailto:{e(_CONTATO_EMAIL)}?subject=Aceite%20{e(codigo)}">Aceitar cotação</a>
   </div>
   <div class="rodape-empresa">
-    <div>{e(_EMPRESA_RAZAO_SOCIAL)} · CNPJ {e(_EMPRESA_CNPJ)} · {e(_EMPRESA_ENDERECO)} · {e(_EMPRESA_SITE)}</div>
+    <div>{e(" · ".join(filter(None, [
+        _EMPRESA_RAZAO_SOCIAL,
+        f"CNPJ {_EMPRESA_CNPJ}" if _EMPRESA_CNPJ else None,
+        _EMPRESA_ENDERECO,
+        _EMPRESA_SITE,
+    ])))}</div>
     <div>{e(codigo)} · 1/1</div>
   </div>
 
