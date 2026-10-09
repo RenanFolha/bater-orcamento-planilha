@@ -9,6 +9,28 @@ if exist ".venv\Scripts\activate.bat" (
     echo Ambiente virtual .venv nao encontrado. Usando o Python do sistema.
 )
 
+rem Confere se as dependencias estao instaladas ANTES de tentar abrir o
+rem navegador e subir a API -- sem isso, um "pip install -r requirements.txt"
+rem pendente (ex: playwright, usado pro PDF de cotacao) derruba o processo
+rem com um traceback cru assim que main.py tenta importar os routers, e o
+rem navegador ainda assim abre sozinho apontando pra um servidor morto.
+python -c "import main" 1>nul 2>"%TEMP%\iniciar_api_check.log"
+if errorlevel 1 (
+    echo.
+    echo ============================================================
+    echo Erro ao carregar a API -- provavelmente falta instalar ou
+    echo atualizar as dependencias.
+    echo.
+    echo Rode:  pip install -r requirements.txt
+    echo ============================================================
+    echo.
+    echo Detalhe do erro:
+    type "%TEMP%\iniciar_api_check.log"
+    echo.
+    pause
+    exit /b 1
+)
+
 if exist "certs\chave.pem" if exist "certs\certificado.pem" (
     rem Certificado encontrado -- sobe acessivel pela rede local via HTTPS
     rem (ver main.py: HOST diferente de localhost exige certificado TLS).
