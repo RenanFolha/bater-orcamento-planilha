@@ -278,7 +278,13 @@ async def _geocode(
 async def _rota_osrm(client: httpx.AsyncClient, lat1: float, lon1: float, lat2: float, lon2: float) -> dict:
     url = OSRM_URL_TEMPLATE.format(lon1=lon1, lat1=lat1, lon2=lon2, lat2=lat2)
     try:
-        resp = await client.get(url, params={"overview": "false"}, timeout=15)
+        # overview=full + geometries=geojson -- traz o traçado completo da
+        # rota (não só a distância), usado pra desenhar o mapa no front
+        # (ver /geo/distancia -> campo "geometria"). "simplified" (padrão
+        # do OSRM) bastaria pro mapa, mas full fica mais fiel ao asfalto.
+        resp = await client.get(
+            url, params={"overview": "full", "geometries": "geojson"}, timeout=15
+        )
         resp.raise_for_status()
         data = resp.json()
     except httpx.HTTPError as e:
@@ -290,13 +296,45 @@ async def _rota_osrm(client: httpx.AsyncClient, lat1: float, lon1: float, lat2: 
         raise GeoError("Não foi possível calcular uma rota rodoviária entre os pontos informados.")
 
     rota = data["routes"][0]
+    # GeoJSON vem como [lon, lat] -- inverte pra [lat, lon], convenção
+    # usada em todo o resto do projeto (ver _haversine_km, coordenadas_filial).
+    coordenadas = (rota.get("geometry") or {}).get("coordinates") or []
+    geometria = [[lat, lon] for lon, lat in coordenadas]
     return {
         "distancia_km": round(rota["distance"] / 1000),
         "duracao_min": round(rota["duration"] / 60),
         # OSRM (gratuito) não calcula pedágio — só a Routes API do Google faz isso.
         "pedagio_valor": None,
         "pedagio_moeda": None,
+        "geometria": geometria,
     }
+
+
+def _decodificar_polyline(codificada: str) -> list[list[float]]:
+    """Decodifica o 'encoded polyline' do Google (algoritmo padrão,
+    precisão 5 — https://developers.google.com/maps/documentation/utilities/polylinealgorithm)
+    pra uma lista de [lat, lon], usada pra desenhar o traçado da rota no
+    mapa (ver _rota_google -> campo "geometria")."""
+    pontos = []
+    index = lat = lon = 0
+    tamanho = len(codificada)
+    while index < tamanho:
+        for campo in ("lat", "lon"):
+            resultado = shift = 0
+            while True:
+                byte = ord(codificada[index]) - 63
+                index += 1
+                resultado |= (byte & 0x1F) << shift
+                shift += 5
+                if byte < 0x20:
+                    break
+            delta = ~(resultado >> 1) if resultado & 1 else (resultado >> 1)
+            if campo == "lat":
+                lat += delta
+            else:
+                lon += delta
+        pontos.append([lat / 1e5, lon / 1e5])
+    return pontos
 
 
 async def _rota_google(client: httpx.AsyncClient, lat1: float, lon1: float, lat2: float, lon2: float) -> dict:
@@ -313,7 +351,7 @@ async def _rota_google(client: httpx.AsyncClient, lat1: float, lon1: float, lat2
     headers = {
         "Content-Type": "application/json",
         "X-Goog-Api-Key": GOOGLE_MAPS_API_KEY,
-        "X-Goog-FieldMask": "routes.duration,routes.distanceMeters,routes.travelAdvisory.tollInfo",
+        "X-Goog-FieldMask": "routes.duration,routes.distanceMeters,routes.travelAdvisory.tollInfo,routes.polyline.encodedPolyline",
     }
     try:
         resp = await client.post(GOOGLE_ROUTES_URL, json=body, headers=headers, timeout=15)
@@ -336,11 +374,13 @@ async def _rota_google(client: httpx.AsyncClient, lat1: float, lon1: float, lat2
     duracao_str = str(rota.get("duration", "0s"))
     duracao_seg = float(duracao_str[:-1]) if duracao_str.endswith("s") else float(duracao_str)
 
+    polyline_codificada = (rota.get("polyline") or {}).get("encodedPolyline")
     resultado = {
         "distancia_km": round(rota.get("distanceMeters", 0) / 1000),
         "duracao_min": round(duracao_seg / 60),
         "pedagio_valor": None,
         "pedagio_moeda": None,
+        "geometria": _decodificar_polyline(polyline_codificada) if polyline_codificada else [],
     }
 
     toll_info = (rota.get("travelAdvisory") or {}).get("tollInfo")
@@ -487,6 +527,11 @@ async def _rota_ou_fixa(
             "duracao_min": round(fixa.distancia_km / _VELOCIDADE_MEDIA_KMH * 60),
             "pedagio_valor": None,
             "pedagio_moeda": None,
+            # Sem traçado real -- a rota cadastrada manualmente foge do que
+            # o serviço de mapa calcularia (ver docstring da função), não
+            # tem como desenhar o caminho de verdade. O mapa no front cai
+            # pra uma linha reta entre origem/destino nesse caso.
+            "geometria": [],
         }
     return await _rota(client, lat1, lon1, lat2, lon2)
 
@@ -530,6 +575,13 @@ async def calcular_distancia(origem: str, destino: str, veiculo: str | None = No
             "pedagio_pracas": pedagio_pracas,
             "origem_resolvido": reaproveitada["origem_resumo"],
             "destino_resolvido": reaproveitada["destino_resumo"],
+            # Rota reaproveitada do histórico -- não geocodifica de novo só
+            # pra ter coordenadas do mapa (ver docstring da função, é
+            # justamente pra evitar gastar geocodificação). Sem
+            # coordenadas, o front simplesmente não mostra o mapa nesse caso.
+            "origem_lat": None, "origem_lon": None,
+            "destino_lat": None, "destino_lon": None,
+            "geometria": [],
         }
 
     async with httpx.AsyncClient() as client:
@@ -571,6 +623,14 @@ async def calcular_distancia(origem: str, destino: str, veiculo: str | None = No
                 "origem_resolvido": nome1,
                 "destino_resolvido": nome2,
                 "prioridade_rota": filial_escala.nome,
+                "origem_lat": lat1, "origem_lon": lon1,
+                "destino_lat": lat2, "destino_lon": lon2,
+                # Duas pernas (origem->escala->destino) -- concatena os dois
+                # traçados pra desenhar a rota completa no mapa; quando uma
+                # perna é distância fixa (sem traçado real), ela entra como
+                # trecho vazio e o front fecha essa parte com linha reta.
+                "geometria": (perna1.get("geometria") or []) + (perna2.get("geometria") or []),
+                "escala_lat": lat_e, "escala_lon": lon_e,
             }
 
         rota = await _rota_ou_fixa(client, lat1, lon1, lat2, lon2, nome1, nome2)
@@ -586,6 +646,8 @@ async def calcular_distancia(origem: str, destino: str, veiculo: str | None = No
         "pedagio_pracas": pedagio_pracas,
         "origem_resolvido": nome1,
         "destino_resolvido": nome2,
+        "origem_lat": lat1, "origem_lon": lon1,
+        "destino_lat": lat2, "destino_lon": lon2,
     }
 
 

@@ -264,6 +264,115 @@ async function carregarOpcoes(endpoint, selectEl, labelKey='nome'){
   }
 }
 
+// Mapa da rota calculada (Leaflet + OpenStreetMap, sem chave de API --
+// ver geo_service.calcular_distancia, que devolve origem_lat/lon,
+// destino_lat/lon e geometria -- traçado real via OSRM/Google quando
+// disponível, senão linha reta entre origem/destino). O ícone de mapa só
+// aparece no card do veículo (ver guardarMapaRota) quando a última rota
+// calculada tem coordenadas; clicar abre um popup único, compartilhado
+// entre os dois formulários (só um fica aberto por vez).
+const dadosMapaRota = {'': null, 'frac-': null};
+let mapaRotaModal = null;
+
+function guardarMapaRota(prefixo, data){
+  const temCoordenadas = typeof data.origem_lat === 'number' && typeof data.destino_lat === 'number';
+  dadosMapaRota[prefixo] = temCoordenadas ? data : null;
+  const btn = document.getElementById(prefixo === 'frac-' ? 'frac-btn-mapa-rota' : 'btn-mapa-rota');
+  if(btn) btn.style.display = temCoordenadas ? '' : 'none';
+}
+
+function abrirMapaRota(prefixo){
+  const data = dadosMapaRota[prefixo];
+  if(!data) return;
+  abrirMapaRotaComDados(data);
+}
+
+function abrirMapaRotaComDados(data){
+  const overlay = document.getElementById('modal-mapa-rota');
+  overlay.style.display = 'flex';
+
+  if(!mapaRotaModal){
+    const mapa = L.map('modal-mapa-rota-mapa');
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 18,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    }).addTo(mapa);
+    mapaRotaModal = {mapa, camadas: L.layerGroup().addTo(mapa)};
+  }
+  const {mapa, camadas} = mapaRotaModal;
+  camadas.clearLayers();
+
+  const pontoOrigem = [data.origem_lat, data.origem_lon];
+  const pontoDestino = [data.destino_lat, data.destino_lon];
+  L.marker(pontoOrigem).addTo(camadas).bindPopup(`Origem: ${esc(data.origem_resolvido || '')}`);
+  L.marker(pontoDestino).addTo(camadas).bindPopup(`Destino: ${esc(data.destino_resolvido || '')}`);
+  if(typeof data.escala_lat === 'number'){
+    L.circleMarker([data.escala_lat, data.escala_lon], {radius: 6, color: '#e8a33d', fillOpacity: 1})
+      .addTo(camadas).bindPopup(`Escala: ${esc(data.prioridade_rota || '')}`);
+  }
+
+  const tracadoReal = data.geometria && data.geometria.length > 1;
+  const tracado = tracadoReal ? data.geometria : [pontoOrigem, pontoDestino];
+  L.polyline(tracado, {
+    color: '#2f81f7', weight: tracadoReal ? 4 : 3, opacity: tracadoReal ? 0.85 : 0.6,
+    dashArray: tracadoReal ? null : '8 8',
+  }).addTo(camadas);
+
+  mapa.fitBounds(L.latLngBounds([pontoOrigem, pontoDestino, ...tracado]), {padding: [24, 24]});
+  // O modal acabou de virar visível agora -- Leaflet precisa remedir o
+  // container depois do layout atualizar, senão os tiles ficam cortados.
+  setTimeout(() => mapa.invalidateSize(), 0);
+}
+
+function fecharMapaRota(){
+  document.getElementById('modal-mapa-rota').style.display = 'none';
+}
+
+document.getElementById('btn-mapa-rota').addEventListener('click', () => abrirMapaRota(''));
+document.getElementById('frac-btn-mapa-rota').addEventListener('click', () => abrirMapaRota('frac-'));
+document.getElementById('modal-mapa-rota-fechar').addEventListener('click', fecharMapaRota);
+document.getElementById('modal-mapa-rota').addEventListener('click', (ev) => {
+  if(ev.target.id === 'modal-mapa-rota') fecharMapaRota();
+});
+document.addEventListener('keydown', (ev) => {
+  if(ev.key === 'Escape') fecharMapaRota();
+});
+
+// Histórico não salva lat/lon (só os endereços resolvidos em texto, ver
+// registro.origem_resumo/destino_resumo) -- geocodifica sob demanda
+// quando a pessoa pede o mapa, em vez de a cada vez que abre o detalhe.
+// Delegação de evento porque o botão é recriado a cada renderizarDetalheHistorico.
+document.getElementById('detalhe-conteudo').addEventListener('click', async (ev) => {
+  const btn = ev.target.closest('#btn-mapa-rota-historico');
+  if(!btn || !detalheHistoricoRegistro) return;
+  const statusEl = document.getElementById('detalhe-status');
+  const iconeOriginal = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<i class="ti ti-loader-2"></i>';
+  try{
+    const res = await fetch(`${API_BASE}/geo/distancia`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        origem: detalheHistoricoRegistro.origem_resumo,
+        destino: detalheHistoricoRegistro.destino_resumo,
+      }),
+    });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.detail || 'Não foi possível calcular a rota.');
+    if(typeof data.origem_lat !== 'number' || typeof data.destino_lat !== 'number'){
+      throw new Error('Endereço dessa cotação não pôde ser localizado no mapa.');
+    }
+    abrirMapaRotaComDados(data);
+  }catch(e){
+    statusEl.className = 'cep-info err';
+    statusEl.textContent = `Não foi possível abrir o mapa: ${e.message}`;
+  }finally{
+    btn.disabled = false;
+    btn.innerHTML = iconeOriginal;
+  }
+});
+
 const form = document.getElementById('form-frete');
 const btn = document.getElementById('btn-calc');
 const errorBox = document.getElementById('error-box');
@@ -848,6 +957,7 @@ function invalidarRotaCalculada(){
   distanciaEntregaPropriaKm = 0;
   geoStatus.className = 'geo-status';
   geoStatus.textContent = '';
+  guardarMapaRota('', {});
 }
 origemFilialSel.addEventListener('change', invalidarRotaCalculada);
 destinoFilialSel.addEventListener('change', invalidarRotaCalculada);
@@ -1021,6 +1131,7 @@ async function calcularDistanciaEEndereco(){
 
     geoStatus.classList.add('ok');
     geoStatus.textContent = `${mensagemColeta}Distância do frete: ${data2.distancia_km} km (≈ ${tempoTexto}).${mensagemPrioridade}${mensagemPedagio}`;
+    guardarMapaRota('', data2);
     rotaValida = true;
     return true;
 
@@ -1621,6 +1732,7 @@ function fracInvalidarRotaCalculada(){
   fracPrioridadeRotaResolvida = '';
   fracGeoStatus.className = 'geo-status';
   fracGeoStatus.textContent = '';
+  guardarMapaRota('frac-', {});
 }
 document.getElementById('frac-origem-filial').addEventListener('change', fracInvalidarRotaCalculada);
 document.getElementById('frac-destino-filial').addEventListener('change', fracInvalidarRotaCalculada);
@@ -1679,6 +1791,7 @@ async function fracCalcularDistancia(){
     const mensagemPrioridade = data.prioridade_rota ? ` Rota via ${data.prioridade_rota} (prioridade de rota).` : '';
     fracGeoStatus.classList.add('ok');
     fracGeoStatus.textContent = `Distância: ${data.distancia_km} km (≈ ${tempoTexto}).${mensagemPrioridade}${mensagemPedagio}`;
+    guardarMapaRota('frac-', data);
     fracRotaValida = true;
     return true;
   }catch(err){
@@ -3134,7 +3247,6 @@ function renderizarDetalheHistorico(registro){
 
   const linhas = [
     ['Rota', [registro.origem_resumo, registro.destino_resumo].filter(Boolean).join(' → ') || '—'],
-    ['Veículo', registro.veiculo || entrada.veiculo || '—'],
   ];
   if(entrada.distancia_coleta_km > 0){
     linhas.push(['KM de coleta', `${entrada.distancia_coleta_km} km`]);
@@ -3161,9 +3273,25 @@ function renderizarDetalheHistorico(registro){
     ['Valor da mercadoria', fmtBRL(registro.valor_mercadoria)],
     ['Frete total', fmtBRL(registro.frete_total)],
   );
-  document.getElementById('detalhe-conteudo').innerHTML = linhas.map(([label, valor]) => `
+  const linhasHtml = linhas.map(([label, valor]) => `
     <div class="line"><span>${esc(label)}</span><span>${esc(valor)}</span></div>
-  `).join('');
+  `);
+  // Linha "Veículo" com o mesmo ícone de mapa dos formulários de cotação
+  // (ver abrirMapaRotaComDados) -- aqui a rota não tem coordenadas
+  // salvas (só os endereços resolvidos em texto), então geocodifica sob
+  // demanda só quando a pessoa clica (ver listener de #detalhe-conteudo).
+  const nomeVeiculo = registro.veiculo || entrada.veiculo || '—';
+  const temRotaParaMapa = !!(registro.origem_resumo && registro.destino_resumo);
+  linhasHtml.splice(1, 0, `
+    <div class="line">
+      <span>Veículo</span>
+      <span style="display:flex;align-items:center;gap:8px;">
+        ${esc(nomeVeiculo)}
+        ${temRotaParaMapa ? '<button type="button" class="btn-mapa-rota-inline" id="btn-mapa-rota-historico" title="Ver mapa da rota"><i class="ti ti-map-2"></i></button>' : ''}
+      </span>
+    </div>
+  `);
+  document.getElementById('detalhe-conteudo').innerHTML = linhasHtml.join('');
 
   // Só quem salvou o registro (mesma conta logada) ou um admin pode editar
   // o pedágio -- mesma regra usada pra excluir (ver renderizarHistorico).

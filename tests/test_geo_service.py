@@ -152,8 +152,14 @@ def test_calcular_distancia_com_prioridade_rota_soma_as_duas_pernas(banco_tempor
     async def _rota_fake(client, lat1, lon1, lat2, lon2):
         chamadas_rota.append((lat1, lon1, lat2, lon2))
         if len(chamadas_rota) == 1:
-            return {"distancia_km": 2500, "duracao_min": 1800, "pedagio_valor": 50.0, "pedagio_moeda": "BRL"}
-        return {"distancia_km": 400, "duracao_min": 300, "pedagio_valor": None, "pedagio_moeda": None}
+            return {
+                "distancia_km": 2500, "duracao_min": 1800, "pedagio_valor": 50.0, "pedagio_moeda": "BRL",
+                "geometria": [[0.0, 0.0], [1.0, 1.0]],
+            }
+        return {
+            "distancia_km": 400, "duracao_min": 300, "pedagio_valor": None, "pedagio_moeda": None,
+            "geometria": [[1.0, 1.0], [0.0, 0.0]],
+        }
 
     monkeypatch.setattr(geo, "_geocode", _geocode_fake)
     monkeypatch.setattr(geo, "coordenadas_filial", _coordenadas_filial_fake)
@@ -165,6 +171,10 @@ def test_calcular_distancia_com_prioridade_rota_soma_as_duas_pernas(banco_tempor
     assert resultado["pedagio_valor"] == pytest.approx(50.0)
     assert resultado["prioridade_rota"] == "Belém"
     assert len(chamadas_rota) == 2  # uma perna pra cada trecho, nunca a rota direta
+    # traçado das duas pernas concatenado (pro mapa) + coordenadas da
+    # filial de escala, que fica no meio do caminho (ver "escala_lat/lon").
+    assert resultado["geometria"] == [[0.0, 0.0], [1.0, 1.0], [1.0, 1.0], [0.0, 0.0]]
+    assert resultado["escala_lat"] == 1.0 and resultado["escala_lon"] == 1.0
 
 
 def test_calcular_distancia_sem_prioridade_rota_faz_rota_direta(banco_temporario, monkeypatch):
@@ -189,6 +199,10 @@ def test_calcular_distancia_sem_prioridade_rota_faz_rota_direta(banco_temporario
     assert resultado["distancia_km"] == 300
     assert "prioridade_rota" not in resultado
     assert len(chamadas_rota) == 1  # rota direta, sem dividir em pernas
+    # coordenadas de origem/destino (ver _geocode_fake acima) vão no
+    # resultado pra desenhar o mapa no front (ver /geo/distancia).
+    assert resultado["origem_lat"] == 0.0 and resultado["origem_lon"] == 0.0
+    assert resultado["destino_lat"] == 0.0 and resultado["destino_lon"] == 0.0
 
 
 def _parametros_com_pedagio_local():
@@ -922,6 +936,30 @@ def test_rota_osrm_sucesso():
     assert resultado["distancia_km"] == 12  # 12345m arredondado pra km
     assert resultado["duracao_min"] == 10  # 600s = 10min
     assert resultado["pedagio_valor"] is None
+    assert resultado["geometria"] == []  # fixture sem "geometry" -- não quebra, só fica vazio
+
+
+def test_rota_osrm_geometria_vem_como_lat_lon():
+    # OSRM devolve GeoJSON ([lon, lat]) -- _rota_osrm inverte pra [lat, lon]
+    # (convenção do resto do projeto, ver _haversine_km/coordenadas_filial).
+    dados = {
+        "code": "Ok",
+        "routes": [{
+            "distance": 1000, "duration": 60,
+            "geometry": {"coordinates": [[-47.1, -22.9], [-46.6, -23.5]]},
+        }],
+    }
+    resultado = asyncio.run(geo._rota_osrm(_ClienteFake(_RespostaFake(dados)), -22.9, -47.1, -23.5, -46.6))
+    assert resultado["geometria"] == [[-22.9, -47.1], [-23.5, -46.6]]
+
+
+def test_decodificar_polyline():
+    # Exemplo oficial da documentação do Google (algoritmo padrão, precisão 5).
+    resultado = geo._decodificar_polyline("_p~iF~ps|U_ulLnnqC_mqNvxq`@")
+    esperado = [[38.5, -120.2], [40.7, -120.95], [43.252, -126.453]]
+    assert len(resultado) == len(esperado)
+    for ponto, ponto_esperado in zip(resultado, esperado, strict=True):
+        assert ponto == pytest.approx(ponto_esperado, abs=1e-4)
 
 
 def test_rota_osrm_sem_rota_encontrada():

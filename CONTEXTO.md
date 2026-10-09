@@ -476,13 +476,48 @@ sistemática contra `frete_service.py`/`frete.db`, por impacto:
 Nenhuma dessas foi implementada nesta sessão (fora o prazo do
 Fracionado) — fica como lista de pendências priorizada.
 
+## Mapa da rota calculada (sessão seguinte, 2026-10-09)
+
+Pedido do usuário, fora da lista de achados -- Leaflet + OpenStreetMap
+(sem chave de API, usa o mesmo OSRM já usado pra calcular distância).
+Desenho final (depois de 2 iterações com o usuário, inclusive uma
+captura de tela apontando o lugar exato): ícone de mapa (`ti-map-2`)
+dentro do card do veículo no resultado (`"[Veículo] selecionado"` na
+Lotação, `"(referência)"` no Fracionado, e a linha "Veículo" no detalhe
+do Histórico) -- clicar abre um modal único (`#modal-mapa-rota`,
+compartilhado pelas 3 telas) com o traçado real da rota, marcadores de
+origem/destino e, quando a rota passa por uma filial de escala (ex:
+Belém antes de Manaus), um marcador amarelo no meio do caminho.
+
+Backend (`geo_service.py`): `/geo/distancia` agora devolve `origem_lat/
+lon`, `destino_lat/lon` e `geometria` (lista de [lat,lon] do traçado).
+`_rota_osrm` pede `overview=full&geometries=geojson` ao OSRM (antes
+`overview=false`, só distância); `_rota_google` decodifica o
+`encodedPolyline` da Routes API (função `_decodificar_polyline`, nunca
+exercitada em produção aqui pois não há `GOOGLE_MAPS_API_KEY`
+configurada, mas implementada pra não deixar esse caminho capenga).
+Rota reaproveitada do histórico (ver `_buscar_rota_no_historico`)
+continua **sem** geocodificar de novo -- um teste existente
+(`test_calcular_distancia_nao_chama_servico_externo_quando_ja_no_
+historico`) trava essa garantia de propósito (evitar gastar
+geocodificação à toa), então esse caso só não tem mapa.
+
+Histórico de orçamento não salva lat/lon (só os endereços resolvidos em
+texto, `origem_resumo`/`destino_resumo`) -- geocodifica sob demanda só
+quando a pessoa clica no ícone (`/geo/distancia` de novo, com esses
+textos), em vez de a cada vez que abre o detalhe.
+
+6 testes novos em `tests/test_geo_service.py` (geometria do OSRM,
+decodificação de polyline, coordenadas no resultado de `calcular_
+distancia` nos 3 caminhos -- direto, prioridade de rota, histórico).
+
 ## Como retomar
 
 1. Confirmar que `Planilhas/COTAÇÃO SSONIC - 2026.xlsx` e a pasta
    `Sistema de Precificação/` existem localmente (nenhuma versionada).
 2. Rodar `comparar_planilha.py` pra ver o estado atual.
 3. Rodar a suíte (`pytest tests/ -q`) antes de qualquer mudança nova, pra
-   ter uma baseline (547 passed, 4 skipped nesta sessão).
+   ter uma baseline (552 passed, 4 skipped nesta sessão).
 4. Decidir por qual pendência seguir. Fracionado SP/AM já calcula e o
    custo bate exato (ver seção acima) — falta GRIS/ADV/fluvial por UF,
    PA/outras origens, e separadamente há os achados do `Teste_Completo_

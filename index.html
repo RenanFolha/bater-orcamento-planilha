@@ -17,6 +17,8 @@
   })();
 </script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/dist/tabler-icons.min.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <link rel="stylesheet" href="/assets/style.css">
 </head>
 <body>
@@ -370,6 +372,9 @@
                 <div class="t"><b id="out-veiculo">-</b> selecionado</div>
                 <div class="s">Escolhido automaticamente pelo peso e volume</div>
               </div>
+              <button type="button" class="btn-mapa-rota" id="btn-mapa-rota" title="Ver mapa da rota" style="display:none;">
+                <i class="ti ti-map-2"></i>
+              </button>
             </div>
             <div class="breakdown">
               <h3>Detalhamento do cálculo</h3>
@@ -683,6 +688,9 @@
                 <div class="t"><b id="frac-out-veiculo">-</b> (referência)</div>
                 <div class="s">Usado só pra pedágio, balsa e coleta fixa — não define a tarifa</div>
               </div>
+              <button type="button" class="btn-mapa-rota" id="frac-btn-mapa-rota" title="Ver mapa da rota" style="display:none;">
+                <i class="ti ti-map-2"></i>
+              </button>
             </div>
             <div class="breakdown">
               <h3>Detalhamento do cálculo</h3>
@@ -1088,6 +1096,16 @@
     <div style="max-width:1360px;margin-top:32px;padding-top:16px;border-top:1px solid var(--border-soft);text-align:center;font-family:var(--font-sans);font-size:11px;color:var(--text-dim);">Desenvolvido por Renan Folha</div>
 
   </main>
+</div>
+
+<div class="modal-overlay" id="modal-mapa-rota" style="display:none;">
+  <div class="modal-mapa">
+    <div class="modal-mapa-head">
+      <span><i class="ti ti-map-2"></i> Mapa da rota</span>
+      <button type="button" id="modal-mapa-rota-fechar" title="Fechar"><i class="ti ti-x"></i></button>
+    </div>
+    <div id="modal-mapa-rota-mapa"></div>
+  </div>
 </div>
 
 <script src="/assets/app.js"></script>
