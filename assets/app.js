@@ -3454,6 +3454,7 @@ async function carregarTabelaPrecos(){
         {campo: 'de', label: 'De (kg)', tipo: 'number', step: '1'},
         {campo: 'ate', label: 'Até (kg)', tipo: 'number', step: '1'},
         {campo: 'tarifa_km', label: 'Tarifa/km (R$)', tipo: 'moeda'},
+        {campo: 'taxa_fixa', label: 'Taxa fixa (R$, somada a tarifa/km × distância em toda cotação)', tipo: 'moeda'},
         {campo: 'valor_tonelada_excedente', label: 'Valor/tonelada excedente (R$)', tipo: 'moeda'},
         {campo: 'tarifa_km_retorno', label: 'Retorno vazio (R$/km)', tipo: 'moeda'},
         {campo: 'tarifa_km_manutencao', label: 'Manutenção (R$/km, ida + coleta própria + retorno vazio)', tipo: 'moeda'},

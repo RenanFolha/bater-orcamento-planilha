@@ -8,7 +8,7 @@ Preços" ou direto no banco com o DB Browser for SQLite, e chame POST
 /admin/reload para aplicar (a tela já faz isso sozinha a cada edição).
 
 Fórmula do frete principal (por veículo):
-    custo_km = veiculo.tarifa_km * distancia
+    custo_km = veiculo.taxa_fixa + veiculo.tarifa_km * distancia
     peso_excedente_kg = max(peso_considerado - veiculo.ate, 0)
     custo_peso_excedente = (peso_excedente_kg / 1000) * veiculo.valor_tonelada_excedente
     frete_base = custo_km + custo_peso_excedente
@@ -277,6 +277,14 @@ class Veiculo:
     # (ver pedagio_rota_aplicavel) -- 0 = não cadastrado, o veículo fica
     # de fora do cálculo automático de pedágio até ser preenchido.
     numero_eixos: int = 0
+    # Componente fixo (R$) somado a tarifa_km*distância -- achado #3 do
+    # Teste_Completo_FTL: veículos leves/médios (Fiorino/Van-HR/VUC/
+    # Truck-Toco) na operação SP cobravam 29-49% abaixo do praticado;
+    # investigando com dados reais (cotações + distância real via OSRM),
+    # pelo menos Van/HR não é explicado por tarifa_km sozinha (R²≈0,02) --
+    # o custo real tem um piso que não escala com km. 0 = sem piso
+    # (comportamento antigo, só tarifa_km*distância).
+    taxa_fixa: float = 0
 
 
 @dataclass
@@ -408,7 +416,7 @@ class ParametrosFrete:
                 r["nome"].strip().lower(): Veiculo(
                     r["nome"], r["de"], r["ate"], r["tarifa_km"], r["valor_tonelada_excedente"],
                     r["tarifa_km_retorno"], r["tarifa_km_manutencao"], r["capacidade_m3"],
-                    r["percentual_capacidade_util"], r["numero_eixos"],
+                    r["percentual_capacidade_util"], r["numero_eixos"], r["taxa_fixa"],
                 )
                 for r in conn.execute("SELECT * FROM veiculos")
             }
@@ -1707,7 +1715,7 @@ def calcular_orcamento(
     distancia_faturavel = max(distancia - balsa_km, 0.0)
 
     tarifa_km_usada, faixa_km_aplicada = p.tarifa_km_efetiva(v, distancia_faturavel)
-    custo_km = tarifa_km_usada * distancia_faturavel
+    custo_km = v.taxa_fixa + tarifa_km_usada * distancia_faturavel
     # Peso excedente = quanto o peso considerado passa do "até" (limite
     # superior) da faixa do próprio veículo escolhido — normalmente é
     # zero, porque o veículo já foi escolhido pra cobrir esse peso

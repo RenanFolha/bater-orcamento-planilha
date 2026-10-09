@@ -96,6 +96,20 @@ def test_calculo_basico_sem_coleta(parametros):
     assert calc["tarifa_km_veiculo"] == pytest.approx(2.0)  # tarifa_km fixa do VUC, sem faixa cadastrada
 
 
+def test_taxa_fixa_do_veiculo_soma_ao_custo_km(parametros):
+    # taxa_fixa (achado #3 do Teste_Completo_FTL) é um piso em R$ somado
+    # a tarifa_km*distância, igual à taxa_fixa de faixas_distancia no
+    # Fracionado -- 0 por padrão (veículos de teste não têm, ver
+    # _parametros_teste), então precisa ser setado manualmente aqui.
+    parametros.veiculos["vuc"].taxa_fixa = 50.0
+    resultado = fs.calcular_orcamento(
+        peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,
+        categoria="Geral", transporte="Rodoviário", sla="Padrão",
+    )
+    calc = resultado["calculos_intermediarios"]
+    assert calc["custo_km"] == pytest.approx(250.0)  # 50 (taxa_fixa) + 2.0/km * 100km
+
+
 def test_rota_obrigatoria_ausente_por_padrao(parametros):
     resultado = fs.calcular_orcamento(
         peso=50, paletes=_paletes(), distancia=100, valor_mercadoria=1000,

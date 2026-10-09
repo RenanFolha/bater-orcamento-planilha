@@ -259,6 +259,11 @@ class VeiculoIn(BaseModel):
                      "cadastradas (/admin/pracas-pedagio); 0 = não cadastrado, o veículo fica de fora do "
                      "cálculo automático de pedágio",
     )
+    taxa_fixa: float = Field(
+        0, ge=0,
+        description="R$ fixo somado a tarifa_km × distância, em toda cotação desse veículo — piso pro frete "
+                     "principal (0 = sem piso, comportamento antigo de só tarifa_km × distância)",
+    )
     observacao: str = ""
 
 

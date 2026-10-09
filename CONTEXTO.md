@@ -326,7 +326,43 @@ esforço/dado disponível:
    manualmente (ex: em teste) quebrava com `AttributeError` ao cotar
    Fracionado com cidade_origem/destino preenchidos; bug pré-existente,
    nunca exercitado até os novos testes de prazo passarem essas cidades.
-2. Tarifas leves/médios SP (achado #3), limites do formulário (achado #8),
+2. **Tarifas leves/médios SP — IMPLEMENTADO (achado #3, sessão seguinte,
+   2026-10-09)**. Veículos leves/médios (Fiorino, Van/HR, VUC, Truck/
+   Toco) na operação SP cobravam 29-49% abaixo do praticado. Investigado
+   com dados reais: cotações de Lotação (SP) sem particularidade, pós
+   17/06/2025, fora das rotas cadastradas em `custos_lotacao_destino`
+   (essas usam custo fixo, tarifa_km não entra), classificadas por
+   veículo pela faixa de peso. Sem `KM` na planilha — geocodificado via
+   Nominatim (126 cidades) + rota real via OSRM (167 trechos), 1,1s entre
+   chamadas pra respeitar os limites públicos. Regressão linear
+   `custo_total ~ taxa_fixa + tarifa_km×distância` por veículo:
+   - **Fiorino/Saveiro**: tarifa_km 1,98→**3,86** R$/km, taxa_fixa
+     **R$367,65** (R²=0,825, n=57).
+   - **Truck/Toco**: tarifa_km 3,89→**6,94** R$/km, taxa_fixa
+     **R$1.054,88** (R²=0,851, n=95) — as 4 faixas de
+     `faixas_km_veiculo` cadastradas pra esse veículo (que SUBSTITUEM a
+     tarifa_km base por distância) foram escaladas pelo mesmo fator
+     (6,94/3,89), senão a recalibração da base não teria efeito nenhum
+     (as faixas cobrem toda distância de 0 a 999999km).
+   - **VUC**: tarifa_km 2,92→**7,30** R$/km, taxa_fixa **R$464,57**
+     (R²=0,719, amostra pequena, n=9).
+   - **Van/HR**: regressão própria sem sinal confiável (R²=0,018 — custo
+     real não escala com km nessa amostra de 40 cotações, mesmo com
+     distância real via OSRM). tarifa_km ajustado só pelo % do achado
+     original (-49% → 2,82/0,51=**5,53** R$/km); `taxa_fixa` **não**
+     calibrado, fica em 0 — pendência (precisa de mais dado ou outra
+     abordagem pra achar o piso real do Van/HR).
+
+   Implementado: nova coluna `taxa_fixa` em `veiculos` (componente fixo
+   R$ somado a `tarifa_km × distância`, igual ao conceito que já existia
+   pra Fracionado em `faixas_distancia.taxa_fixa`) -- `custo_km =
+   veiculo.taxa_fixa + tarifa_km_usada * distancia_faturavel` em
+   `calcular_orcamento`. Exposto no admin (`VeiculoIn`, editor de tabela
+   "Veículos e Tarifas" no frontend) e nas funções
+   `inserir_veiculo`/`atualizar_veiculo`. Valores aplicados direto no
+   `frete.db` local (dado, não código, mesma política de GRIS/ADV/ICMS).
+   1 teste novo em `tests/test_frete_service.py`.
+3. Limites do formulário (achado #8),
    GRIS/ADV/taxa fluvial (achado #9), ICMS indevido por cliente (achado
    #6), balsa Manaus-Belém incompleta (achado #4), roteirização via filial
    (achado #5) e consolidação de carga pequena AM (achado #2, o maior
