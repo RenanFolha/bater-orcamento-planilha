@@ -38,11 +38,7 @@ _VALIDADE_DIAS = 15
 # Endereço é o mesmo já cadastrado pra filial São Paulo em frete_db.py
 # (_seed_filiais) -- fonte real, não o mockup.
 _EMPRESA_RAZAO_SOCIAL = "SuperSonic Logística e Transportes Ltda"
-# CNPJ deixado em aberto por pedido do usuário -- ainda não tem o número
-# real pra cadastrar; _html_orcamento omite o trecho "CNPJ ..." do rodapé
-# enquanto essa constante estiver vazia, em vez de imprimir um número
-# não confirmado (ver uso abaixo).
-_EMPRESA_CNPJ = ""
+_EMPRESA_CNPJ = "47.705.660/0001-31"
 _EMPRESA_ENDERECO = (
     "Av. Otaviano Alves de Lima, nº 2724, Bloco B, 4º andar, "
     "Jardim das Graças, São Paulo/SP — CEP 02.701-000"
